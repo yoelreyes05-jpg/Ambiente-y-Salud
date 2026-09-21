@@ -69,4 +69,95 @@ router.post("/", requireAuth, requireRol("admin"), async (req, res) => {
   res.status(201).json(usuario);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cuentas del personal de calidad del hotel
+//
+// ASA crea tantas cuentas como necesite cada hotel. Cada cuenta ve, en tiempo
+// real y solo de lectura, lo que se ha hecho en los hoteles que se le asignen.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /usuarios/portal?sitio_id= — cuentas de hotel y sus sitios asignados
+router.get("/portal", requireAuth, requireRol("admin", "comercial", "operaciones"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("asa_usuarios")
+    .select("id, email, nombre_completo, rol, activo, ultimo_acceso, asa_usuario_sitios(sitio_id, asa_sitios(id, nombre))")
+    .eq("rol", "cliente_calidad")
+    .order("nombre_completo");
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+
+  let lista = data || [];
+  if (req.query.sitio_id) {
+    lista = lista.filter((u) => (u.asa_usuario_sitios || []).some((s) => s.sitio_id === req.query.sitio_id));
+  }
+  res.json(lista);
+});
+
+// POST /usuarios/portal — crear una cuenta de calidad y asignarle hoteles
+// Body: { email, password, nombre_completo, sitios: [sitio_id, ...] }
+router.post("/portal", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const { email, password, nombre_completo, sitios = [] } = req.body;
+  if (!email || !password || !sitios.length) {
+    return res.status(400).json({
+      error: true,
+      mensaje: "email, password y al menos un hotel (sitios) son requeridos",
+    });
+  }
+
+  const password_hash = await bcrypt.hash(password, 10);
+  const { data: usuario, error } = await supabase
+    .from("asa_usuarios")
+    .insert([{ email, password_hash, nombre_completo, rol: "cliente_calidad" }])
+    .select("id, email, nombre_completo, rol, activo")
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+
+  const { error: errSitios } = await supabase
+    .from("asa_usuario_sitios")
+    .insert(sitios.map((sitio_id) => ({ usuario_id: usuario.id, sitio_id })));
+  if (errSitios) {
+    // Sin hoteles asignados la cuenta no sirve de nada: se revierte.
+    await supabase.from("asa_usuarios").delete().eq("id", usuario.id);
+    return res.status(500).json({ error: true, mensaje: errSitios.message });
+  }
+
+  res.status(201).json({ ...usuario, sitios });
+});
+
+// PUT /usuarios/portal/:id/sitios — cambiar los hoteles que ve una cuenta
+router.put("/portal/:id/sitios", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const { sitios = [] } = req.body;
+  await supabase.from("asa_usuario_sitios").delete().eq("usuario_id", req.params.id);
+  if (sitios.length) {
+    const { error } = await supabase
+      .from("asa_usuario_sitios")
+      .insert(sitios.map((sitio_id) => ({ usuario_id: req.params.id, sitio_id })));
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  }
+  res.json({ ok: true, usuario_id: req.params.id, sitios });
+});
+
+// PATCH /usuarios/:id/activo — desactivar o reactivar cualquier cuenta
+router.patch("/:id/activo", requireAuth, requireRol("admin"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("asa_usuarios")
+    .update({ activo: !!req.body.activo })
+    .eq("id", req.params.id)
+    .select("id, email, nombre_completo, rol, activo")
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json(data);
+});
+
+// POST /usuarios/:id/password — restablecer contraseña
+router.post("/:id/password", requireAuth, requireRol("admin"), async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: true, mensaje: "La contraseña debe tener al menos 8 caracteres" });
+  }
+  const password_hash = await bcrypt.hash(password, 10);
+  const { error } = await supabase.from("asa_usuarios").update({ password_hash }).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json({ ok: true });
+});
+
 export default router;

@@ -2,7 +2,7 @@
 // vacunas/tratamientos preventivos. "Control de cada animal".
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
-import { logAccion } from "../server.mjs";
+import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 

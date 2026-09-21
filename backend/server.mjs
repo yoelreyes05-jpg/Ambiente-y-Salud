@@ -9,6 +9,7 @@
 import express from "express";
 import cors from "cors";
 import { supabase } from "./lib/supabaseClient.js";
+import { requireAuth, cargarAlcance, soloLectura } from "./middleware/auth.js";
 
 export const app = express();
 
@@ -34,45 +35,24 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: "15mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 // ── Cliente Supabase (compartido en la infraestructura, pero este backend SOLO toca tablas asa_*) ──
 export { supabase };
 
-// ── Auditoria: registra acciones en asa_log_auditoria (fire-and-forget) ─────
-export function usuarioDesdeReq(req) {
-  try {
-    const h = req.headers["x-usuario"];
-    if (h) {
-      const u = JSON.parse(decodeURIComponent(h));
-      return { id: u.id ?? null, nombre: u.nombre || "Sistema", rol: u.rol || null };
-    }
-  } catch {}
-  const b = req.body || {};
-  return { id: b.usuario_id ?? null, nombre: b.usuario_nombre || "Sistema", rol: null };
-}
-
-export function logAccion(req, { accion, modulo, registroId = null, descripcion = "", detalle = {} }) {
-  const u = usuarioDesdeReq(req);
-  supabase
-    .from("asa_log_auditoria")
-    .insert([
-      {
-        usuario_id: u.id,
-        usuario_nombre: u.nombre,
-        accion,
-        modulo,
-        registro_id: registroId,
-        descripcion,
-        detalle,
-      },
-    ])
-    .then(() => {})
-    .catch((e) => console.warn("[asa_log_auditoria] no se pudo registrar:", e.message));
-}
+// ── Auditoria ────────────────────────────────────────────────────────────────
+// La implementación vive en lib/auditoria.js (sin ciclo de imports). Se
+// reexporta aquí porque el código anterior la importaba desde este archivo.
+export { usuarioDesdeReq, logAccion } from "./lib/auditoria.js";
 
 // ── Rutas ────────────────────────────────────────────────────────────────────
 import clientesRouter from "./routes/clientes.js";
+import sitiosRouter from "./routes/sitios.js";
+import puntosRouter from "./routes/puntos.js";
+import inspeccionesRouter from "./routes/inspecciones.js";
+import estrategiasRouter from "./routes/estrategias.js";
+import hallazgosRouter from "./routes/hallazgos.js";
+import reportesRouter from "./routes/reportes.js";
 import mascotasRouter from "./routes/mascotas.js";
 import veterinariaRouter from "./routes/veterinaria.js";
 import citasRouter from "./routes/citas.js";
@@ -88,34 +68,55 @@ import usuariosRouter from "./routes/usuarios.js";
 import rncRouter from "./routes/rnc.js";
 import notificacionesRouter from "./routes/notificaciones.js";
 
+// ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
   res.json({
     ok: true,
     sistema: "Ambiente y Salud RD (ASA SRL) - API",
     prefijo_tablas: "asa_",
-    modulos: [
-      "clientes", "mascotas", "veterinaria", "citas", "estetica",
-      "plagas", "ipm", "inventario", "pos", "facturacion",
-      "contabilidad", "nomina", "usuarios", "rnc", "notificaciones",
-    ],
+    version: "2.0-plagas",
   });
 });
+app.get("/salud", (req, res) => res.json({ ok: true, hora: new Date().toISOString() }));
 
+// El login y el alta de cliente son necesariamente públicos.
+app.use("/usuarios", usuariosRouter);
+
+// ── A PARTIR DE AQUÍ, TODO EXIGE TOKEN ──────────────────────────────────────
+//
+// Antes este backend exponía los 14 módulos sin autenticación: cualquiera con
+// la URL podía leer clientes, facturas y nómina. Esta puerta única cierra eso
+// de golpe, y `cargarAlcance` limita al personal del hotel a sus propios
+// sitios. No agregues rutas ARRIBA de esta línea salvo que deban ser públicas.
+app.use(requireAuth);
+app.use(soloLectura);   // rechaza escrituras de cuentas externas antes de tocar la base
+app.use(cargarAlcance); // limita al personal del hotel a sus propios sitios
+
+// Módulo de plagas / hoteles (el foco del sistema)
 app.use("/clientes", clientesRouter);
+app.use("/sitios", sitiosRouter);
+app.use("/puntos", puntosRouter);
+app.use("/inspecciones", inspeccionesRouter);
+app.use("/estrategias", estrategiasRouter);
+app.use("/hallazgos", hallazgosRouter);
+app.use("/reportes", reportesRouter);
+app.use("/plagas", plagasRouter);
+app.use("/ipm", ipmRouter);
+app.use("/inventario", inventarioRouter);
+app.use("/notificaciones", notificacionesRouter);
+app.use("/rnc", rncRouter);
+
+// Módulos congelados (veterinaria, estética, tienda, administración).
+// Siguen funcionando pero están ocultos del panel; se reactivan cuando ASA
+// retome esas líneas de negocio.
 app.use("/mascotas", mascotasRouter);
 app.use("/veterinaria", veterinariaRouter);
 app.use("/citas", citasRouter);
 app.use("/estetica", esteticaRouter);
-app.use("/plagas", plagasRouter);
-app.use("/ipm", ipmRouter);
-app.use("/inventario", inventarioRouter);
 app.use("/pos", posRouter);
 app.use("/facturacion", facturacionRouter);
 app.use("/contabilidad", contabilidadRouter);
 app.use("/nomina", nominaRouter);
-app.use("/usuarios", usuariosRouter);
-app.use("/rnc", rncRouter);
-app.use("/notificaciones", notificacionesRouter);
 
 // ── Manejo de errores genérico ──────────────────────────────────────────────
 app.use((err, req, res, next) => {
@@ -124,6 +125,11 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`[ASA] Backend escuchando en puerto ${PORT}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`[ASA] Backend escuchando en puerto ${PORT}`);
+    if (!process.env.JWT_SECRET) {
+      console.error("[ASA] ¡ATENCIÓN! JWT_SECRET está vacío: el login no funcionará.");
+    }
+  });
+}

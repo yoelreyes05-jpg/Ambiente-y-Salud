@@ -1,0 +1,20 @@
+{
+  "name": "ASA Técnico — Ambiente y Salud RD",
+  "short_name": "ASA Técnico",
+  "description": "Inspecciones diarias de puntos de control: escanear QR, registrar el checklist y sincronizar sin señal.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#15803d",
+  "lang": "es-DO",
+  "icons": [
+    { "src": "icono.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Escanear punto", "short_name": "Escanear", "url": "./index.html#escanear" },
+    { "name": "Mi ruta del día", "short_name": "Mi ruta", "url": "./index.html#ruta" }
+  ]
+}

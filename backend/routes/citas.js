@@ -1,7 +1,7 @@
 // routes/citas.js — Agenda de consultas, vacunación, desparasitación y estética
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
-import { logAccion } from "../server.mjs";
+import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 

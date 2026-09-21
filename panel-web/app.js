@@ -6,14 +6,13 @@
 // Autenticación: JWT emitido por POST /usuarios/login (backend/routes/usuarios.js),
 // guardado en localStorage (app real desplegada, no es un artifact de Claude).
 
-// ── MODO VISTA PREVIA (TEMPORAL) ─────────────────────────────────────────
-// Puesto en true solo para recorrer el panel sin tener que crear todavía un
-// usuario real en asa_usuarios. Con esto en true se entra directo al panel
-// como si fueras "admin", sin pedir login. La mayoría de las rutas del
-// backend no exigen token (solo /usuarios sí), así que los datos reales de
-// Supabase se ven igual. Cuando ya crees tu usuario real, vuelve a poner
-// esto en `false` para que el login quede activo de nuevo.
-const DEMO_SKIP_LOGIN = true;
+// ── Login obligatorio ────────────────────────────────────────────────────
+// Antes había aquí un DEMO_SKIP_LOGIN=true que entraba al panel como admin sin
+// pedir credenciales. Con el portal abierto al personal de los hoteles eso ya
+// no es aceptable: el backend exige token en todas las rutas y el panel pide
+// login siempre. Crea el primer admin con:
+//     cd backend && node scripts/crear-admin.mjs <email> "<nombre>" "<clave>"
+const DEMO_SKIP_LOGIN = false;
 
 // ── Estado ───────────────────────────────────────────────────────────────
 let TOKEN = localStorage.getItem("asa_token") || null;
@@ -83,7 +82,36 @@ function toast(msg, isError = false) {
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (TOKEN) headers.Authorization = `Bearer ${TOKEN}`;
-  const res = await fetch(`${CONFIG.API_BASE}${path}`, { cache: "no-store", ...opts, headers });
+
+  let res;
+  try {
+    res = await fetch(`${CONFIG.API_BASE}${path}`, { cache: "no-store", ...opts, headers });
+  } catch (errRed) {
+    // Aquí NO hubo respuesta del servidor: el navegador no logró conectar.
+    // El mensaje nativo ("fetch failed" / "Failed to fetch") no dice nada útil,
+    // así que lo traducimos a la causa real, que casi siempre es una de dos.
+    const esLocal = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(CONFIG.API_BASE);
+    const sinConfigurar = /REEMPLAZA/i.test(CONFIG.API_BASE);
+    let msg;
+    if (sinConfigurar) {
+      msg =
+        "El panel no sabe a qué API conectarse: panel-web/config.js todavía " +
+        "tiene la URL de ejemplo. Reemplázala por la URL real de Railway.";
+    } else if (esLocal) {
+      msg =
+        `No hay respuesta de ${CONFIG.API_BASE}. El backend no está corriendo. ` +
+        "Abre una terminal en la carpeta backend/ y ejecuta: npm start " +
+        "(déjala abierta mientras usas el panel).";
+    } else {
+      msg =
+        `No se pudo conectar con ${CONFIG.API_BASE}. Puede ser que el servicio ` +
+        "esté caído, o que tu dominio no esté en CORS_ORIGINS del backend. " +
+        "Mira la consola (F12) para ver si el error menciona CORS.";
+    }
+    console.error("[ASA] Fallo de conexión con la API:", errRed);
+    throw new Error(msg);
+  }
+
   let data = null;
   try { data = await res.json(); } catch { /* respuesta vacía */ }
   if (res.status === 401) {
@@ -766,7 +794,7 @@ async function renderContratosPlagas() {
       [
         { key: "sitio", label: "Sitio", fmt: (r) => esc(r.asa_sitios?.nombre || "—") },
         { key: "frecuencia", label: "Frecuencia" },
-        { key: "monto_recurrente", label: "Monto", fmt: (r) => fmtMoney(r.monto_recurrente) },
+        { key: "precio", label: "Monto", fmt: (r) => fmtMoney(r.precio) },
       ],
       data,
       "No hay contratos activos."
@@ -784,7 +812,7 @@ async function renderContratosPlagas() {
           <div class="form-group"><label>Frecuencia</label>
             <select name="frecuencia"><option value="mensual">Mensual</option><option value="bimensual">Bimensual</option><option value="trimestral">Trimestral</option><option value="semestral">Semestral</option><option value="anual">Anual</option><option value="unico">Único</option></select>
           </div>
-          <div class="form-group"><label>Monto recurrente (RD$)</label><input type="number" step="0.01" name="monto_recurrente" /></div>
+          <div class="form-group"><label>Monto recurrente (RD$)</label><input type="number" step="0.01" name="precio" /></div>
         </div>`,
       onSubmit: async (fd) => {
         await post("/plagas/contratos", Object.fromEntries(fd.entries()));
@@ -814,21 +842,22 @@ async function viewIpm(content) {
   if (IPM_SUB === "estaciones") {
     const data = await get("/ipm/estaciones");
     $("#ipm-body").innerHTML = tableHTML(
-      [{ key: "codigo_qr", label: "Código QR" }, { key: "tipo_estacion", label: "Tipo" }, { key: "ubicacion", label: "Ubicación" }],
+      [{ key: "codigo_qr", label: "Código QR" }, { key: "tipo_estacion", label: "Tipo" }, { key: "ubicacion_descripcion", label: "Ubicación" }],
       data, "No hay estaciones registradas."
     );
   } else if (IPM_SUB === "lecturas") {
     const data = await get("/ipm/lecturas");
     $("#ipm-body").innerHTML = tableHTML(
-      [{ key: "fecha", label: "Fecha", fmt: (r) => fmtDate(r.fecha) }, { key: "actividad_detectada", label: "Actividad" }, { key: "observaciones", label: "Observaciones" }],
+      [{ key: "fecha", label: "Fecha", fmt: (r) => fmtDate(r.fecha) }, { key: "actividad_detectada", label: "Actividad" }, { key: "nivel_actividad", label: "Nivel" }, { key: "notas", label: "Notas" }],
       data, "No hay lecturas registradas."
     );
   } else {
     const data = await get("/ipm/permisos");
     $("#ipm-body").innerHTML = tableHTML(
       [
-        { key: "tipo_permiso", label: "Tipo" },
-        { key: "numero_permiso", label: "Número" },
+        { key: "tipo", label: "Tipo" },
+        { key: "numero_documento", label: "Número" },
+        { key: "entidad_emisora", label: "Entidad" },
         { key: "fecha_vencimiento", label: "Vence", fmt: (r) => fmtDate(r.fecha_vencimiento) },
         { key: "estado", label: "Estado", fmt: (r) => badge(r.estado) },
       ],
@@ -948,7 +977,13 @@ async function viewPos(content) {
   } else {
     const data = await get("/pos/cuadre-caja");
     $("#pos-body").innerHTML = tableHTML(
-      [{ key: "fecha", label: "Fecha", fmt: (r) => fmtDate(r.fecha) }, { key: "monto_esperado", label: "Esperado", fmt: (r) => fmtMoney(r.monto_esperado) }, { key: "monto_contado", label: "Contado", fmt: (r) => fmtMoney(r.monto_contado) }],
+      [
+        { key: "fecha", label: "Fecha", fmt: (r) => fmtDate(r.fecha) },
+        { key: "ventas_total", label: "Ventas", fmt: (r) => fmtMoney(r.ventas_total) },
+        { key: "efectivo_contado", label: "Efectivo contado", fmt: (r) => fmtMoney(r.efectivo_contado) },
+        { key: "diferencia", label: "Diferencia", fmt: (r) => fmtMoney(r.diferencia) },
+        { key: "cerrado", label: "Estado", fmt: (r) => (r.cerrado ? "Cerrado" : "Abierto") },
+      ],
       data, "Sin cuadres de caja registrados."
     );
   }
@@ -1090,7 +1125,13 @@ async function viewContabilidad(content) {
   } else {
     const data = await get("/contabilidad/cuentas-por-pagar");
     $("#conta-body").innerHTML = tableHTML(
-      [{ key: "suplidor", label: "Suplidor", fmt: (r) => esc(r.asa_suplidores?.nombre || "—") }, { key: "monto", label: "Monto", fmt: (r) => fmtMoney(r.monto) }, { key: "fecha_vencimiento", label: "Vence", fmt: (r) => fmtDate(r.fecha_vencimiento) }],
+      [
+        { key: "suplidor", label: "Suplidor", fmt: (r) => esc(r.asa_suplidores?.nombre || "—") },
+        { key: "descripcion", label: "Descripción" },
+        { key: "monto_original", label: "Monto", fmt: (r) => fmtMoney(r.monto_original) },
+        { key: "pendiente", label: "Pendiente", fmt: (r) => fmtMoney(Number(r.monto_original || 0) - Number(r.monto_pagado || 0)) },
+        { key: "fecha_vencimiento", label: "Vence", fmt: (r) => fmtDate(r.fecha_vencimiento) },
+      ],
       data, "No hay cuentas por pagar."
     );
   }

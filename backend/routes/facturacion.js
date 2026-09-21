@@ -2,7 +2,7 @@
 // 3 líneas de negocio (plagas, veterinaria/estética, tienda) — Ley 32-23.
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
-import { logAccion } from "../server.mjs";
+import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 

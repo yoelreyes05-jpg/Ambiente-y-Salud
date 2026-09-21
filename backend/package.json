@@ -1,13 +1,15 @@
 {
   "name": "asa-backend",
-  "version": "1.0.0",
-  "description": "Backend API - Ambiente y Salud RD (ASA SRL). Plagas + Veterinaria/Estetica + Tienda.",
+  "version": "2.0.0",
+  "description": "Backend API - Ambiente y Salud RD (ASA SRL). Control de plagas en clientes hoteleros: puntos de control con QR, inspecciones, portal del hotel.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@supabase/supabase-js": "2.45.4",
     "axios": "^1.7.0",
@@ -15,7 +17,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "exceljs": "^4.4.0"
   },
   "overrides": {
     "@supabase/storage-js": "2.7.1"
