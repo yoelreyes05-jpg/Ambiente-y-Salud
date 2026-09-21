@@ -193,7 +193,8 @@ const SECCIONES = [
 // backend, pero no se muestran. Para reactivar uno, devuélvelo a esta lista.
 const MODULES = [
   { key: "dashboard",      label: "Dashboard",      ic: "📊", seccion: "operacion", roles: null,      view: viewDashboard },
-  { key: "clientes",       label: "Clientes",       ic: "🏨", seccion: "operacion", roles: null,      view: viewClientes },
+  { key: "clientes",       label: "Clientes",       ic: "👥", seccion: "operacion", roles: null,      view: viewClientes },
+  { key: "plantas",        label: "Plantas",        ic: "🏨", seccion: "operacion", roles: null,      view: viewPlantas },
   { key: "usuarios",       label: "Usuarios",       ic: "🔐", seccion: "admin",     roles: ["admin"], view: viewUsuarios },
   { key: "notificaciones", label: "Notificaciones", ic: "🔔", seccion: "admin",     roles: null,      view: viewNotificaciones },
 ];
@@ -1289,6 +1290,301 @@ async function viewNotificaciones(content) {
 }
 
 // ── Arranque ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════
+// PLANTAS — hoteles del cliente, con sus áreas, puntos de control y el
+// tablero de habitaciones del día.
+//
+// Vocabulario: lo que la base llama `asa_sitios` aquí se llama "planta",
+// que es como ASA y los hoteles lo nombran (Inversiones Coralillo tiene las
+// plantas Coral Bávaro, Comunes, Dominicano, Joia…).
+// ═════════════════════════════════════════════════════════════════════════
+
+let TIPOS_PUNTO_CACHE = null;
+
+async function tiposPunto() {
+  if (!TIPOS_PUNTO_CACHE) TIPOS_PUNTO_CACHE = await get("/puntos/tipos");
+  return TIPOS_PUNTO_CACHE;
+}
+
+async function viewPlantas(content) {
+  content.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <h2>Plantas</h2>
+        <div class="actions"><span class="text-muted" id="plantas-conteo"></span></div>
+      </div>
+      <div class="toolbar">
+        <input type="search" id="buscar-planta" placeholder="Buscar por nombre de planta o cliente…" />
+      </div>
+      <div id="plantas-lista"><div class="center-msg">Cargando…</div></div>
+    </div>`;
+
+  const plantas = await get("/sitios");
+  $("#plantas-conteo").textContent = `${plantas.length} planta${plantas.length === 1 ? "" : "s"}`;
+
+  function pintar(filtro = "") {
+    const f = filtro.toLowerCase();
+    const lista = plantas.filter((p) => {
+      if (!f) return true;
+      const cli = p.asa_clientes?.razon_social || p.asa_clientes?.nombre_contacto || "";
+      return `${p.nombre} ${cli}`.toLowerCase().includes(f);
+    });
+
+    if (!lista.length) {
+      $("#plantas-lista").innerHTML = `<div class="center-msg">Ninguna planta coincide con la búsqueda.</div>`;
+      return;
+    }
+
+    $("#plantas-lista").innerHTML = `<div class="grid-plantas">${lista
+      .map((p) => {
+        const cli = esc(p.asa_clientes?.razon_social || p.asa_clientes?.nombre_contacto || "Sin cliente");
+        const habs = p.habitaciones_total
+          ? `<span class="chip">${p.habitaciones_total} habitaciones</span>`
+          : "";
+        return `
+          <div class="planta-card" data-id="${p.id}">
+            <div class="planta-nombre">${esc(p.nombre)}</div>
+            <div class="planta-cliente">${cli}</div>
+            <div class="planta-meta">
+              <span class="chip">${esc(p.tipo_sitio || "hotel")}</span>
+              ${habs}
+            </div>
+            <div class="planta-dir">${esc(p.direccion || "")}</div>
+          </div>`;
+      })
+      .join("")}</div>`;
+
+    $$(".planta-card").forEach((c) =>
+      c.addEventListener("click", () => abrirPlanta(c.dataset.id))
+    );
+  }
+  pintar();
+
+  let t;
+  $("#buscar-planta").addEventListener("input", (e) => {
+    clearTimeout(t);
+    t = setTimeout(() => pintar(e.target.value.trim()), 250);
+  });
+}
+
+// ── Ficha de una planta ──────────────────────────────────────────────────
+async function abrirPlanta(sitioId) {
+  const content = $("#content");
+  content.innerHTML = `<div class="center-msg">Cargando planta…</div>`;
+
+  const [ficha, areas, tipos] = await Promise.all([
+    get(`/sitios/${sitioId}`),
+    get(`/sitios/${sitioId}/areas`),
+    tiposPunto(),
+  ]);
+  const sitio = ficha.sitio || ficha;
+
+  content.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <button class="btn btn-sm" id="volver-plantas">← Plantas</button>
+          <h2 style="display:inline-block;margin-left:10px">${esc(sitio.nombre)}</h2>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btn-excel">Descargar historial (Excel)</button>
+        </div>
+      </div>
+      <div class="tabs" id="tabs-planta">
+        <button class="tab active" data-tab="puntos">Puntos de control</button>
+        <button class="tab" data-tab="hoy">Habitaciones — hoy</button>
+        <button class="tab" data-tab="pasadas">Habitaciones — pasadas</button>
+        <button class="tab" data-tab="areas">Áreas (${areas.length})</button>
+      </div>
+      <div id="tab-cuerpo"><div class="center-msg">Cargando…</div></div>
+    </div>`;
+
+  $("#volver-plantas").addEventListener("click", () => navigate("plantas"));
+  $("#btn-excel").addEventListener("click", () => descargarExcel(sitioId, sitio.nombre));
+
+  const cuerpo = $("#tab-cuerpo");
+  const pintores = {
+    puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
+    hoy: () => tabHabitacionesHoy(cuerpo, sitioId),
+    pasadas: () => tabHabitacionesPasadas(cuerpo, sitioId),
+    areas: () => tabAreas(cuerpo, areas),
+  };
+
+  $$("#tabs-planta .tab").forEach((b) =>
+    b.addEventListener("click", () => {
+      $$("#tabs-planta .tab").forEach((x) => x.classList.toggle("active", x === b));
+      cuerpo.innerHTML = `<div class="center-msg">Cargando…</div>`;
+      Promise.resolve(pintores[b.dataset.tab]()).catch((e) => {
+        cuerpo.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+      });
+    })
+  );
+  await pintores.puntos();
+}
+
+// ── Pestaña: puntos de control ───────────────────────────────────────────
+async function tabPuntos(cuerpo, sitioId, areas, tipos) {
+  cuerpo.innerHTML = `
+    <div class="toolbar">
+      <select id="f-tipo">
+        <option value="">Todos los tipos</option>
+        ${tipos.map((t) => `<option value="${esc(t.codigo)}">${esc(t.icono || "")} ${esc(t.nombre)}</option>`).join("")}
+      </select>
+      <select id="f-area">
+        <option value="">Todas las áreas</option>
+        ${areas.map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`).join("")}
+      </select>
+      <span class="text-muted" id="puntos-conteo"></span>
+    </div>
+    <div id="puntos-tabla"><div class="center-msg">Cargando…</div></div>`;
+
+  async function cargar() {
+    const tipo = $("#f-tipo").value;
+    const area = $("#f-area").value;
+    const qs = new URLSearchParams({ sitio_id: sitioId });
+    if (tipo) qs.set("tipo", tipo);
+    if (area) qs.set("area_id", area);
+
+    const r = await get(`/puntos?${qs}`);
+    // Sin `estado` la API devuelve { total, realizados, pendientes }
+    const lista = [...(r.realizados || []), ...(r.pendientes || [])];
+    $("#puntos-conteo").textContent =
+      `${r.total} punto${r.total === 1 ? "" : "s"} · ${(r.realizados || []).length} hechos hoy`;
+
+    $("#puntos-tabla").innerHTML = tableHTML(
+      [
+        { key: "codigo_visible", label: "Código" },
+        { key: "tipo_nombre", label: "Tipo", fmt: (p) => `${p.tipo_icono || ""} ${esc(p.tipo_nombre || "")}` },
+        { key: "area_nombre", label: "Área", fmt: (p) => esc(p.area_nombre || "—") },
+        { key: "frecuencia", label: "Frecuencia", fmt: (p) => badge(p.frecuencia) },
+        {
+          key: "hecho_hoy",
+          label: "Hoy",
+          fmt: (p) =>
+            p.hecho_hoy
+              ? `<span class="estado-chip hecho">Hecho</span>`
+              : `<span class="estado-chip pendiente">Pendiente</span>`,
+        },
+        { key: "qr_token", label: "QR impreso", fmt: (p) => `<code>${esc(p.qr_token)}</code>` },
+      ],
+      lista,
+      "Esta planta no tiene puntos de control con ese filtro."
+    );
+  }
+
+  $("#f-tipo").addEventListener("change", cargar);
+  $("#f-area").addEventListener("change", cargar);
+  await cargar();
+}
+
+// ── Pestaña: habitaciones de hoy (verde / rojo) ──────────────────────────
+async function tabHabitacionesHoy(cuerpo, sitioId) {
+  const r = await get(`/puntos?sitio_id=${sitioId}&tipo=habitacion`);
+  const hechas = r.realizados || [];
+  const faltan = r.pendientes || [];
+  const total = hechas.length + faltan.length;
+
+  if (!total) {
+    cuerpo.innerHTML = `<div class="center-msg">Esta planta no tiene habitaciones cargadas como puntos de control.</div>`;
+    return;
+  }
+
+  const pct = Math.round((hechas.length / total) * 100);
+  const celda = (p, clase) =>
+    `<div class="hab ${clase}" title="${esc(p.area_nombre || "")}">
+       ${esc(p.numero_habitacion || p.codigo_visible)}
+     </div>`;
+
+  cuerpo.innerHTML = `
+    <div class="resumen-dia">
+      <div><strong>${hechas.length}</strong> de <strong>${total}</strong> habitaciones hechas hoy</div>
+      <div class="barra"><span style="width:${pct}%"></span></div>
+      <div class="leyenda">
+        <span class="estado-chip hecho">Hecha</span>
+        <span class="estado-chip pendiente">Pendiente</span>
+      </div>
+    </div>
+    <div class="grid-habitaciones">
+      ${hechas.map((p) => celda(p, "hecho")).join("")}
+      ${faltan.map((p) => celda(p, "pendiente")).join("")}
+    </div>`;
+}
+
+// ── Pestaña: días anteriores ─────────────────────────────────────────────
+async function tabHabitacionesPasadas(cuerpo, sitioId) {
+  const r = await get(`/reportes/habitaciones?sitio_id=${sitioId}&dias=30`);
+  const dias = (r.por_dia || []).filter((d) => d.fecha !== hoyLocal());
+
+  if (!dias.length) {
+    cuerpo.innerHTML = `<div class="center-msg">Todavía no hay días anteriores registrados.</div>`;
+    return;
+  }
+
+  cuerpo.innerHTML = `
+    <div class="resumen-dia">
+      <div><strong>${r.habitaciones_total}</strong> habitaciones en la planta ·
+           <strong>${(r.vencidas || []).length}</strong> vencidas</div>
+    </div>
+    ${dias
+      .map(
+        (d) => `
+      <div class="dia-bloque">
+        <div class="dia-cabecera">${fmtDate(d.fecha)} — ${d.cantidad} habitaciones</div>
+        <div class="grid-habitaciones">
+          ${d.habitaciones
+            .map(
+              (x) =>
+                `<div class="hab hecho" title="${esc(x.tecnico || "")}">
+                   ${esc(x.habitacion)}
+                   ${x.actividad && x.actividad !== "ninguna" ? `<small>${esc(x.actividad)}</small>` : ""}
+                 </div>`
+            )
+            .join("")}
+        </div>
+      </div>`
+      )
+      .join("")}`;
+}
+
+// ── Pestaña: áreas ───────────────────────────────────────────────────────
+async function tabAreas(cuerpo, areas) {
+  cuerpo.innerHTML = tableHTML(
+    [
+      { key: "nombre", label: "Área" },
+      { key: "codigo", label: "Código", fmt: (a) => esc(a.codigo || "—") },
+      { key: "nivel", label: "Nivel", fmt: (a) => esc(a.nivel || "—") },
+      { key: "descripcion", label: "Descripción", fmt: (a) => esc(a.descripcion || "") },
+    ],
+    areas,
+    "Esta planta no tiene áreas definidas."
+  );
+}
+
+// ── Utilidades ───────────────────────────────────────────────────────────
+function hoyLocal() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+}
+
+async function descargarExcel(sitioId, nombrePlanta) {
+  // El endpoint devuelve el .xlsx como binario, así que no pasa por api()
+  // (que espera JSON). Se pide con fetch directo y el token en la cabecera.
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/reportes/excel?sitio_id=${sitioId}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `historial-${nombrePlanta.replace(/\s+/g, "-").toLowerCase()}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast(`No se pudo descargar el historial: ${e.message}`, true);
+  }
+}
+
 function boot() {
   if (DEMO_SKIP_LOGIN && !(TOKEN && USUARIO)) {
     USUARIO = { id: null, nombre: "Vista previa (sin login)", rol: "admin" };

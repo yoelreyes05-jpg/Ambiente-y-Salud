@@ -251,3 +251,47 @@ table.data tbody tr.clickable{cursor:pointer}
   .nav-section{width:100%;padding:0 4px;margin:8px 0 2px}
   .nav-item{margin-bottom:0}
 }
+
+/* ── Módulo Plantas ──────────────────────────────────────────────────────*/
+.text-muted{color:var(--text-muted);font-size:13px}
+
+.grid-plantas{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;
+}
+.planta-card{
+  border:1px solid var(--border);border-left:4px solid var(--asa-azul);
+  border-radius:var(--radius);padding:14px 16px;cursor:pointer;background:var(--card);
+  transition:box-shadow .15s,border-color .15s;
+}
+.planta-card:hover{box-shadow:0 4px 14px rgba(31,45,77,.10);border-left-color:var(--asa-verde)}
+.planta-nombre{font-weight:700;font-size:14.5px;line-height:1.3}
+.planta-cliente{color:var(--text-muted);font-size:12.5px;margin-top:2px}
+.planta-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.planta-dir{color:var(--text-muted);font-size:11.5px;margin-top:8px}
+
+.chip{
+  display:inline-block;background:var(--asa-azul-pastel);color:var(--asa-azul-osc);
+  padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;
+}
+
+/* Pestañas dentro de una ficha */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
+.tab{
+  background:none;border:none;border-bottom:2px solid transparent;
+  padding:9px 14px;font-size:13.5px;color:var(--text-muted);font-weight:600;
+}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--asa-azul);border-bottom-color:var(--asa-azul)}
+
+.resumen-dia{margin-bottom:16px}
+.resumen-dia .barra{
+  height:8px;background:var(--border);border-radius:20px;overflow:hidden;margin:8px 0;
+}
+.resumen-dia .barra span{display:block;height:100%;background:var(--asa-verde);border-radius:20px}
+.resumen-dia .leyenda{display:flex;gap:8px;margin-top:8px}
+
+.dia-bloque{margin-bottom:20px}
+.dia-cabecera{
+  font-size:13px;font-weight:700;color:var(--asa-azul-osc);
+  padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid var(--border);
+}
