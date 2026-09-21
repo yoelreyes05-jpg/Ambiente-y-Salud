@@ -26,6 +26,8 @@ const MODULOS_EXTRA = [
     roles: ["admin", "operaciones", "comercial"], view: viewEstrategias },
   { key: "tipos_punto", label: "Tipos de punto", ic: "🏷️", seccion: "catalogos",
     roles: ["admin", "operaciones"], view: viewTiposPunto },
+  { key: "accesos_hotel", label: "Accesos del hotel", ic: "🏨", seccion: "admin",
+    roles: ["admin", "comercial"], view: viewAccesosHotel },
 ];
 
 // ── Ayudantes ────────────────────────────────────────────────────────────
@@ -396,7 +398,13 @@ function modalPunto(sitioId, punto, areas, tipos, onSaved) {
         ? campo("Etiqueta QR ya impresa", `<input name="qr_token" placeholder="C205050474718" />`,
             "Déjalo vacío para que el sistema genere un QR nuevo. Si pegas una etiqueta de las que ya tienes impresas, escribe su código aquí.")
         : `<div class="campo"><span>Etiqueta QR</span><code class="qr-fijo">${esc(punto.qr_token)}</code>
-             <small class="ayuda">El QR no se puede cambiar. Si la etiqueta se dañó, desactiva el punto y crea otro.</small></div>`),
+             <small class="ayuda">El QR no se puede cambiar. Si la etiqueta se dañó, desactiva el punto y crea otro.</small></div>
+           <button type="button" class="btn btn-danger" id="punto-baja" style="margin-top:6px">
+             Dar de baja este punto
+           </button>`),
+    onMount() {
+      $("#punto-baja")?.addEventListener("click", () => darDeBajaPunto(punto, onSaved));
+    },
     async onSubmit(fd) {
       const cuerpo = {
         sitio_id: sitioId,
@@ -1323,6 +1331,229 @@ function modalMoverPuntos(sitioId, areas, tipos, onSaved) {
       const r = await patch("/puntos/area", cuerpo);
       closeModal();
       toast(`${r.movidos} puntos movidos`);
+      onSaved?.();
+    },
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// BAJA DE PUNTOS DE CONTROL
+//
+// Es baja lógica: el punto queda inactivo, desaparece de la ruta del técnico
+// y de los reportes, pero su historial de inspecciones sigue existiendo. Un
+// borrado real arrastraría en cascada las inspecciones, que es justo lo que el
+// hotel exige conservar en auditoría.
+//
+// Efecto colateral bueno: el QR sigue reservado, así que una baja por error se
+// deshace sin reimprimir la etiqueta.
+// ═════════════════════════════════════════════════════════════════════════
+async function darDeBajaPunto(punto, onSaved) {
+  if (!confirm(
+    `¿Dar de baja ${punto.codigo_visible}?\n\n` +
+    `Deja de aparecer en la ruta del técnico y en los reportes. Su historial ` +
+    `se conserva y la etiqueta QR queda reservada, así que se puede reactivar.`
+  )) return;
+
+  try {
+    await del(`/puntos/${punto.id}`);
+    closeModal();
+    toast(`${punto.codigo_visible} dado de baja`);
+    onSaved?.();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function modalEliminarPuntos(sitioId, areas, tipos, onSaved) {
+  openModal({
+    title: "Dar de baja puntos en masa",
+    large: true,
+    bodyHTML:
+      `<p class="text-muted">
+         Da de baja todos los puntos que cumplan el filtro. Hace falta al menos
+         un filtro: sin él borrarías la planta completa de un clic.
+       </p>` +
+      campo("Área", `<select name="area_id"><option value="">Todas</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
+      campo("Tipo", `<select name="tipo_codigo"><option value="">Todos</option>${opciones(tipos, null, (t) => t.codigo, (t) => t.nombre)}</select>`) +
+      `<div id="baja-previa"></div>`,
+    submitLabel: "Revisar",
+    async onSubmit(fd) {
+      const area_id = fd.get("area_id") || undefined;
+      const tipo_codigo = fd.get("tipo_codigo") || undefined;
+      if (!area_id && !tipo_codigo) throw new Error("Elige al menos un área o un tipo");
+
+      const cuerpo = { sitio_id: sitioId, area_id, tipo_codigo };
+      const boton = $("#asa-modal-submit");
+
+      if (boton.dataset.confirmar !== "si") {
+        const r = await post("/puntos/eliminar", { ...cuerpo, simular: true });
+        if (!r.eliminarian) {
+          $("#baja-previa").innerHTML =
+            `<div class="resumen-import">Ningún punto cumple ese filtro.</div>`;
+          boton.disabled = false;
+          return;
+        }
+        $("#baja-previa").innerHTML = `
+          <div class="resumen-import" style="background:#fef2f2;color:#b91c1c">
+            Se darían de baja <strong>${r.eliminarian}</strong> punto(s).
+            Su historial se conserva y se pueden reactivar.
+          </div>`;
+        boton.dataset.confirmar = "si";
+        boton.textContent = `Dar de baja ${r.eliminarian}`;
+        boton.classList.add("btn-danger");
+        boton.disabled = false;
+        return;
+      }
+
+      const r = await post("/puntos/eliminar", cuerpo);
+      closeModal();
+      toast(`${r.eliminados} puntos dados de baja`);
+      onSaved?.();
+    },
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ACCESOS DEL HOTEL
+//
+// Cuentas de solo lectura para el personal de calidad. Cada cuenta ve
+// ÚNICAMENTE las plantas que se le asignen: la encargada de calidad de
+// Iberostar Comunes no ve nada de Coral Bávaro, porque son dependencias
+// distintas con responsables distintos.
+//
+// El filtro no es cosa de la interfaz: el backend lo aplica en cada consulta
+// (middleware cargarAlcance + filtrarPorSitio contra asa_usuario_sitios), así
+// que aunque alguien llame la API a mano no puede ver otra planta.
+// ═════════════════════════════════════════════════════════════════════════
+async function viewAccesosHotel(content) {
+  content.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <h2>Accesos del hotel</h2>
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-nuevo-acceso">+ Nueva cuenta</button>
+        </div>
+      </div>
+      <p class="text-muted">
+        Cuentas de solo lectura para el personal de calidad de cada hotel.
+        Ven en tiempo real lo que el técnico registra, solo de las plantas
+        que les asignes.
+      </p>
+      <div id="accesos-tabla"><div class="center-msg">Cargando…</div></div>
+    </div>`;
+
+  async function cargar() {
+    const [cuentas, plantas] = await Promise.all([get("/usuarios/portal"), get("/sitios")]);
+
+    $("#accesos-tabla").innerHTML = tableHTML(
+      [
+        { key: "nombre_completo", label: "Persona", fmt: (u) => esc(u.nombre_completo || "—") },
+        { key: "email", label: "Correo" },
+        {
+          key: "plantas",
+          label: "Plantas que ve",
+          fmt: (u) => {
+            const ss = (u.asa_usuario_sitios || []).map((s) => s.asa_sitios?.nombre).filter(Boolean);
+            return ss.length
+              ? ss.map((n) => `<span class="chip">${esc(n)}</span>`).join(" ")
+              : `<span class="estado-chip pendiente">Sin plantas</span>`;
+          },
+        },
+        {
+          key: "activo",
+          label: "Estado",
+          fmt: (u) =>
+            u.activo
+              ? `<span class="estado-chip hecho">Activa</span>`
+              : `<span class="estado-chip fuera">Desactivada</span>`,
+        },
+        { key: "ultimo_acceso", label: "Último acceso", fmt: (u) => (u.ultimo_acceso ? fmtDateTime(u.ultimo_acceso) : "Nunca entró") },
+      ],
+      cuentas,
+      "Todavía no hay cuentas de hotel. Crea una por cada encargado de calidad."
+    );
+
+    $("#accesos-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
+      tr.addEventListener("click", () =>
+        modalAcceso(cuentas.find((u) => u.id === tr.dataset.id), plantas, cargar)
+      )
+    );
+
+    $("#btn-nuevo-acceso").onclick = () => modalAcceso(null, plantas, cargar);
+  }
+  await cargar();
+}
+
+function modalAcceso(cuenta, plantas, onSaved) {
+  const esNueva = !cuenta;
+  const asignadas = new Set((cuenta?.asa_usuario_sitios || []).map((s) => s.sitio_id));
+
+  const listaPlantas = plantas
+    .map(
+      (p) => `
+      <label class="campo-check">
+        <input type="checkbox" name="sitio" value="${p.id}" ${asignadas.has(p.id) ? "checked" : ""} />
+        ${esc(p.nombre)}
+      </label>`
+    )
+    .join("");
+
+  openModal({
+    title: esNueva ? "Nueva cuenta de hotel" : `Editar acceso de ${cuenta.nombre_completo || cuenta.email}`,
+    large: true,
+    bodyHTML:
+      (esNueva
+        ? campo("Nombre de la persona", `<input name="nombre_completo" required placeholder="Leticia Álvarez" />`) +
+          campo("Correo", `<input name="email" type="email" required placeholder="calidad.comunes@iberostar.com" />`) +
+          campo("Contraseña", `<input name="password" type="password" required minlength="8" />`,
+            "Mínimo 8 caracteres. Entrégasela a la persona por un canal seguro; el sistema guarda solo un hash.")
+        : `<div class="campo"><span>Correo</span>
+             <code class="qr-fijo">${esc(cuenta.email)}</code>
+             <small class="ayuda">El correo no se cambia. Si hace falta otro, desactiva esta cuenta y crea una nueva.</small>
+           </div>`) +
+      `<div class="campo">
+         <span>Plantas que puede ver</span>
+         <div class="lista-plantas">${listaPlantas}</div>
+         <small class="ayuda">
+           Solo verá estas. Es el mismo filtro que aplica el servidor en cada
+           consulta, no un escondite de la pantalla.
+         </small>
+       </div>` +
+      (esNueva
+        ? ""
+        : `<button type="button" class="btn btn-danger" id="acceso-estado" style="margin-top:6px">
+             ${cuenta.activo ? "Desactivar esta cuenta" : "Reactivar esta cuenta"}
+           </button>`),
+    onMount() {
+      const b = $("#acceso-estado");
+      if (!b) return;
+      b.addEventListener("click", async () => {
+        try {
+          await patch(`/usuarios/${cuenta.id}/activo`, { activo: !cuenta.activo });
+          closeModal();
+          toast(cuenta.activo ? "Cuenta desactivada" : "Cuenta reactivada");
+          onSaved?.();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      });
+    },
+    async onSubmit(fd) {
+      const sitios = fd.getAll("sitio");
+      if (!sitios.length) throw new Error("Asigna al menos una planta: sin plantas la cuenta no ve nada");
+
+      if (esNueva) {
+        await post("/usuarios/portal", {
+          nombre_completo: (fd.get("nombre_completo") || "").trim(),
+          email: (fd.get("email") || "").trim().toLowerCase(),
+          password: fd.get("password"),
+          sitios,
+        });
+      } else {
+        await put(`/usuarios/portal/${cuenta.id}/sitios`, { sitios });
+      }
+      closeModal();
+      toast(esNueva ? "Cuenta creada" : "Plantas actualizadas");
       onSaved?.();
     },
   });

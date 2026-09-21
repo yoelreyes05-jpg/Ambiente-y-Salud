@@ -1423,6 +1423,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <button class="btn btn-sm" id="pt-importar">Importar Excel</button>
       <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
       <button class="btn btn-sm" id="pt-etiquetas">Imprimir QR</button>
+      <button class="btn btn-sm btn-danger" id="pt-baja">Dar de baja</button>
     </div>
     <div id="puntos-tabla"><div class="center-msg">Cargando…</div></div>`;
 
@@ -1475,6 +1476,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
   $("#pt-etiquetas").addEventListener("click", () =>
     imprimirEtiquetas(sitioId, $("#f-area").value || null)
   );
+  $("#pt-baja").addEventListener("click", () => modalEliminarPuntos(sitioId, areas, tipos, cargar));
 
   await cargar();
 }

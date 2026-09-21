@@ -828,6 +828,87 @@ router.patch("/:id/plano", requireRol("operaciones"), async (req, res) => {
 });
 
 // DELETE /puntos/:id — baja lógica: el historial de inspecciones se conserva
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /puntos/eliminar — baja masiva
+//
+// Va como POST y no como DELETE porque necesita cuerpo (filtros), y varios
+// intermediarios descartan el cuerpo de un DELETE.
+//
+// Body: { sitio_id?, area_id?, tipo_codigo?, punto_ids?, simular? }
+//
+// Es BAJA LÓGICA, igual que la individual: el punto queda con activo=false.
+// Borrarlo de verdad arrastraría en cascada sus inspecciones, y con ellas el
+// historial que el hotel firma en auditoría. Un punto dado de baja desaparece
+// de la ruta del técnico y de los reportes, que es lo que se busca.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/eliminar", requireRol("operaciones"), async (req, res) => {
+  const { sitio_id, area_id, tipo_codigo, punto_ids, simular = false } = req.body;
+
+  if (!punto_ids?.length && !sitio_id) {
+    return res.status(400).json({ error: true, mensaje: "Indica punto_ids o sitio_id" });
+  }
+  // Un sitio_id suelto borraría la planta entera de un clic. Se exige al menos
+  // un filtro que acote, o la lista explícita de puntos.
+  if (!punto_ids?.length && !area_id && !tipo_codigo) {
+    return res.status(400).json({
+      error: true,
+      mensaje: "Para una baja masiva filtra por área o por tipo. Sin filtro borrarías la planta completa.",
+    });
+  }
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  let tipoResuelto = null;
+  if (tipo_codigo) {
+    tipoResuelto = await resolverTipo({ tipo_codigo });
+    if (!tipoResuelto) return res.status(400).json({ error: true, mensaje: `Tipo "${tipo_codigo}" no existe` });
+  }
+
+  const filtrar = (q) => {
+    if (punto_ids?.length) return q.in("id", punto_ids);
+    q = q.eq("sitio_id", sitio_id).eq("activo", true);
+    if (area_id) q = q.eq("area_id", area_id);
+    if (tipoResuelto) q = q.eq("tipo_punto_id", tipoResuelto.id);
+    return q;
+  };
+
+  if (simular) {
+    const { count, error } = await filtrar(
+      supabase.from("asa_puntos_control").select("id", { count: "exact", head: true })
+    );
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    return res.json({ eliminarian: count || 0, simulado: true });
+  }
+
+  const { data, error } = await filtrar(
+    supabase.from("asa_puntos_control").update({ activo: false })
+  ).select("id, codigo_visible");
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+
+  logAccion(req, {
+    accion: "eliminar",
+    modulo: "puntos",
+    registroId: sitio_id ?? null,
+    descripcion: `Baja de ${data.length} punto(s)`,
+  });
+  res.json({ eliminados: data.length });
+});
+
+// POST /puntos/:id/reactivar — deshacer una baja
+//
+// Existe porque la baja es lógica: si se borró por error, el punto y su QR
+// siguen ahí y se pueden recuperar sin reimprimir la etiqueta.
+router.post("/:id/reactivar", requireRol("operaciones"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("asa_puntos_control")
+    .update({ activo: true })
+    .eq("id", req.params.id)
+    .select("id, codigo_visible, qr_token")
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+  logAccion(req, { accion: "actualizar", modulo: "puntos", registroId: data.id, descripcion: "Reactivado" });
+  res.json(data);
+});
+
 router.delete("/:id", requireRol("operaciones"), async (req, res) => {
   const { error } = await supabase.from("asa_puntos_control").update({ activo: false }).eq("id", req.params.id);
   if (error) return res.status(500).json({ error: true, mensaje: error.message });

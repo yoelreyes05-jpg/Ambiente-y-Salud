@@ -399,3 +399,10 @@ table.data tbody tr.clickable{cursor:pointer}
 .pto-item.armado{background:var(--asa-verde-pastel);border-color:var(--asa-verde)}
 .pto-cod{font-size:13px;font-weight:700}
 .pto-area{font-size:11px;color:var(--text-muted)}
+
+/* Lista de plantas asignables a una cuenta de hotel */
+.lista-plantas{
+  max-height:260px;overflow-y:auto;border:1px solid var(--border);
+  border-radius:8px;padding:8px 10px;margin-top:5px;
+}
+.lista-plantas .campo-check{margin-bottom:4px;font-weight:400}
