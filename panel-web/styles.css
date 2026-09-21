@@ -1,22 +1,36 @@
 /* styles.css — Ambiente y Salud RD (ASA SRL) — Panel administrativo
-   Paleta tomada del logo real: verde (plagas), cian (veterinaria/estética),
-   teal (tienda). Fondo claro, igual tono que solido-web. */
+   Paleta tomada del logo oficial: azul #32539C, azul claro #BAC9E1,
+   verde #609C63. Los nombres de variable antiguos se conservan como alias
+   para que el resto de la hoja adopte la marca sin reescribirse. */
 
 :root{
-  --asa-green:#4e9d2f;
-  --asa-green-dark:#3d7a24;
-  --asa-cyan:#159fd6;
-  --asa-cyan-dark:#0f7ba8;
-  --asa-teal:#0d9488;
-  --bg:#f4f7f6;
+  /* ── Marca ASA ── */
+  --asa-azul:#32539C;
+  --asa-azul-osc:#24407C;
+  --asa-azul-medio:#4A6FB5;
+  --asa-azul-claro:#BAC9E1;
+  --asa-azul-pastel:#EAF0F8;
+  --asa-verde:#609C63;
+  --asa-verde-osc:#4A7D4D;
+  --asa-verde-pastel:#EDF5EE;
+
+  /* ── Alias de compatibilidad (no borrar: los usan reglas más abajo) ── */
+  --asa-green:var(--asa-verde);
+  --asa-green-dark:var(--asa-verde-osc);
+  --asa-cyan:var(--asa-azul);
+  --asa-cyan-dark:var(--asa-azul-osc);
+  --asa-teal:var(--asa-azul-medio);
+
+  --bg:#f5f7fa;
   --card:#ffffff;
-  --border:#e2e8e5;
-  --text:#1f2a24;
-  --text-muted:#5f6f68;
+  --border:#e3e8ef;
+  --text:#1c2433;
+  --text-muted:#64748b;
   --danger:#dc2626;
   --warning:#d97706;
+  --ok:var(--asa-verde);
   --radius:10px;
-  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow:0 1px 3px rgba(31,45,77,.07),0 1px 2px rgba(31,45,77,.05);
 }
 
 *{box-sizing:border-box}
@@ -33,7 +47,7 @@ a{color:var(--asa-cyan-dark)}
 /* ── Login ─────────────────────────────────────────────────────────────── */
 .login-wrap{
   min-height:100vh;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,var(--asa-green) 0%,var(--asa-cyan) 55%,var(--asa-teal) 100%);
+  background:linear-gradient(135deg,var(--asa-azul-osc) 0%,var(--asa-azul) 55%,var(--asa-verde) 100%);
   padding:20px;
 }
 .login-card{
@@ -41,9 +55,7 @@ a{color:var(--asa-cyan-dark)}
   width:100%;max-width:380px;padding:36px 32px;
 }
 .login-logo{
-  width:64px;height:64px;border-radius:16px;margin:0 auto 14px;
-  background:linear-gradient(135deg,var(--asa-green),var(--asa-cyan));
-  display:flex;align-items:center;justify-content:center;font-size:30px;color:#fff;
+  display:block;width:100%;max-width:230px;height:auto;margin:0 auto 20px;
 }
 .login-card h1{font-size:19px;text-align:center;margin:0 0 4px}
 .login-card p.sub{text-align:center;color:var(--text-muted);font-size:13px;margin:0 0 24px}
@@ -54,7 +66,7 @@ a{color:var(--asa-cyan-dark)}
 .login-card input:focus{outline:none;border-color:var(--asa-cyan)}
 .btn-login{
   width:100%;margin-top:22px;padding:11px;border:none;border-radius:8px;
-  background:linear-gradient(135deg,var(--asa-green),var(--asa-cyan));
+  background:linear-gradient(135deg,var(--asa-azul) 0%,var(--asa-verde) 100%);
   color:#fff;font-weight:700;font-size:15px;
 }
 .btn-login:disabled{opacity:.6;cursor:default}
@@ -66,40 +78,42 @@ a{color:var(--asa-cyan-dark)}
 /* ── Shell ─────────────────────────────────────────────────────────────── */
 .app-shell{display:flex;min-height:100vh}
 .sidebar{
-  width:230px;flex:0 0 230px;background:#16281f;color:#e6f0ea;
+  width:236px;flex:0 0 236px;background:var(--asa-azul-osc);color:#dfe7f4;
   display:flex;flex-direction:column;
 }
 .sidebar-brand{
-  display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid rgba(255,255,255,.08);
+  background:#fff;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.12);
 }
-.sidebar-brand .logo-chip{
-  width:34px;height:34px;border-radius:9px;flex:0 0 34px;
-  background:linear-gradient(135deg,var(--asa-green),var(--asa-cyan));
-  display:flex;align-items:center;justify-content:center;font-size:16px;
+.sidebar-brand img{display:block;width:100%;height:auto}
+
+.nav-section{margin:14px 0 4px;padding:0 12px}
+.nav-section:first-child{margin-top:4px}
+.nav-section-title{
+  font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:rgba(255,255,255,.45);padding:0 0 6px;
 }
-.sidebar-brand .name{font-size:13px;font-weight:700;line-height:1.25}
-.sidebar-brand .name small{display:block;font-weight:400;opacity:.65;font-size:10.5px}
 
 .nav{flex:1;overflow-y:auto;padding:10px 8px}
 .nav-item{
   display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;
-  font-size:13.5px;color:#cfe0d6;cursor:pointer;margin-bottom:2px;user-select:none;
+  font-size:13.5px;color:#c6d4ea;cursor:pointer;margin-bottom:2px;user-select:none;
 }
 .nav-item:hover{background:rgba(255,255,255,.06)}
-.nav-item.active{background:rgba(255,255,255,.14);color:#fff;font-weight:600}
+.nav-item.active{background:var(--asa-verde);color:#fff;font-weight:600}
 .nav-item .ic{width:18px;text-align:center}
 
-.sidebar-foot{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:#9db3a7}
+.sidebar-foot{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);font-size:11.5px;color:rgba(255,255,255,.45)}
 
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .topbar{
-  height:56px;flex:0 0 56px;background:var(--card);border-bottom:1px solid var(--border);
+  height:58px;flex:0 0 58px;background:var(--card);
+  border-bottom:1px solid var(--border);box-shadow:inset 0 -3px 0 var(--asa-azul-claro);
   display:flex;align-items:center;justify-content:space-between;padding:0 22px;
 }
 .topbar .titulo{font-size:15px;font-weight:700}
 .topbar .quien{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text-muted)}
 .topbar .rol-badge{
-  background:#eef6f0;color:var(--asa-green-dark);padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:700;
+  background:var(--asa-azul-pastel);color:var(--asa-azul-osc);padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:700;
 }
 .btn-logout{
   background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12.5px;color:var(--text-muted);
@@ -206,3 +220,34 @@ table.data tbody tr.clickable{cursor:pointer}
 .muted{color:var(--text-muted)}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .center-msg{text-align:center;padding:60px 20px;color:var(--text-muted)}
+
+
+/* ── Estado de habitaciones / puntos del día ─────────────────────────────*/
+.estado-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;
+  font-size:12px;font-weight:700;line-height:1.6;
+}
+.estado-chip.hecho{background:var(--asa-verde-pastel);color:var(--asa-verde-osc)}
+.estado-chip.pendiente{background:#fef2f2;color:#b91c1c}
+.estado-chip.fuera{background:#f1f5f9;color:var(--text-muted)}
+
+.grid-habitaciones{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;
+}
+.hab{
+  border:1.5px solid transparent;border-radius:8px;padding:10px 6px;text-align:center;
+  font-size:13px;font-weight:700;cursor:pointer;
+}
+.hab.hecho{background:var(--asa-verde-pastel);border-color:var(--asa-verde);color:var(--asa-verde-osc)}
+.hab.pendiente{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+.hab.fuera{background:#f8fafc;border-color:var(--border);color:#94a3b8}
+.hab small{display:block;font-weight:500;font-size:10.5px;opacity:.8;margin-top:2px}
+
+/* ── Sidebar en pantallas chicas ─────────────────────────────────────────*/
+@media (max-width:860px){
+  .app-shell{flex-direction:column}
+  .sidebar{width:100%;flex:0 0 auto}
+  .nav{display:flex;flex-wrap:wrap;gap:4px;padding:8px}
+  .nav-section{width:100%;padding:0 4px;margin:8px 0 2px}
+  .nav-item{margin-bottom:0}
+}

@@ -165,9 +165,8 @@ function renderLogin(msg) {
   document.body.innerHTML = `
     <div class="login-wrap">
       <form class="login-card" id="login-form">
-        <div class="login-logo">🌿</div>
-        <h1>${CONFIG.NOMBRE_SISTEMA}</h1>
-        <p class="sub">${CONFIG.SIGLAS} — Panel administrativo</p>
+        <img class="login-logo" src="assets/logo-asa.png" alt="${CONFIG.NOMBRE_SISTEMA}" />
+        <p class="sub">Panel administrativo</p>
         <label for="login-email">Correo</label>
         <input id="login-email" type="email" autocomplete="username" required />
         <label for="login-password">Contraseña</label>
@@ -181,21 +180,31 @@ function renderLogin(msg) {
 }
 
 // ── Módulos / navegación ─────────────────────────────────────────────────
+// Secciones del menú. El orden de este array es el orden en pantalla.
+const SECCIONES = [
+  { key: "operacion",  label: "Operación" },
+  { key: "catalogos",  label: "Catálogos" },
+  { key: "admin",      label: "Administración" },
+];
+
+// Módulos ACTIVOS. Los de veterinaria, estética, POS, facturación,
+// contabilidad y nómina quedaron congelados: su código sigue en este archivo
+// (viewMascotas, viewCitas, ... más abajo) y sus rutas siguen vivas en el
+// backend, pero no se muestran. Para reactivar uno, devuélvelo a esta lista.
 const MODULES = [
-  { key: "dashboard", label: "Dashboard", ic: "📊", roles: null, view: viewDashboard },
-  { key: "clientes", label: "Clientes", ic: "👥", roles: null, view: viewClientes },
-  { key: "mascotas", label: "Mascotas / Fichas", ic: "🐾", roles: ["admin", "comercial", "operaciones", "veterinario", "groomer"], view: viewMascotas },
-  { key: "citas", label: "Citas", ic: "📅", roles: ["admin", "comercial", "operaciones", "veterinario", "groomer"], view: viewCitas },
-  { key: "plagas", label: "Plagas — Órdenes", ic: "🐜", roles: ["admin", "operaciones", "comercial", "tecnico_plagas"], view: viewPlagas },
-  { key: "ipm", label: "IPM / Cumplimiento", ic: "📋", roles: ["admin", "operaciones", "tecnico_plagas"], view: viewIpm },
-  { key: "estetica", label: "Estética", ic: "✂️", roles: ["admin", "operaciones", "comercial", "groomer"], view: viewEstetica },
-  { key: "inventario", label: "Inventario", ic: "📦", roles: ["admin", "operaciones", "cajero"], view: viewInventario },
-  { key: "pos", label: "Tienda (POS)", ic: "🛒", roles: ["admin", "comercial", "cajero"], view: viewPos },
-  { key: "facturacion", label: "Facturación", ic: "🧾", roles: ["admin", "contabilidad"], view: viewFacturacion },
-  { key: "contabilidad", label: "Contabilidad", ic: "💰", roles: ["admin", "contabilidad"], view: viewContabilidad },
-  { key: "nomina", label: "Nómina", ic: "💵", roles: ["admin", "nomina"], view: viewNomina },
-  { key: "usuarios", label: "Usuarios", ic: "🔐", roles: ["admin"], view: viewUsuarios },
-  { key: "notificaciones", label: "Notificaciones", ic: "🔔", roles: null, view: viewNotificaciones },
+  { key: "dashboard",      label: "Dashboard",      ic: "📊", seccion: "operacion", roles: null,      view: viewDashboard },
+  { key: "clientes",       label: "Clientes",       ic: "🏨", seccion: "operacion", roles: null,      view: viewClientes },
+  { key: "usuarios",       label: "Usuarios",       ic: "🔐", seccion: "admin",     roles: ["admin"], view: viewUsuarios },
+  { key: "notificaciones", label: "Notificaciones", ic: "🔔", seccion: "admin",     roles: null,      view: viewNotificaciones },
+];
+
+// Congelados a propósito (ver comentario arriba). Se deja la lista escrita
+// para que se vea qué existe y no se reimplemente por error:
+//   mascotas, citas, plagas, ipm, estetica, inventario, pos,
+//   facturacion, contabilidad, nomina
+const MODULOS_CONGELADOS = [
+  "mascotas", "citas", "plagas", "ipm", "estetica",
+  "inventario", "pos", "facturacion", "contabilidad", "nomina",
 ];
 function modulosPermitidos() {
   return MODULES.filter((m) => !m.roles || m.roles.includes(USUARIO.rol));
@@ -206,8 +215,7 @@ function renderShell() {
     <div class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <div class="logo-chip">🌿</div>
-          <div class="name">${CONFIG.NOMBRE_SISTEMA}<small>${CONFIG.SIGLAS}</small></div>
+          <img src="assets/logo-asa.png" alt="${CONFIG.NOMBRE_SISTEMA} (${CONFIG.SIGLAS})" />
         </div>
         <nav class="nav" id="nav"></nav>
         <div class="sidebar-foot">API: ${CONFIG.API_BASE.replace(/^https?:\/\//, "")}</div>
@@ -226,10 +234,17 @@ function renderShell() {
     </div>`;
 
   const nav = $("#nav");
-  modulosPermitidos().forEach((m) => {
-    const item = h(`<div class="nav-item" data-key="${m.key}"><span class="ic">${m.ic}</span><span>${m.label}</span></div>`);
-    item.addEventListener("click", () => navigate(m.key));
-    nav.appendChild(item);
+  const permitidos = modulosPermitidos();
+  SECCIONES.forEach((sec) => {
+    const deLaSeccion = permitidos.filter((m) => m.seccion === sec.key);
+    if (!deLaSeccion.length) return; // una sección sin módulos visibles no se dibuja
+    const grupo = h(`<div class="nav-section"><div class="nav-section-title">${esc(sec.label)}</div></div>`);
+    deLaSeccion.forEach((m) => {
+      const item = h(`<div class="nav-item" data-key="${m.key}"><span class="ic">${m.ic}</span><span>${m.label}</span></div>`);
+      item.addEventListener("click", () => navigate(m.key));
+      grupo.appendChild(item);
+    });
+    nav.appendChild(grupo);
   });
   $("#btn-logout").addEventListener("click", () => logout());
   navigate("dashboard");
