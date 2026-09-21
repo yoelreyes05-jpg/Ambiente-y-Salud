@@ -108,8 +108,25 @@ export function exigirSitioPermitido(req, res, sitioId) {
 }
 
 // Solo lectura: bloquea cualquier método que modifique datos.
+// Lo único que una cuenta externa SÍ puede escribir: reportar una plaga.
+// El portal del hotel necesita crear órdenes de trabajo; si no, el encargado
+// de calidad ve el problema y no tiene cómo pedir la visita.
+//
+// Se compara la ruta completa (baseUrl + path) porque este middleware corre
+// antes de que Express entre al router, así que req.path todavía es "/".
+const ESCRITURAS_PERMITIDAS_EXTERNAS = [
+  { metodo: "POST", ruta: "/plagas/reportar" },
+];
+
 export function soloLectura(req, res, next) {
   if (req.method === "GET" || req.method === "OPTIONS" || req.method === "HEAD") return next();
+
+  const rutaCompleta = (req.baseUrl || "") + (req.path || "");
+  const permitida = ESCRITURAS_PERMITIDAS_EXTERNAS.some(
+    (p) => p.metodo === req.method && rutaCompleta.replace(/\/+$/, "") === p.ruta
+  );
+  if (permitida) return next();
+
   if (ROLES_EXTERNOS.includes(req.usuario?.rol)) {
     return res.status(403).json({
       error: true,

@@ -146,6 +146,14 @@ async function handleLogin(e) {
   try {
     const data = await api("/usuarios/login", { method: "POST", body: JSON.stringify({ email, password }) });
     TOKEN = data.token; USUARIO = data.usuario;
+    // Las cuentas externas tienen su propia aplicación. Si entraran aquí verían
+    // un panel administrativo recortado y sin sentido para ellas.
+    if (USUARIO.rol === "cliente_calidad") {
+      throw new Error(
+        "Esta cuenta es del portal del hotel, no del panel administrativo. " +
+        "Entra por la dirección del portal que te dio Ambiente y Salud RD."
+      );
+    }
     if (USUARIO.rol === "cliente") {
       throw new Error("Este panel es solo para personal interno. Usa la app de clientes.");
     }

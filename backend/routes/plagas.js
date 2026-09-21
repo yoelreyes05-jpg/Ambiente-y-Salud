@@ -4,6 +4,7 @@
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
+import { filtrarPorSitio, exigirSitioPermitido } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -35,6 +36,16 @@ router.get("/ordenes", async (req, res) => {
     .from("asa_ordenes_trabajo")
     .select("*, asa_clientes(nombre_contacto), asa_sitios(nombre, direccion)")
     .order("created_at", { ascending: false });
+
+  // Sin esto, una cuenta de hotel veía las órdenes de TODOS los hoteles: esta
+  // ruta era la única del módulo que no aplicaba el alcance por sitio.
+  if (req.query.sitio_id) {
+    if (!exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+    q = q.eq("sitio_id", req.query.sitio_id);
+  } else {
+    q = filtrarPorSitio(q, req);
+  }
+
   if (req.query.cliente_id) q = q.eq("cliente_id", req.query.cliente_id);
   if (req.query.estado) q = q.eq("estado", req.query.estado);
   if (req.query.tecnico_id) q = q.eq("tecnico_id", req.query.tecnico_id);
@@ -67,6 +78,7 @@ router.post("/reportar", async (req, res) => {
   if (!cliente_id || !sitio_id) {
     return res.status(400).json({ error: true, mensaje: "cliente_id y sitio_id son requeridos" });
   }
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
 
   // Si el sitio tiene un contrato activo, se enlaza automáticamente
   const { data: contrato } = await supabase
