@@ -814,6 +814,85 @@ router.patch("/area", requireRol("operaciones", "comercial"), async (req, res) =
   res.json({ movidos: data.length });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /puntos/estrategia — asignar estrategia en masa
+//
+// Es lo que decide QUÉ PREGUNTAS ve el técnico al escanear. Un punto sin
+// estrategia, o con una que no tiene preguntas para su tipo, le muestra al
+// técnico solo estado y nivel de actividad.
+//
+// Body: { sitio_id?, estrategia_id, area_id?, tipo_codigo?, punto_ids?, simular? }
+//   estrategia_id = null deja los puntos sin estrategia.
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch("/estrategia", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { sitio_id, estrategia_id, area_id, tipo_codigo, punto_ids, simular = false } = req.body;
+
+  if (!sitio_id && !punto_ids?.length) {
+    return res.status(400).json({ error: true, mensaje: "Indica sitio_id o una lista de punto_ids" });
+  }
+  if (estrategia_id === undefined) {
+    return res.status(400).json({ error: true, mensaje: "estrategia_id es requerido (usa null para quitarla)" });
+  }
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  if (estrategia_id) {
+    const { data: est } = await supabase
+      .from("asa_estrategias")
+      .select("id, nombre")
+      .eq("id", estrategia_id)
+      .maybeSingle();
+    if (!est) return res.status(400).json({ error: true, mensaje: "Esa estrategia no existe" });
+  }
+
+  let tipoResuelto = null;
+  if (tipo_codigo) {
+    tipoResuelto = await resolverTipo({ tipo_codigo });
+    if (!tipoResuelto) return res.status(400).json({ error: true, mensaje: `Tipo "${tipo_codigo}" no existe` });
+  }
+
+  const filtrar = (q) => {
+    if (punto_ids?.length) return q.in("id", punto_ids);
+    q = q.eq("sitio_id", sitio_id).eq("activo", true);
+    if (area_id) q = q.eq("area_id", area_id);
+    if (tipoResuelto) q = q.eq("tipo_punto_id", tipoResuelto.id);
+    return q;
+  };
+
+  if (simular) {
+    const { count, error } = await filtrar(
+      supabase.from("asa_puntos_control").select("id", { count: "exact", head: true })
+    );
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+
+    // Se informa cuántas preguntas quedarían activas para ese tipo: es el dato
+    // que responde "¿esto le va a mostrar algo al técnico?"
+    let preguntas = null;
+    if (estrategia_id && tipoResuelto) {
+      const { count: c } = await supabase
+        .from("asa_preguntas")
+        .select("id", { count: "exact", head: true })
+        .eq("estrategia_id", estrategia_id)
+        .eq("activa", true)
+        .or(`tipo_punto_id.eq.${tipoResuelto.id},tipo_punto_id.is.null`);
+      preguntas = c || 0;
+    }
+    return res.json({ cambiarian: count || 0, preguntas_para_ese_tipo: preguntas, simulado: true });
+  }
+
+  const { data, error } = await filtrar(
+    supabase.from("asa_puntos_control").update({ estrategia_id: estrategia_id || null })
+  ).select("id");
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "puntos",
+    registroId: sitio_id ?? null,
+    descripcion: `Estrategia aplicada a ${data.length} punto(s)`,
+  });
+  res.json({ actualizados: data.length });
+});
+
 // PATCH /puntos/:id/plano — colocar el pin del punto sobre el plano
 router.patch("/:id/plano", requireRol("operaciones"), async (req, res) => {
   const { plano_id, plano_x, plano_y } = req.body;

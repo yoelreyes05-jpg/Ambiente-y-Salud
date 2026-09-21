@@ -380,8 +380,10 @@ function modalArea(sitioId, area, onSaved) {
 // ═════════════════════════════════════════════════════════════════════════
 // PUNTOS DE CONTROL
 // ═════════════════════════════════════════════════════════════════════════
-function modalPunto(sitioId, punto, areas, tipos, onSaved) {
+async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
   const esNuevo = !punto;
+  // Se cargan antes de pintar: el <select> de estrategia se arma con ellas.
+  await estrategiasLista().catch(() => []);
   openModal({
     title: esNuevo ? "Nuevo punto de control" : `Editar ${punto.codigo_visible}`,
     large: true,
@@ -394,6 +396,12 @@ function modalPunto(sitioId, punto, areas, tipos, onSaved) {
       campo("Número de habitación", `<input name="numero_habitacion" value="${esc(punto?.numero_habitacion || "")}" />`,
         "Solo si el tipo es Habitación.") +
       campo("Frecuencia", `<select name="frecuencia">${opcionesFrecuencia(punto?.frecuencia)}</select>`) +
+      campo("Estrategia",
+        `<select name="estrategia_id">
+           <option value="">Sin estrategia</option>
+           ${opciones(ESTRATEGIAS_CACHE || [], punto?.estrategia_id, (e) => e.id, (e) => e.nombre)}
+         </select>`,
+        "Decide qué preguntas ve el técnico al escanear este punto.") +
       (esNuevo
         ? campo("Etiqueta QR ya impresa", `<input name="qr_token" placeholder="C205050474718" />`,
             "Déjalo vacío para que el sistema genere un QR nuevo. Si pegas una etiqueta de las que ya tienes impresas, escribe su código aquí.")
@@ -415,6 +423,7 @@ function modalPunto(sitioId, punto, areas, tipos, onSaved) {
         ubicacion_descripcion: (fd.get("ubicacion_descripcion") || "").trim() || null,
         numero_habitacion: (fd.get("numero_habitacion") || "").trim() || null,
         frecuencia: fd.get("frecuencia"),
+        estrategia_id: fd.get("estrategia_id") || null,
       };
       if (esNuevo) {
         const qr = (fd.get("qr_token") || "").trim();
@@ -1554,6 +1563,83 @@ function modalAcceso(cuenta, plantas, onSaved) {
       }
       closeModal();
       toast(esNueva ? "Cuenta creada" : "Plantas actualizadas");
+      onSaved?.();
+    },
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ESTRATEGIA DE LOS PUNTOS
+//
+// La cadena completa, que es donde se pierde todo el mundo:
+//
+//   punto → estrategia_id → preguntas de esa estrategia
+//                           cuyo tipo_punto_id sea el del punto (o "todos")
+//
+// Si el técnico no ve preguntas, es uno de estos tres casos:
+//   · el punto no tiene estrategia asignada
+//   · la estrategia que tiene no es la que estás editando
+//   · las preguntas están en esa estrategia pero para OTRO tipo de punto
+//
+// La columna "Preguntas" del listado de puntos muestra el resultado final de
+// esa cadena, así no hay que adivinar.
+// ═════════════════════════════════════════════════════════════════════════
+let ESTRATEGIAS_CACHE = null;
+
+async function estrategiasLista() {
+  if (!ESTRATEGIAS_CACHE) ESTRATEGIAS_CACHE = await get("/estrategias");
+  return ESTRATEGIAS_CACHE;
+}
+
+function modalEstrategiaMasiva(sitioId, areas, tipos, estrategias, onSaved) {
+  openModal({
+    title: "Asignar estrategia en masa",
+    large: true,
+    bodyHTML:
+      `<p class="text-muted">
+         La estrategia decide qué preguntas ve el técnico al escanear. Filtra
+         por tipo para aplicar la estrategia correcta a cada grupo de puntos.
+       </p>` +
+      campo("Área", `<select name="area_id"><option value="">Todas</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
+      campo("Tipo de punto", `<select name="tipo_codigo"><option value="">Todos</option>${opciones(tipos, null, (t) => t.codigo, (t) => t.nombre)}</select>`) +
+      campo("Estrategia a aplicar",
+        `<select name="estrategia_id" required>${opciones(estrategias, null, (e) => e.id, (e) => e.nombre)}</select>`) +
+      `<div id="estr-previa"></div>`,
+    submitLabel: "Revisar",
+    async onSubmit(fd) {
+      const cuerpo = {
+        sitio_id: sitioId,
+        area_id: fd.get("area_id") || undefined,
+        tipo_codigo: fd.get("tipo_codigo") || undefined,
+        estrategia_id: fd.get("estrategia_id"),
+      };
+      const boton = $("#asa-modal-submit");
+
+      if (boton.dataset.confirmar !== "si") {
+        const r = await patch("/puntos/estrategia", { ...cuerpo, simular: true });
+        const aviso =
+          r.preguntas_para_ese_tipo === 0
+            ? `<div style="margin-top:8px;color:#b91c1c">
+                 Ojo: esa estrategia no tiene ninguna pregunta para ese tipo de punto.
+                 El técnico seguiría viendo solo estado y nivel de actividad.
+               </div>`
+            : r.preguntas_para_ese_tipo != null
+            ? `<div style="margin-top:8px">El técnico vería <strong>${r.preguntas_para_ese_tipo}</strong> pregunta(s).</div>`
+            : "";
+        $("#estr-previa").innerHTML = `
+          <div class="resumen-import">
+            Se cambiarían <strong>${r.cambiarian}</strong> punto(s).${aviso}
+          </div>`;
+        boton.dataset.confirmar = "si";
+        boton.textContent = "Confirmar";
+        boton.disabled = false;
+        return;
+      }
+
+      const r = await patch("/puntos/estrategia", cuerpo);
+      ESTRATEGIAS_CACHE = null;
+      closeModal();
+      toast(`${r.actualizados} puntos actualizados`);
       onSaved?.();
     },
   });

@@ -1422,6 +1422,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <button class="btn btn-sm" id="pt-masivo">Crear en masa</button>
       <button class="btn btn-sm" id="pt-importar">Importar Excel</button>
       <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
+      <button class="btn btn-sm" id="pt-estrategia">Estrategia en masa</button>
       <button class="btn btn-sm" id="pt-etiquetas">Imprimir QR</button>
       <button class="btn btn-sm btn-danger" id="pt-baja">Dar de baja</button>
     </div>
@@ -1437,8 +1438,12 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
     const r = await get(`/puntos?${qs}`);
     // Sin `estado` la API devuelve { total, realizados, pendientes }
     const lista = [...(r.realizados || []), ...(r.pendientes || [])];
-    $("#puntos-conteo").textContent =
-      `${r.total} punto${r.total === 1 ? "" : "s"} · ${(r.realizados || []).length} hechos hoy`;
+    const sinPreguntas = lista.filter((p) => p.preguntas_total === 0).length;
+    $("#puntos-conteo").innerHTML =
+      `${r.total} punto${r.total === 1 ? "" : "s"} · ${(r.realizados || []).length} hechos hoy` +
+      (sinPreguntas
+        ? ` · <span class="estado-chip pendiente">${sinPreguntas} sin preguntas para el técnico</span>`
+        : "");
 
     $("#puntos-tabla").innerHTML = tableHTML(
       [
@@ -1453,6 +1458,17 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
             p.hecho_hoy
               ? `<span class="estado-chip hecho">Hecho</span>`
               : `<span class="estado-chip pendiente">Pendiente</span>`,
+        },
+        { key: "estrategia_nombre", label: "Estrategia", fmt: (p) => esc(p.estrategia_nombre || "— sin estrategia —") },
+        {
+          key: "preguntas_total",
+          label: "Preguntas",
+          fmt: (p) =>
+            p.preguntas_total == null
+              ? "—"
+              : p.preguntas_total > 0
+              ? `<span class="estado-chip hecho">${p.preguntas_total}</span>`
+              : `<span class="estado-chip pendiente">0</span>`,
         },
         { key: "qr_token", label: "QR impreso", fmt: (p) => `<code>${esc(p.qr_token)}</code>` },
       ],
@@ -1477,6 +1493,9 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
     imprimirEtiquetas(sitioId, $("#f-area").value || null)
   );
   $("#pt-baja").addEventListener("click", () => modalEliminarPuntos(sitioId, areas, tipos, cargar));
+  $("#pt-estrategia").addEventListener("click", async () =>
+    modalEstrategiaMasiva(sitioId, areas, tipos, await estrategiasLista(), cargar)
+  );
 
   await cargar();
 }
