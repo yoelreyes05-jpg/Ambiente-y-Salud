@@ -737,6 +737,83 @@ router.patch("/frecuencia", requireRol("operaciones", "comercial"), async (req, 
   res.json({ actualizados: data.length, frecuencia });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /puntos/area — mover puntos de un área a otra, en masa
+//
+// Renombrar un área ya se propaga sola a todos sus puntos (cuelgan de ella por
+// id, no por texto). Esto es para el otro caso: cuando los puntos quedaron en
+// el área equivocada y hay que moverlos sin tocarlos uno por uno.
+//
+// Body: { sitio_id, area_destino_id, area_origen_id?, tipo_codigo?, punto_ids? }
+//   · con punto_ids  → mueve exactamente esos
+//   · sin punto_ids  → mueve todos los del sitio que cumplan los filtros
+//   · area_origen_id = "null" (texto) → los que no tienen área asignada
+//
+// Con simular:true devuelve cuántos movería sin tocar nada.
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch("/area", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { sitio_id, area_destino_id, area_origen_id, tipo_codigo, punto_ids, simular = false } = req.body;
+
+  if (!sitio_id && !punto_ids?.length) {
+    return res.status(400).json({ error: true, mensaje: "Indica sitio_id o una lista de punto_ids" });
+  }
+  if (area_destino_id === undefined) {
+    return res.status(400).json({ error: true, mensaje: "area_destino_id es requerido (usa null para dejarlos sin área)" });
+  }
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  // El área destino tiene que ser de la misma planta: un punto del Coral
+  // Bávaro no puede quedar apuntando a un área de Comunes.
+  if (area_destino_id) {
+    const { data: destino } = await supabase
+      .from("asa_areas")
+      .select("id, sitio_id, nombre")
+      .eq("id", area_destino_id)
+      .maybeSingle();
+    if (!destino) return res.status(400).json({ error: true, mensaje: "El área destino no existe" });
+    if (sitio_id && destino.sitio_id !== sitio_id) {
+      return res.status(400).json({ error: true, mensaje: "El área destino pertenece a otra planta" });
+    }
+  }
+
+  let tipoResuelto = null;
+  if (tipo_codigo) {
+    tipoResuelto = await resolverTipo({ tipo_codigo });
+    if (!tipoResuelto) return res.status(400).json({ error: true, mensaje: `Tipo "${tipo_codigo}" no existe` });
+  }
+
+  const filtrar = (q) => {
+    if (punto_ids?.length) return q.in("id", punto_ids);
+    q = q.eq("sitio_id", sitio_id).eq("activo", true);
+    if (area_origen_id === "null" || area_origen_id === null) q = q.is("area_id", null);
+    else if (area_origen_id) q = q.eq("area_id", area_origen_id);
+    if (tipoResuelto) q = q.eq("tipo_punto_id", tipoResuelto.id);
+    return q;
+  };
+
+  if (simular) {
+    const { count, error } = await filtrar(
+      supabase.from("asa_puntos_control").select("id", { count: "exact", head: true })
+    );
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    return res.json({ moverian: count || 0, simulado: true });
+  }
+
+  const { data, error } = await filtrar(
+    supabase.from("asa_puntos_control").update({ area_id: area_destino_id || null })
+  ).select("id");
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "puntos",
+    registroId: sitio_id ?? null,
+    descripcion: `${data.length} punto(s) movidos de área`,
+  });
+  res.json({ movidos: data.length });
+});
+
 // PATCH /puntos/:id/plano — colocar el pin del punto sobre el plano
 router.patch("/:id/plano", requireRol("operaciones"), async (req, res) => {
   const { plano_id, plano_x, plano_y } = req.body;

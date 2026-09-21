@@ -226,6 +226,78 @@ router.post("/:id/planos", requireRol("operaciones"), async (req, res) => {
 });
 
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /sitios/areas/:areaId/fusionar — unir dos áreas duplicadas
+//
+// El export del sistema anterior dejó áreas repetidas que solo cambian en
+// mayúsculas o en una palabra ("buffet" y "Buffet central"). Esto mueve todos
+// los puntos del área origen a la destino y da de baja la origen.
+//
+// Body: { destino_id, simular? }
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/areas/:areaId/fusionar", requireRol("operaciones"), async (req, res) => {
+  const origenId = req.params.areaId;
+  const { destino_id, simular = false } = req.body;
+
+  if (!destino_id) return res.status(400).json({ error: true, mensaje: "destino_id es requerido" });
+  if (destino_id === origenId) {
+    return res.status(400).json({ error: true, mensaje: "El área origen y la destino son la misma" });
+  }
+
+  const { data: areas, error: errA } = await supabase
+    .from("asa_areas")
+    .select("id, sitio_id, nombre")
+    .in("id", [origenId, destino_id]);
+  if (errA) return res.status(500).json({ error: true, mensaje: errA.message });
+
+  const origen = (areas || []).find((a) => a.id === origenId);
+  const destino = (areas || []).find((a) => a.id === destino_id);
+  if (!origen || !destino) return res.status(404).json({ error: true, mensaje: "Alguna de las dos áreas no existe" });
+  if (origen.sitio_id !== destino.sitio_id) {
+    return res.status(400).json({ error: true, mensaje: "Las dos áreas tienen que ser de la misma planta" });
+  }
+  if (!exigirSitioPermitido(req, res, origen.sitio_id)) return;
+
+  const { count } = await supabase
+    .from("asa_puntos_control")
+    .select("id", { count: "exact", head: true })
+    .eq("area_id", origenId);
+
+  if (simular) {
+    return res.json({
+      simulado: true,
+      moverian: count || 0,
+      origen: origen.nombre,
+      destino: destino.nombre,
+    });
+  }
+
+  const { data: movidos, error } = await supabase
+    .from("asa_puntos_control")
+    .update({ area_id: destino_id })
+    .eq("area_id", origenId)
+    .select("id");
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+
+  // Los planos que apuntaban al área origen también se reapuntan, si no
+  // quedarían colgando de un área dada de baja.
+  await supabase.from("asa_planos").update({ area_id: destino_id }).eq("area_id", origenId);
+
+  // Baja lógica de la origen: no se borra, por si hay que revisar el histórico
+  const { error: errBaja } = await supabase.from("asa_areas").update({ activo: false }).eq("id", origenId);
+  if (errBaja) return res.status(500).json({ error: true, mensaje: errBaja.message });
+
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "areas",
+    registroId: destino_id,
+    descripcion: `"${origen.nombre}" fusionada en "${destino.nombre}" (${movidos.length} puntos)`,
+  });
+
+  res.json({ movidos: movidos.length, origen: origen.nombre, destino: destino.nombre });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /sitios/:id/planos/subir — sube la imagen del plano y crea el registro
 //

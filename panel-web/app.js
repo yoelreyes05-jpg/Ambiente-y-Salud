@@ -1553,8 +1553,14 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
   cuerpo.innerHTML = `
     <div class="toolbar">
       <button class="btn btn-primary btn-sm" id="area-nueva">+ Área</button>
-      <span class="text-muted">Toca un área para corregir su nombre.</span>
+      <button class="btn btn-sm" id="area-fusionar">Fusionar duplicadas</button>
+      <button class="btn btn-sm" id="area-mover">Mover puntos</button>
     </div>
+    <p class="text-muted">
+      Toca un área para corregir su nombre: el cambio llega solo a todos sus
+      puntos, porque cuelgan del área y no guardan el texto. "Fusionar" es para
+      áreas repetidas; "Mover puntos" para cuando quedaron en el área equivocada.
+    </p>
     <div id="areas-tabla"></div>`;
 
   $("#areas-tabla").innerHTML = tableHTML(
@@ -1562,6 +1568,7 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
       { key: "nombre", label: "Área" },
       { key: "codigo", label: "Código", fmt: (a) => esc(a.codigo || "—") },
       { key: "nivel", label: "Nivel", fmt: (a) => esc(a.nivel || "—") },
+      { key: "puntos_total", label: "Puntos", fmt: (a) => a.puntos_total ?? "—" },
       { key: "descripcion", label: "Descripción", fmt: (a) => esc(a.descripcion || "") },
     ],
     areas,
@@ -1569,6 +1576,10 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
   );
 
   $("#area-nueva").addEventListener("click", () => modalArea(sitioId, null, recargar));
+  $("#area-fusionar").addEventListener("click", () => modalFusionarAreas(sitioId, areas, recargar));
+  $("#area-mover").addEventListener("click", async () =>
+    modalMoverPuntos(sitioId, areas, await tiposPunto(), recargar)
+  );
   $("#areas-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
     tr.addEventListener("click", () =>
       modalArea(sitioId, areas.find((a) => a.id === tr.dataset.id), recargar)

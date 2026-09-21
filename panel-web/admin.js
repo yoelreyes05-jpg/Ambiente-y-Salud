@@ -1203,3 +1203,127 @@ function modalSubirPlano(sitioId, areas, onSaved) {
     },
   });
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// CORRECCIÓN MASIVA DE ÁREAS
+//
+// Dos cosas distintas que se confunden seguido:
+//
+//   · RENOMBRAR un área ("Habitación huested" → "Habitación huésped") ya
+//     afecta a todos sus puntos de una vez. No hay nada masivo que hacer: los
+//     puntos cuelgan del área por id, no guardan el texto. Se edita una vez y
+//     los 583 quedan corregidos.
+//
+//   · Lo que sí hacía falta es arreglar cuando los PUNTOS quedaron en el área
+//     equivocada. Para eso están las dos funciones de abajo: fusionar áreas
+//     duplicadas y mover puntos de un área a otra.
+//
+// Las dos muestran primero cuántos puntos se van a tocar y solo escriben al
+// confirmar, porque son operaciones que agarran cientos de filas de un golpe.
+// ═════════════════════════════════════════════════════════════════════════
+
+function modalFusionarAreas(sitioId, areas, onSaved) {
+  if (areas.length < 2) {
+    toast("Hacen falta al menos dos áreas para fusionar", true);
+    return;
+  }
+  const etiqueta = (a) => `${a.nombre}${a.puntos_total != null ? ` (${a.puntos_total} puntos)` : ""}`;
+
+  openModal({
+    title: "Fusionar dos áreas",
+    large: true,
+    bodyHTML:
+      `<p class="text-muted">
+         Para áreas duplicadas del sistema anterior, del tipo "buffet" y
+         "Buffet central". Los puntos del área que desaparece se pasan a la que
+         se queda.
+       </p>` +
+      campo("Área que desaparece",
+        `<select name="origen" required>${opciones(areas, null, (a) => a.id, etiqueta)}</select>`) +
+      campo("Área que se queda",
+        `<select name="destino" required>${opciones(areas, null, (a) => a.id, etiqueta)}</select>`) +
+      `<div id="fusion-previa"></div>`,
+    submitLabel: "Revisar",
+    async onSubmit(fd) {
+      const origen = fd.get("origen");
+      const destino = fd.get("destino");
+      if (origen === destino) throw new Error("Elegiste la misma área dos veces");
+
+      const boton = $("#asa-modal-submit");
+      if (boton.dataset.confirmar !== "si") {
+        const r = await post(`/sitios/areas/${origen}/fusionar`, { destino_id: destino, simular: true });
+        $("#fusion-previa").innerHTML = `
+          <div class="resumen-import">
+            Se moverían <strong>${r.moverian}</strong> punto(s) de
+            <strong>${esc(r.origen)}</strong> a <strong>${esc(r.destino)}</strong>,
+            y <strong>${esc(r.origen)}</strong> quedaría dada de baja.
+          </div>`;
+        boton.dataset.confirmar = "si";
+        boton.textContent = "Confirmar fusión";
+        boton.disabled = false;
+        return;
+      }
+
+      const r = await post(`/sitios/areas/${origen}/fusionar`, { destino_id: destino });
+      closeModal();
+      toast(`${r.movidos} puntos movidos a ${r.destino}`);
+      onSaved?.();
+    },
+  });
+}
+
+function modalMoverPuntos(sitioId, areas, tipos, onSaved) {
+  const etiqueta = (a) => `${a.nombre}${a.puntos_total != null ? ` (${a.puntos_total})` : ""}`;
+
+  openModal({
+    title: "Mover puntos de área",
+    large: true,
+    bodyHTML:
+      `<p class="text-muted">
+         Mueve de golpe todos los puntos que cumplan el filtro. Útil cuando una
+         carga quedó apuntando al área equivocada.
+       </p>` +
+      campo("Vienen de",
+        `<select name="origen">
+           <option value="">Cualquier área</option>
+           <option value="null">Sin área asignada</option>
+           ${opciones(areas, null, (a) => a.id, etiqueta)}
+         </select>`) +
+      campo("Solo del tipo",
+        `<select name="tipo"><option value="">Todos los tipos</option>${opciones(tipos, null, (t) => t.codigo, (t) => t.nombre)}</select>`) +
+      campo("Pasan a",
+        `<select name="destino" required>${opciones(areas, null, (a) => a.id, etiqueta)}</select>`) +
+      `<div id="mover-previa"></div>`,
+    submitLabel: "Revisar",
+    async onSubmit(fd) {
+      const cuerpo = {
+        sitio_id: sitioId,
+        area_origen_id: fd.get("origen") || undefined,
+        tipo_codigo: fd.get("tipo") || undefined,
+        area_destino_id: fd.get("destino"),
+      };
+
+      const boton = $("#asa-modal-submit");
+      if (boton.dataset.confirmar !== "si") {
+        const r = await patch("/puntos/area", { ...cuerpo, simular: true });
+        if (!r.moverian) {
+          $("#mover-previa").innerHTML =
+            `<div class="resumen-import">Ningún punto cumple ese filtro. Revisa el origen y el tipo.</div>`;
+          boton.disabled = false;
+          return;
+        }
+        $("#mover-previa").innerHTML = `
+          <div class="resumen-import">Se moverían <strong>${r.moverian}</strong> punto(s).</div>`;
+        boton.dataset.confirmar = "si";
+        boton.textContent = "Confirmar";
+        boton.disabled = false;
+        return;
+      }
+
+      const r = await patch("/puntos/area", cuerpo);
+      closeModal();
+      toast(`${r.movidos} puntos movidos`);
+      onSaved?.();
+    },
+  });
+}
