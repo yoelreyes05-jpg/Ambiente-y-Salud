@@ -295,3 +295,47 @@ table.data tbody tr.clickable{cursor:pointer}
   font-size:13px;font-weight:700;color:var(--asa-azul-osc);
   padding-bottom:6px;margin-bottom:8px;border-bottom:1px solid var(--border);
 }
+
+/* ── Formularios de los modales de administración ────────────────────────*/
+.campo{display:block;margin-bottom:14px}
+.campo > span,.campo{font-size:13px;font-weight:600}
+.campo input,.campo select,.campo textarea{
+  display:block;width:100%;margin-top:5px;padding:9px 11px;
+  border:1px solid var(--border);border-radius:8px;font-weight:400;
+}
+.campo input:focus,.campo select:focus,.campo textarea:focus{
+  outline:none;border-color:var(--asa-azul);
+}
+.campo input[readonly]{background:#f8fafc;color:var(--text-muted)}
+.campo .ayuda{display:block;margin-top:5px;font-weight:400;font-size:11.5px;color:var(--text-muted)}
+.campo-check{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px}
+.campo-check input{width:auto}
+.qr-fijo{
+  display:inline-block;margin-top:5px;background:var(--asa-azul-pastel);
+  color:var(--asa-azul-osc);padding:5px 10px;border-radius:6px;font-size:12.5px;
+}
+.btn-danger{color:#b91c1c;border-color:#fecaca}
+.btn-danger:hover{background:#fef2f2}
+.toolbar-sep{flex:1}
+
+.resumen-import{
+  margin-top:14px;padding:12px 14px;background:var(--asa-azul-pastel);
+  border-radius:8px;font-size:13px;line-height:1.9;
+}
+
+/* ── Preguntas de una estrategia ─────────────────────────────────────────*/
+.grupo-preguntas{margin-bottom:20px}
+.pregunta{
+  display:flex;align-items:center;gap:12px;padding:10px 12px;
+  border:1px solid var(--border);border-radius:8px;margin-bottom:6px;
+}
+.pregunta-texto{flex:1;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.pregunta-meta{font-size:11.5px;color:var(--text-muted);white-space:nowrap}
+.pregunta-acciones{display:flex;gap:6px}
+
+/* ── Histograma ──────────────────────────────────────────────────────────*/
+.hist-svg{width:100%;height:190px;display:block;background:#fbfcfe;border-radius:8px}
+.hist-ejes{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-top:6px}
+.hist-leyenda{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px}
+.hist-leyenda .serie{display:flex;align-items:center;gap:6px}
+.hist-leyenda i{width:11px;height:11px;border-radius:3px;display:inline-block}

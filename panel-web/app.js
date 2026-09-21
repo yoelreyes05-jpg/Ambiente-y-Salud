@@ -199,6 +199,10 @@ const MODULES = [
   { key: "notificaciones", label: "Notificaciones", ic: "🔔", seccion: "admin",     roles: null,      view: viewNotificaciones },
 ];
 
+// admin.js (cargado antes que este archivo) aporta Estrategias y Tipos de
+// punto. Si por lo que sea no cargó, el panel sigue funcionando sin ellos.
+if (typeof MODULOS_EXTRA !== "undefined") MODULES.push(...MODULOS_EXTRA);
+
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:
 //   mascotas, citas, plagas, ipm, estetica, inventario, pos,
@@ -389,7 +393,19 @@ async function viewDashboard(content) {
         alertas,
         "Inventario dentro de los niveles mínimos."
       )}
-    </div>`;
+    </div>
+    <div id="dash-histograma"></div>`;
+
+  // El histograma vive en admin.js; si ese archivo no cargó, el dashboard
+  // simplemente no lo muestra en vez de reventar.
+  if (typeof pintarHistograma === "function") {
+    try {
+      await pintarHistograma($("#dash-histograma"));
+    } catch (e) {
+      $("#dash-histograma").innerHTML =
+        `<div class="card"><div class="form-error" style="display:block">${esc(e.message)}</div></div>`;
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1311,7 +1327,10 @@ async function viewPlantas(content) {
     <div class="card">
       <div class="card-head">
         <h2>Plantas</h2>
-        <div class="actions"><span class="text-muted" id="plantas-conteo"></span></div>
+        <div class="actions">
+          <span class="text-muted" id="plantas-conteo"></span>
+          <button class="btn btn-primary" id="btn-nueva-planta">+ Nueva planta</button>
+        </div>
       </div>
       <div class="toolbar">
         <input type="search" id="buscar-planta" placeholder="Buscar por nombre de planta o cliente…" />
@@ -1360,6 +1379,11 @@ async function viewPlantas(content) {
   }
   pintar();
 
+  $("#btn-nueva-planta").addEventListener("click", async () => {
+    const clientes = await get("/clientes");
+    modalPlanta(clientes, null, () => navigate("plantas"));
+  });
+
   let t;
   $("#buscar-planta").addEventListener("input", (e) => {
     clearTimeout(t);
@@ -1387,6 +1411,7 @@ async function abrirPlanta(sitioId) {
           <h2 style="display:inline-block;margin-left:10px">${esc(sitio.nombre)}</h2>
         </div>
         <div class="actions">
+          <button class="btn" id="btn-editar-planta">Editar planta</button>
           <button class="btn" id="btn-excel">Descargar historial (Excel)</button>
         </div>
       </div>
@@ -1401,13 +1426,17 @@ async function abrirPlanta(sitioId) {
 
   $("#volver-plantas").addEventListener("click", () => navigate("plantas"));
   $("#btn-excel").addEventListener("click", () => descargarExcel(sitioId, sitio.nombre));
+  $("#btn-editar-planta").addEventListener("click", async () => {
+    const clientes = await get("/clientes");
+    modalPlanta(clientes, sitio, () => abrirPlanta(sitioId));
+  });
 
   const cuerpo = $("#tab-cuerpo");
   const pintores = {
     puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
     hoy: () => tabHabitacionesHoy(cuerpo, sitioId),
     pasadas: () => tabHabitacionesPasadas(cuerpo, sitioId),
-    areas: () => tabAreas(cuerpo, areas),
+    areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
   };
 
   $$("#tabs-planta .tab").forEach((b) =>
@@ -1435,6 +1464,12 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
         ${areas.map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`).join("")}
       </select>
       <span class="text-muted" id="puntos-conteo"></span>
+      <span class="toolbar-sep"></span>
+      <button class="btn btn-primary btn-sm" id="pt-nuevo">+ Punto</button>
+      <button class="btn btn-sm" id="pt-masivo">Crear en masa</button>
+      <button class="btn btn-sm" id="pt-importar">Importar Excel</button>
+      <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
+      <button class="btn btn-sm" id="pt-etiquetas">Imprimir QR</button>
     </div>
     <div id="puntos-tabla"><div class="center-msg">Cargando…</div></div>`;
 
@@ -1470,10 +1505,24 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       lista,
       "Esta planta no tiene puntos de control con ese filtro."
     );
+    $("#puntos-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
+      tr.addEventListener("click", () =>
+        modalPunto(sitioId, lista.find((p) => p.id === tr.dataset.id), areas, tipos, cargar)
+      )
+    );
   }
 
   $("#f-tipo").addEventListener("change", cargar);
   $("#f-area").addEventListener("change", cargar);
+
+  $("#pt-nuevo").addEventListener("click", () => modalPunto(sitioId, null, areas, tipos, cargar));
+  $("#pt-masivo").addEventListener("click", () => modalPuntosMasivo(sitioId, areas, tipos, cargar));
+  $("#pt-importar").addEventListener("click", () => modalImportarPuntos(sitioId, cargar));
+  $("#pt-frecuencia").addEventListener("click", () => modalFrecuenciaMasiva(sitioId, areas, tipos, cargar));
+  $("#pt-etiquetas").addEventListener("click", () =>
+    imprimirEtiquetas(sitioId, $("#f-area").value || null)
+  );
+
   await cargar();
 }
 
@@ -1547,8 +1596,15 @@ async function tabHabitacionesPasadas(cuerpo, sitioId) {
 }
 
 // ── Pestaña: áreas ───────────────────────────────────────────────────────
-async function tabAreas(cuerpo, areas) {
-  cuerpo.innerHTML = tableHTML(
+async function tabAreas(cuerpo, areas, sitioId, recargar) {
+  cuerpo.innerHTML = `
+    <div class="toolbar">
+      <button class="btn btn-primary btn-sm" id="area-nueva">+ Área</button>
+      <span class="text-muted">Toca un área para corregir su nombre.</span>
+    </div>
+    <div id="areas-tabla"></div>`;
+
+  $("#areas-tabla").innerHTML = tableHTML(
     [
       { key: "nombre", label: "Área" },
       { key: "codigo", label: "Código", fmt: (a) => esc(a.codigo || "—") },
@@ -1557,6 +1613,13 @@ async function tabAreas(cuerpo, areas) {
     ],
     areas,
     "Esta planta no tiene áreas definidas."
+  );
+
+  $("#area-nueva").addEventListener("click", () => modalArea(sitioId, null, recargar));
+  $("#areas-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
+    tr.addEventListener("click", () =>
+      modalArea(sitioId, areas.find((a) => a.id === tr.dataset.id), recargar)
+    )
   );
 }
 

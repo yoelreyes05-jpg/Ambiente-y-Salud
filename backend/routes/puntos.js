@@ -21,6 +21,8 @@ export const urlQR = (token) => `${APP_TECNICO_URL}/p/${token}`;
 // ─────────────────────────────────────────────────────────────────────────────
 // Catálogo de tipos de punto
 // ─────────────────────────────────────────────────────────────────────────────
+const FRECUENCIAS_VALIDAS = ["diaria", "semanal", "quincenal", "mensual", "trimestral", "por_orden"];
+
 router.get("/tipos", async (req, res) => {
   const { data, error } = await supabase
     .from("asa_tipos_punto")
@@ -35,6 +37,33 @@ router.post("/tipos", requireRol("operaciones"), async (req, res) => {
   const { data, error } = await supabase.from("asa_tipos_punto").insert([req.body]).select().single();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
   res.status(201).json(data);
+});
+
+// PUT /puntos/tipos/:id — editar un tipo (sobre todo su frecuencia por defecto)
+//
+// El `codigo` no se acepta: los puntos ya creados y el importador lo usan como
+// llave, así que cambiarlo rompería referencias silenciosamente. Para renombrar
+// se edita `nombre`, que es lo que se muestra.
+router.put("/tipos/:id", requireRol("operaciones"), async (req, res) => {
+  const { id: _a, codigo: _b, created_at: _c, ...cambios } = req.body;
+
+  if (cambios.frecuencia_default && !FRECUENCIAS_VALIDAS.includes(cambios.frecuencia_default)) {
+    return res.status(400).json({
+      error: true,
+      mensaje: `frecuencia_default debe ser una de: ${FRECUENCIAS_VALIDAS.join(", ")}`,
+    });
+  }
+
+  const { data, error } = await supabase
+    .from("asa_tipos_punto")
+    .update(cambios)
+    .eq("id", req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+
+  logAccion(req, { accion: "actualizar", modulo: "tipos_punto", registroId: data.id, descripcion: data.nombre });
+  res.json(data);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -675,9 +704,8 @@ router.put("/:id", requireRol("operaciones", "comercial"), async (req, res) => {
 router.patch("/frecuencia", requireRol("operaciones", "comercial"), async (req, res) => {
   const { sitio_id, frecuencia, area_id, tipo_codigo, punto_ids } = req.body;
 
-  const VALIDAS = ["diaria", "semanal", "quincenal", "mensual", "trimestral", "por_orden"];
-  if (!VALIDAS.includes(frecuencia)) {
-    return res.status(400).json({ error: true, mensaje: `frecuencia debe ser una de: ${VALIDAS.join(", ")}` });
+  if (!FRECUENCIAS_VALIDAS.includes(frecuencia)) {
+    return res.status(400).json({ error: true, mensaje: `frecuencia debe ser una de: ${FRECUENCIAS_VALIDAS.join(", ")}` });
   }
   if (!sitio_id && !punto_ids?.length) {
     return res.status(400).json({ error: true, mensaje: "Indica sitio_id o una lista de punto_ids" });
