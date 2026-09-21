@@ -16,7 +16,7 @@ const ES_LOCAL =
 const CONFIG = {
   API_BASE: ES_LOCAL
     ? "http://localhost:4000"
-    : "https://REEMPLAZA-CON-TU-URL-DE-RAILWAY.up.railway.app",
+    : "https://ambiente-y-salud-production.up.railway.app",
   NOMBRE_SISTEMA: "Ambiente y Salud RD",
   SIGLAS: "ASA SRL",
 };
