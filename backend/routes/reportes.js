@@ -64,6 +64,190 @@ router.get("/resumen", async (req, res) => {
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /reportes/tablero?sitio_id=&dias=30
+//
+// Los indicadores del dashboard, calculados en el servidor para que el panel
+// no tenga que traerse miles de filas y procesarlas en el navegador.
+//
+// Devuelve cuatro bloques:
+//   tecnicos   — quién produce menos incidencias (y cuántas inspecciones hizo,
+//                porque un técnico con 3 inspecciones y 0 incidencias no es
+//                mejor que uno con 300 y 4)
+//   plagas     — ranking de plagas por cantidad capturada, con su tendencia
+//                comparando la mitad reciente del período contra la anterior
+//   operacion  — ritmo de trabajo: inspecciones por día, días trabajados,
+//                puntos al día y vencidos
+//   ordenes    — qué tan rápido se atiende una orden desde que entra
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/tablero", async (req, res) => {
+  const { sitio_id } = req.query;
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  const dias = Math.min(Number(req.query.dias) || 30, 365);
+  const desde = haceDias(dias);
+  const hoy = hoyRD();
+  // Punto de corte para la tendencia: la mitad del período
+  const corte = haceDias(Math.floor(dias / 2));
+
+  let qInsp = supabase
+    .from("asa_inspecciones")
+    .select("id, fecha_local, nivel_actividad, estado_punto, tecnico_id, sitio_id, asa_empleados(nombre_completo)")
+    .gte("fecha_local", desde)
+    .limit(20000);
+  let qPuntos = supabase.from("asa_v_puntos_estado").select("vencido, frecuencia, sitio_id");
+  let qOrdenes = supabase
+    .from("asa_ordenes_trabajo")
+    .select("id, estado, prioridad, tecnico_id, fecha_solicitud, fecha_agendada, fecha_ejecucion, sitio_id")
+    .gte("fecha_solicitud", desde + "T00:00:00");
+
+  if (sitio_id) {
+    qInsp = qInsp.eq("sitio_id", sitio_id);
+    qPuntos = qPuntos.eq("sitio_id", sitio_id);
+    qOrdenes = qOrdenes.eq("sitio_id", sitio_id);
+  } else {
+    qInsp = filtrarPorSitio(qInsp, req);
+    qPuntos = filtrarPorSitio(qPuntos, req);
+    qOrdenes = filtrarPorSitio(qOrdenes, req);
+  }
+
+  const [insp, puntos, ordenes, capturas] = await Promise.all([
+    qInsp,
+    qPuntos,
+    qOrdenes,
+    // Las capturas no tienen sitio_id propio: cuelgan de la inspección, así que
+    // se filtran después contra los ids que sí pasaron el filtro de arriba.
+    supabase
+      .from("asa_capturas")
+      .select("cantidad, inspeccion_id, asa_plagas(nombre, grupo, color), asa_inspecciones(fecha_local, sitio_id)")
+      .gte("asa_inspecciones.fecha_local", desde)
+      .limit(20000),
+  ]);
+
+  if (insp.error) return res.status(500).json({ error: true, mensaje: insp.error.message });
+
+  const I = insp.data || [];
+  const P = puntos.data || [];
+  const O = ordenes.data || [];
+  const C = (capturas.data || []).filter(
+    (c) => c.asa_inspecciones && (!sitio_id || c.asa_inspecciones.sitio_id === sitio_id)
+  );
+
+  // ── Técnicos ──────────────────────────────────────────────────────────────
+  const porTecnico = new Map();
+  for (const i of I) {
+    const k = i.tecnico_id || "sin_asignar";
+    if (!porTecnico.has(k)) {
+      porTecnico.set(k, {
+        tecnico_id: i.tecnico_id,
+        nombre: i.asa_empleados?.nombre_completo || "Sin técnico asignado",
+        inspecciones: 0,
+        incidencias: 0,
+        actividad_alta: 0,
+        puntos_dañados: 0,
+      });
+    }
+    const t = porTecnico.get(k);
+    t.inspecciones++;
+    if (i.nivel_actividad && i.nivel_actividad !== "ninguna") t.incidencias++;
+    if (i.nivel_actividad === "alto") t.actividad_alta++;
+    if (["dañado", "faltante"].includes(i.estado_punto)) t.puntos_dañados++;
+  }
+  const tecnicos = [...porTecnico.values()]
+    .map((t) => ({
+      ...t,
+      tasa_incidencia: t.inspecciones ? Number(((t.incidencias / t.inspecciones) * 100).toFixed(1)) : 0,
+    }))
+    // Menos incidencias primero, pero solo cuenta quien tiene volumen real
+    .sort((a, b) => a.tasa_incidencia - b.tasa_incidencia || b.inspecciones - a.inspecciones);
+
+  // ── Plagas y tendencia ────────────────────────────────────────────────────
+  const porPlaga = new Map();
+  for (const c of C) {
+    const nombre = c.asa_plagas?.nombre || "Sin clasificar";
+    if (!porPlaga.has(nombre)) {
+      porPlaga.set(nombre, {
+        plaga: nombre,
+        grupo: c.asa_plagas?.grupo || "otra",
+        color: c.asa_plagas?.color || null,
+        total: 0,
+        reciente: 0,
+        previo: 0,
+        registros: 0,
+      });
+    }
+    const p = porPlaga.get(nombre);
+    p.total += c.cantidad || 0;
+    p.registros++;
+    if (c.asa_inspecciones.fecha_local >= corte) p.reciente += c.cantidad || 0;
+    else p.previo += c.cantidad || 0;
+  }
+  const plagas = [...porPlaga.values()]
+    .map((p) => ({
+      ...p,
+      // Sin base previa no hay porcentaje que calcular: se informa como nueva
+      variacion_pct: p.previo > 0 ? Number((((p.reciente - p.previo) / p.previo) * 100).toFixed(0)) : null,
+      tendencia: p.previo === 0 ? (p.reciente > 0 ? "nueva" : "estable")
+        : p.reciente > p.previo * 1.15 ? "sube"
+        : p.reciente < p.previo * 0.85 ? "baja"
+        : "estable",
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  // ── Ritmo de operación ────────────────────────────────────────────────────
+  const diasTrabajados = new Set(I.map((i) => i.fecha_local)).size;
+  const programables = P.filter((p) => p.frecuencia !== "por_orden");
+  const operacion = {
+    dias_periodo: dias,
+    dias_trabajados: diasTrabajados,
+    inspecciones_periodo: I.length,
+    promedio_diario: diasTrabajados ? Number((I.length / diasTrabajados).toFixed(1)) : 0,
+    inspecciones_hoy: I.filter((i) => i.fecha_local === hoy).length,
+    puntos_programables: programables.length,
+    puntos_vencidos: programables.filter((p) => p.vencido).length,
+    cumplimiento_pct: programables.length
+      ? Number((((programables.length - programables.filter((p) => p.vencido).length) / programables.length) * 100).toFixed(1))
+      : 100,
+  };
+
+  // ── Órdenes de trabajo: rapidez de atención ───────────────────────────────
+  const horas = (a, b) => (new Date(b) - new Date(a)) / 3600000;
+  const atendidas = O.filter((o) => o.fecha_ejecucion && o.fecha_solicitud);
+  const tiempos = atendidas.map((o) => horas(o.fecha_solicitud, o.fecha_ejecucion)).filter((h) => h >= 0);
+  const mediana = (xs) => {
+    if (!xs.length) return null;
+    const s = [...xs].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return Number((s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2).toFixed(1));
+  };
+
+  const porTecnicoOT = new Map();
+  for (const o of atendidas) {
+    const k = o.tecnico_id || "sin_asignar";
+    if (!porTecnicoOT.has(k)) porTecnicoOT.set(k, { tecnico_id: o.tecnico_id, atendidas: 0, horas: [] });
+    const t = porTecnicoOT.get(k);
+    t.atendidas++;
+    t.horas.push(horas(o.fecha_solicitud, o.fecha_ejecucion));
+  }
+
+  const ordenesBloque = {
+    recibidas: O.length,
+    abiertas: O.filter((o) => !["completada", "cancelada"].includes(o.estado)).length,
+    atendidas: atendidas.length,
+    // La mediana aguanta mejor los casos raros que el promedio: una orden que
+    // quedó abierta tres semanas no distorsiona el indicador.
+    horas_mediana: mediana(tiempos),
+    horas_promedio: tiempos.length ? Number((tiempos.reduce((a, b) => a + b, 0) / tiempos.length).toFixed(1)) : null,
+    dentro_24h: tiempos.filter((h) => h <= 24).length,
+    por_tecnico: [...porTecnicoOT.values()]
+      .map((t) => ({ tecnico_id: t.tecnico_id, atendidas: t.atendidas, horas_mediana: mediana(t.horas) }))
+      .sort((a, b) => (a.horas_mediana ?? 1e9) - (b.horas_mediana ?? 1e9)),
+  };
+
+  res.json({ desde, hasta: hoy, dias, tecnicos, plagas, operacion, ordenes: ordenesBloque });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /reportes/histograma?sitio_id=&desde=&hasta=&agrupar=dia|semana|mes&por=actividad|area|tipo
 //

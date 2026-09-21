@@ -301,6 +301,7 @@ function pintarEstadoConexion() {
 
 function abrirMenu() {
   const opciones = [
+    ["🗺️ Mapa del hotel", () => { location.hash = "#/plano"; }],
     ["🏨 Cambiar de hotel", () => { location.hash = ""; elegirHotel(); }],
     ["↻ Sincronizar ahora", () => sincronizar(false)],
     ["🚪 Cerrar sesión", () => cerrarSesion()],
@@ -872,16 +873,30 @@ async function pantallaPlano(puntoId) {
     planos = (await leerCache(`planos:${SITIO.id}`)) || [];
   }
 
-  const plano = planos.find((pl) => pl.puntos?.some((p) => p.id === puntoId)) || planos[0];
+  // Sin puntoId el técnico entró por el menú ("no sé dónde queda esto"):
+  // se abre el primer plano y puede cambiar entre ellos.
+  let plano = puntoId
+    ? planos.find((pl) => pl.puntos?.some((p) => p.id === puntoId)) || planos[0]
+    : planos[0];
   if (!plano) {
     cuerpo.innerHTML = `<div class="vacio"><span class="emoji">🗺️</span>Este hotel todavía no tiene planos cargados.</div>`;
     return;
   }
 
+  const selector =
+    planos.length > 1
+      ? `<select id="sel-plano" class="sel-plano">
+           ${planos
+             .map((pl) => `<option value="${pl.id}"${pl.id === plano.id ? " selected" : ""}>${esc(pl.nombre)}</option>`)
+             .join("")}
+         </select>`
+      : "";
+
   cuerpo.innerHTML = `
     <div class="tarjeta">
       <h2>${esc(plano.nombre)}</h2>
-      <p>Toca un pin para abrir ese punto.</p>
+      <p>${puntoId ? "El punto que buscas está resaltado. Toca un pin para abrirlo." : "Toca un pin para abrir ese punto."}</p>
+      ${selector}
     </div>
     <div class="plano" id="plano">
       <img src="${esc(plano.imagen_url)}" alt="${esc(plano.nombre)}" />
@@ -899,6 +914,41 @@ async function pantallaPlano(puntoId) {
     </div>`;
 
   cuerpo.querySelectorAll(".pin").forEach((pin) =>
+    pin.addEventListener("click", () => (location.hash = `#/p/${pin.dataset.token}`))
+  );
+
+  const sel = cuerpo.querySelector("#sel-plano");
+  if (sel) {
+    sel.addEventListener("change", () => {
+      // Se vuelve a pintar entero: son pocos pines y así no hay estado a medias
+      plano = planos.find((pl) => pl.id === sel.value) || plano;
+      pantallaPlanoPintar(cuerpo, plano, puntoId, planos);
+    });
+  }
+}
+
+// Repinta el lienzo del plano sin volver a pedir nada al servidor
+function pantallaPlanoPintar(cuerpo, plano, puntoId, planos) {
+  const lienzo = cuerpo.querySelector("#plano");
+  const titulo = cuerpo.querySelector(".tarjeta h2");
+  if (titulo) titulo.textContent = plano.nombre;
+  if (!lienzo) return;
+
+  lienzo.innerHTML = `
+    <img src="${esc(plano.imagen_url)}" alt="${esc(plano.nombre)}" />
+    ${(plano.puntos || [])
+      .filter((p) => p.plano_x != null && p.plano_y != null)
+      .map(
+        (p) => `
+        <div class="pin ${p.id === puntoId ? "destacado" : ""}"
+             style="left:${p.plano_x}%;top:${p.plano_y}%;background:${esc(p.asa_tipos_punto?.color || "#475569")}"
+             data-token="${esc(p.qr_token)}" title="${esc(p.codigo_visible)}">
+          ${p.asa_tipos_punto?.icono || ""}
+        </div>`
+      )
+      .join("")}`;
+
+  lienzo.querySelectorAll(".pin").forEach((pin) =>
     pin.addEventListener("click", () => (location.hash = `#/p/${pin.dataset.token}`))
   );
 }
@@ -926,6 +976,7 @@ function enrutar() {
     sessionStorage.setItem("asa_via", "qr");
     return pantallaPunto(ruta.slice(2));
   }
+  if (ruta === "plano") return pantallaPlano(null);
   if (ruta.startsWith("plano/")) return pantallaPlano(ruta.slice(6));
   if (ruta === "escanear") return pantallaEscanear();
   if (ruta === "buscar") {

@@ -339,3 +339,63 @@ table.data tbody tr.clickable{cursor:pointer}
 .hist-leyenda{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px}
 .hist-leyenda .serie{display:flex;align-items:center;gap:6px}
 .hist-leyenda i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+/* ── Dashboard ───────────────────────────────────────────────────────────*/
+.dos-columnas{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.dos-columnas > .card{margin-top:0}
+@media (max-width:1100px){ .dos-columnas{grid-template-columns:1fr} }
+
+.mini-kpis{display:flex;flex-wrap:wrap;gap:22px}
+.mini-kpis > div{display:flex;flex-direction:column}
+.mk-val{font-size:26px;font-weight:700;color:var(--asa-azul-osc);line-height:1.1}
+.mk-lbl{font-size:12px;color:var(--text-muted);margin-top:3px;max-width:180px}
+
+.barra{height:8px;background:var(--border);border-radius:20px;overflow:hidden;margin-top:6px}
+.barra > span{display:block;height:100%;background:var(--asa-verde);border-radius:20px}
+
+/* Ranking de plagas */
+.lista-barras{display:flex;flex-direction:column;gap:9px}
+.fila-barra{display:grid;grid-template-columns:1fr 2fr auto auto;gap:10px;align-items:center;font-size:13px}
+.fb-nombre{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fb-pista{height:9px;background:var(--border);border-radius:20px;overflow:hidden}
+.fb-pista > span{display:block;height:100%;border-radius:20px}
+.fb-valor{font-weight:700;min-width:44px;text-align:right}
+.fb-tend{font-size:11.5px;font-weight:700;min-width:62px;text-align:right}
+.fb-tend.sube{color:#b91c1c}
+.fb-tend.baja{color:var(--asa-verde-osc)}
+.fb-tend.estable{color:var(--text-muted)}
+.fb-tend.nueva{color:var(--warning)}
+
+/* ── Mapa / planos ───────────────────────────────────────────────────────*/
+.mapa-wrap{display:grid;grid-template-columns:1fr 280px;gap:16px}
+@media (max-width:1000px){ .mapa-wrap{grid-template-columns:1fr} }
+
+.plano{position:relative;display:inline-block;max-width:100%;line-height:0}
+.plano img{max-width:100%;height:auto;display:block;border:1px solid var(--border);border-radius:8px;cursor:crosshair}
+.pin{
+  position:absolute;transform:translate(-50%,-50%);
+  width:26px;height:26px;border-radius:50%;border:2px solid #fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;line-height:1;cursor:pointer;padding:0;
+  box-shadow:0 1px 4px rgba(0,0,0,.35);
+}
+.pin:hover{transform:translate(-50%,-50%) scale(1.25);z-index:2}
+
+.mapa-lateral{display:flex;flex-direction:column;gap:10px;min-width:0}
+.mapa-lateral input[type="search"]{
+  padding:8px 11px;border:1px solid var(--border);border-radius:8px;width:100%;
+}
+.mapa-ayuda{
+  background:var(--asa-azul-pastel);border-radius:8px;padding:10px 12px;
+  font-size:12.5px;color:var(--asa-azul-osc);
+}
+.mapa-ayuda.activa{background:var(--asa-verde-pastel);color:var(--asa-verde-osc);font-weight:600}
+#mapa-pendientes{max-height:520px;overflow-y:auto}
+.pto-item{
+  display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;
+  cursor:pointer;border:1px solid transparent;
+}
+.pto-item:hover{background:var(--asa-azul-pastel)}
+.pto-item.armado{background:var(--asa-verde-pastel);border-color:var(--asa-verde)}
+.pto-cod{font-size:13px;font-weight:700}
+.pto-area{font-size:11px;color:var(--text-muted)}

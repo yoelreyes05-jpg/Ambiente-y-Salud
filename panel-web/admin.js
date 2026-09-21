@@ -783,3 +783,423 @@ async function pintarHistograma(destino) {
   $("#hist-agrupar").addEventListener("change", cargar);
   await cargar();
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+//
+// Reemplaza al tablero genérico anterior. Fuera inventario y facturación
+// (módulos congelados); dentro lo que se mira todos los días en control de
+// plagas: qué se hizo hoy, qué plaga está subiendo, quién trabaja con menos
+// incidencias y qué tan rápido se atiende una orden.
+// ═════════════════════════════════════════════════════════════════════════
+const ICONO_TENDENCIA = { sube: "▲", baja: "▼", estable: "=", nueva: "•" };
+const CLASE_TENDENCIA = { sube: "sube", baja: "baja", estable: "estable", nueva: "nueva" };
+
+async function tableroASA(content) {
+  content.innerHTML = `
+    <div class="toolbar">
+      <select id="tab-dias">
+        <option value="7">Últimos 7 días</option>
+        <option value="30" selected>Últimos 30 días</option>
+        <option value="90">Últimos 90 días</option>
+      </select>
+      <select id="tab-sitio"><option value="">Todas las plantas</option></select>
+    </div>
+    <div id="tab-cuerpo"><div class="center-msg">Cargando…</div></div>`;
+
+  // El selector de planta es opcional: si falla, el tablero igual funciona
+  // con todas las plantas juntas.
+  get("/sitios")
+    .then((ss) => {
+      $("#tab-sitio").innerHTML =
+        `<option value="">Todas las plantas</option>` +
+        ss.map((s) => `<option value="${s.id}">${esc(s.nombre)}</option>`).join("");
+    })
+    .catch(() => {});
+
+  async function cargar() {
+    const dias = $("#tab-dias").value;
+    const sitio = $("#tab-sitio").value;
+    const cuerpo = $("#tab-cuerpo");
+    cuerpo.innerHTML = `<div class="center-msg">Cargando…</div>`;
+
+    const qs = new URLSearchParams({ dias });
+    if (sitio) qs.set("sitio_id", sitio);
+
+    const [t, ordenesAbiertas] = await Promise.all([
+      get(`/reportes/tablero?${qs}`),
+      get("/plagas/ordenes?estado=solicitada").catch(() => []),
+    ]);
+
+    const op = t.operacion;
+    const ot = t.ordenes;
+
+    cuerpo.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi-card g">
+          <div class="lbl">Inspecciones hoy</div>
+          <div class="val">${op.inspecciones_hoy}</div>
+        </div>
+        <div class="kpi-card ${op.cumplimiento_pct >= 90 ? "g" : op.cumplimiento_pct >= 75 ? "w" : "r"}">
+          <div class="lbl">Cumplimiento de frecuencia</div>
+          <div class="val">${op.cumplimiento_pct}%</div>
+        </div>
+        <div class="kpi-card ${op.puntos_vencidos ? "r" : "g"}">
+          <div class="lbl">Puntos vencidos</div>
+          <div class="val">${op.puntos_vencidos}</div>
+        </div>
+        <div class="kpi-card w">
+          <div class="lbl">Órdenes por atender</div>
+          <div class="val">${ordenesAbiertas.length || ot.abiertas}</div>
+        </div>
+        <div class="kpi-card ${ot.horas_mediana == null ? "" : ot.horas_mediana <= 24 ? "g" : "w"}">
+          <div class="lbl">Respuesta a una orden</div>
+          <div class="val">${ot.horas_mediana == null ? "—" : horasLegibles(ot.horas_mediana)}</div>
+        </div>
+      </div>
+
+      <div class="dos-columnas">
+        <div class="card">
+          <div class="card-head"><h2>Plagas — qué está subiendo</h2></div>
+          ${bloquePlagas(t.plagas)}
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Técnicos — menos incidencias</h2></div>
+          ${bloqueTecnicos(t.tecnicos)}
+        </div>
+      </div>
+
+      <div class="dos-columnas">
+        <div class="card">
+          <div class="card-head"><h2>Frecuencia de operación</h2></div>
+          ${bloqueOperacion(op)}
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Rapidez de atención de órdenes</h2></div>
+          ${bloqueOrdenes(ot)}
+        </div>
+      </div>
+
+      <div id="dash-histograma"></div>`;
+
+    if (typeof pintarHistograma === "function") {
+      try {
+        await pintarHistograma($("#dash-histograma"));
+      } catch (e) {
+        $("#dash-histograma").innerHTML =
+          `<div class="card"><div class="form-error" style="display:block">${esc(e.message)}</div></div>`;
+      }
+    }
+  }
+
+  $("#tab-dias").addEventListener("change", cargar);
+  $("#tab-sitio").addEventListener("change", cargar);
+  await cargar();
+}
+
+function horasLegibles(h) {
+  if (h == null) return "—";
+  if (h < 1) return `${Math.round(h * 60)} min`;
+  if (h < 48) return `${h} h`;
+  return `${(h / 24).toFixed(1)} días`;
+}
+
+function bloquePlagas(plagas) {
+  if (!plagas.length) {
+    return `<div class="center-msg">
+      Sin conteos de plagas en el período. Se llena cuando los técnicos
+      registren capturas en las inspecciones.</div>`;
+  }
+  const max = Math.max(...plagas.map((p) => p.total)) || 1;
+  return `<div class="lista-barras">
+    ${plagas
+      .slice(0, 8)
+      .map(
+        (p) => `
+      <div class="fila-barra">
+        <div class="fb-nombre">${esc(p.plaga)}</div>
+        <div class="fb-pista">
+          <span style="width:${(p.total / max) * 100}%;background:${esc(p.color || "#4A6FB5")}"></span>
+        </div>
+        <div class="fb-valor">${p.total}</div>
+        <div class="fb-tend ${CLASE_TENDENCIA[p.tendencia]}">
+          ${ICONO_TENDENCIA[p.tendencia]}
+          ${p.variacion_pct == null ? (p.tendencia === "nueva" ? "nueva" : "") : `${p.variacion_pct > 0 ? "+" : ""}${p.variacion_pct}%`}
+        </div>
+      </div>`
+      )
+      .join("")}
+  </div>
+  <p class="text-muted" style="margin-top:12px">
+    La tendencia compara la mitad reciente del período contra la mitad anterior.
+  </p>`;
+}
+
+function bloqueTecnicos(tecnicos) {
+  const conVolumen = tecnicos.filter((t) => t.inspecciones >= 5);
+  const lista = conVolumen.length ? conVolumen : tecnicos;
+  if (!lista.length) return `<div class="center-msg">Sin inspecciones en el período.</div>`;
+
+  return (
+    tableHTML(
+      [
+        { key: "nombre", label: "Técnico" },
+        { key: "inspecciones", label: "Inspecciones" },
+        { key: "incidencias", label: "Con incidencia" },
+        {
+          key: "tasa_incidencia",
+          label: "Tasa",
+          fmt: (t) =>
+            `<span class="estado-chip ${t.tasa_incidencia <= 10 ? "hecho" : t.tasa_incidencia <= 25 ? "fuera" : "pendiente"}">${t.tasa_incidencia}%</span>`,
+        },
+      ],
+      lista.slice(0, 10),
+      "Sin inspecciones en el período."
+    ) +
+    (conVolumen.length
+      ? `<p class="text-muted" style="margin-top:10px">
+           Solo se listan técnicos con 5 o más inspecciones: con menos, el
+           porcentaje no dice nada.
+         </p>`
+      : "")
+  );
+}
+
+function bloqueOperacion(op) {
+  return `
+    <div class="mini-kpis">
+      <div><span class="mk-val">${op.promedio_diario}</span><span class="mk-lbl">inspecciones por día trabajado</span></div>
+      <div><span class="mk-val">${op.dias_trabajados}</span><span class="mk-lbl">de ${op.dias_periodo} días con operación</span></div>
+      <div><span class="mk-val">${op.inspecciones_periodo}</span><span class="mk-lbl">inspecciones en el período</span></div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="text-muted">Puntos al día (${op.puntos_programables - op.puntos_vencidos} de ${op.puntos_programables})</div>
+      <div class="barra"><span style="width:${op.cumplimiento_pct}%"></span></div>
+    </div>
+    <p class="text-muted" style="margin-top:12px">
+      Los puntos con frecuencia "por orden" no cuentan aquí: no tienen ciclo que vencer.
+    </p>`;
+}
+
+function bloqueOrdenes(ot) {
+  if (!ot.recibidas) {
+    return `<div class="center-msg">No entraron órdenes de trabajo en el período.</div>`;
+  }
+  const pct = ot.atendidas ? Math.round((ot.dentro_24h / ot.atendidas) * 100) : 0;
+  return `
+    <div class="mini-kpis">
+      <div><span class="mk-val">${ot.recibidas}</span><span class="mk-lbl">recibidas</span></div>
+      <div><span class="mk-val">${ot.atendidas}</span><span class="mk-lbl">atendidas</span></div>
+      <div><span class="mk-val">${horasLegibles(ot.horas_mediana)}</span><span class="mk-lbl">mediana de respuesta</span></div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="text-muted">Atendidas dentro de 24 horas (${ot.dentro_24h} de ${ot.atendidas})</div>
+      <div class="barra"><span style="width:${pct}%"></span></div>
+    </div>
+    <p class="text-muted" style="margin-top:12px">
+      Se usa la mediana y no el promedio: una orden que quedó abierta tres
+      semanas no debe arruinar el indicador de todo el mes.
+    </p>`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// MAPA / PLANOS
+//
+// Un plano es la imagen que ASA ya tiene del hotel (PDF exportado a imagen,
+// foto del cartel de evacuación, croquis hecho a mano). Encima se colocan los
+// puntos como pines.
+//
+// Las coordenadas se guardan en PORCENTAJE (0–100), no en píxeles: así el
+// mismo pin cae en el mismo lugar en el panel de escritorio y en el teléfono
+// del técnico, sin importar a qué tamaño se muestre la imagen.
+// ═════════════════════════════════════════════════════════════════════════
+async function tabMapa(cuerpo, sitioId, areas) {
+  cuerpo.innerHTML = `<div class="center-msg">Cargando planos…</div>`;
+  const planos = await get(`/sitios/${sitioId}/planos`);
+
+  if (!planos.length) {
+    cuerpo.innerHTML = `
+      <div class="center-msg" style="padding:30px">
+        <p>Esta planta todavía no tiene planos cargados.</p>
+        <p class="text-muted">
+          Sube la imagen del plano y después coloca encima los puntos de control.
+          El técnico la verá en su app cuando no sepa dónde queda un punto.
+        </p>
+        <button class="btn btn-primary" id="mapa-subir">Subir un plano</button>
+      </div>`;
+    $("#mapa-subir").addEventListener("click", () =>
+      modalSubirPlano(sitioId, areas, () => tabMapa(cuerpo, sitioId, areas))
+    );
+    return;
+  }
+
+  cuerpo.innerHTML = `
+    <div class="toolbar">
+      <select id="mapa-plano">
+        ${planos.map((p) => `<option value="${p.id}">${esc(p.nombre)} · ${p.puntos.length} puntos</option>`).join("")}
+      </select>
+      <span class="toolbar-sep"></span>
+      <button class="btn btn-sm" id="mapa-subir">+ Plano</button>
+      <button class="btn btn-sm btn-danger" id="mapa-borrar">Quitar plano</button>
+    </div>
+    <div class="mapa-wrap">
+      <div class="mapa-lienzo" id="mapa-lienzo"></div>
+      <aside class="mapa-lateral">
+        <div class="mapa-ayuda" id="mapa-ayuda">
+          Elige un punto de la lista y después toca el plano para colocarlo.
+        </div>
+        <input type="search" id="mapa-buscar" placeholder="Buscar punto…" />
+        <div id="mapa-pendientes"></div>
+      </aside>
+    </div>`;
+
+  let planoActual = planos[0];
+  let puntoArmado = null;
+  let sinUbicar = [];
+
+  async function cargarSinUbicar() {
+    const r = await get(`/puntos?sitio_id=${sitioId}`);
+    const todos = [...(r.realizados || []), ...(r.pendientes || [])];
+    const colocados = new Set(planoActual.puntos.map((p) => p.id));
+    sinUbicar = todos.filter((p) => !colocados.has(p.id) && !p.plano_id);
+    pintarLateral();
+  }
+
+  function pintarLateral(filtro = "") {
+    const f = filtro.toLowerCase();
+    const lista = sinUbicar.filter(
+      (p) => !f || `${p.codigo_visible} ${p.nombre || ""} ${p.area_nombre || ""}`.toLowerCase().includes(f)
+    );
+    $("#mapa-pendientes").innerHTML = lista.length
+      ? `<div class="text-muted" style="margin:8px 0">${sinUbicar.length} sin colocar</div>` +
+        lista
+          .slice(0, 80)
+          .map(
+            (p) => `
+          <div class="pto-item${puntoArmado?.id === p.id ? " armado" : ""}" data-id="${p.id}">
+            <span>${p.tipo_icono || "📍"}</span>
+            <div>
+              <div class="pto-cod">${esc(p.numero_habitacion || p.codigo_visible)}</div>
+              <div class="pto-area">${esc(p.area_nombre || "")}</div>
+            </div>
+          </div>`
+          )
+          .join("")
+      : `<div class="center-msg">Todos los puntos están colocados. 🎉</div>`;
+
+    $$("#mapa-pendientes .pto-item").forEach((el) =>
+      el.addEventListener("click", () => {
+        puntoArmado = sinUbicar.find((p) => p.id === el.dataset.id);
+        $("#mapa-ayuda").innerHTML =
+          `Ahora toca el plano donde está <strong>${esc(puntoArmado.codigo_visible)}</strong>.`;
+        $("#mapa-ayuda").classList.add("activa");
+        pintarLateral($("#mapa-buscar").value);
+      })
+    );
+  }
+
+  function pintarPlano() {
+    $("#mapa-lienzo").innerHTML = `
+      <div class="plano" id="plano">
+        <img src="${esc(planoActual.imagen_url)}" alt="${esc(planoActual.nombre)}" />
+        ${planoActual.puntos
+          .map(
+            (p) => `
+          <button class="pin" data-id="${p.id}"
+                  style="left:${p.plano_x}%;top:${p.plano_y}%;background:${esc(p.asa_tipos_punto?.color || "#32539C")}"
+                  title="${esc(p.codigo_visible)}">
+            ${p.asa_tipos_punto?.icono || "•"}
+          </button>`
+          )
+          .join("")}
+      </div>`;
+
+    const plano = $("#plano");
+
+    plano.addEventListener("click", async (ev) => {
+      if (!puntoArmado || ev.target.closest(".pin")) return;
+      const img = plano.querySelector("img");
+      const caja = img.getBoundingClientRect();
+      const x = ((ev.clientX - caja.left) / caja.width) * 100;
+      const y = ((ev.clientY - caja.top) / caja.height) * 100;
+      if (x < 0 || x > 100 || y < 0 || y > 100) return;
+
+      try {
+        await patch(`/puntos/${puntoArmado.id}/plano`, {
+          plano_id: planoActual.id,
+          plano_x: Number(x.toFixed(2)),
+          plano_y: Number(y.toFixed(2)),
+        });
+        toast(`${puntoArmado.codigo_visible} colocado`);
+        puntoArmado = null;
+        $("#mapa-ayuda").classList.remove("activa");
+        $("#mapa-ayuda").textContent = "Elige un punto de la lista y después toca el plano para colocarlo.";
+        await tabMapa(cuerpo, sitioId, areas);   // recargar con el pin nuevo
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+
+    $$("#plano .pin").forEach((pin) =>
+      pin.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const p = planoActual.puntos.find((x) => x.id === pin.dataset.id);
+        if (!confirm(`¿Quitar ${p.codigo_visible} del plano? El punto no se borra, solo deja de tener posición.`)) return;
+        await patch(`/puntos/${p.id}/plano`, { plano_id: null, plano_x: null, plano_y: null });
+        toast("Punto quitado del plano");
+        await tabMapa(cuerpo, sitioId, areas);
+      })
+    );
+  }
+
+  $("#mapa-plano").addEventListener("change", async (e) => {
+    planoActual = planos.find((p) => p.id === e.target.value);
+    pintarPlano();
+    await cargarSinUbicar();
+  });
+  $("#mapa-subir").addEventListener("click", () =>
+    modalSubirPlano(sitioId, areas, () => tabMapa(cuerpo, sitioId, areas))
+  );
+  $("#mapa-borrar").addEventListener("click", async () => {
+    if (!confirm(`¿Quitar el plano "${planoActual.nombre}"? Los puntos conservan su posición por si lo vuelves a subir.`)) return;
+    await del(`/sitios/planos/${planoActual.id}`);
+    toast("Plano quitado");
+    await tabMapa(cuerpo, sitioId, areas);
+  });
+  $("#mapa-buscar").addEventListener("input", (e) => pintarLateral(e.target.value.trim()));
+
+  pintarPlano();
+  await cargarSinUbicar();
+}
+
+function modalSubirPlano(sitioId, areas, onSaved) {
+  openModal({
+    title: "Subir un plano",
+    bodyHTML:
+      `<p class="text-muted">
+         Sirve cualquier imagen del hotel: un PDF exportado a PNG, la foto del
+         cartel de evacuación o un croquis. Máximo 20 MB.
+       </p>` +
+      campo("Nombre", `<input name="nombre" required placeholder="Planta baja — cocinas" />`) +
+      campo("Área (opcional)", `<select name="area_id"><option value="">Toda la planta</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
+      campo("Imagen", `<input name="archivo" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required />`),
+    submitLabel: "Subir",
+    async onSubmit(fd) {
+      const file = fd.get("archivo");
+      if (!file || !file.size) throw new Error("Elige una imagen");
+      if (file.size > 20 * 1024 * 1024) throw new Error("La imagen pasa de 20 MB");
+
+      await post(`/sitios/${sitioId}/planos/subir`, {
+        nombre: (fd.get("nombre") || "").trim(),
+        area_id: fd.get("area_id") || null,
+        tipo_mime: file.type || "image/png",
+        archivo_base64: await leerBase64(file),
+      });
+      closeModal();
+      toast("Plano subido");
+      onSaved?.();
+    },
+  });
+}

@@ -349,68 +349,19 @@ function optionsHTML(items, valueKey, labelFn, placeholder = "Selecciona…") {
 // ═══════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════
+// El tablero real vive en admin.js (tableroASA): indicadores de plagas,
+// técnicos, frecuencia de operación y rapidez de atención de órdenes. Se
+// quitaron las tarjetas de inventario y facturación, que son de los módulos
+// congelados. Esta función queda como puente para no tocar MODULES.
 async function viewDashboard(content) {
-  const hoy = new Date().toISOString().slice(0, 10);
-  const [clientes, ordenesAbiertas, citasHoy, alertas, facturasPend] = await Promise.all([
-    get("/clientes").catch(() => []),
-    get("/plagas/ordenes?estado=solicitada").catch(() => []),
-    get(`/citas?desde=${hoy}T00:00:00&hasta=${hoy}T23:59:59`).catch(() => []),
-    get("/inventario/alertas-stock").catch(() => []),
-    get("/facturacion?estado=pendiente").catch(() => []),
-  ]);
-
-  content.innerHTML = `
-    <div class="kpi-grid">
-      <div class="kpi-card g"><div class="lbl">Clientes activos</div><div class="val">${clientes.length}</div></div>
-      <div class="kpi-card w"><div class="lbl">Órdenes de plagas por atender</div><div class="val">${ordenesAbiertas.length}</div></div>
-      <div class="kpi-card c"><div class="lbl">Citas de hoy</div><div class="val">${citasHoy.length}</div></div>
-      <div class="kpi-card t"><div class="lbl">Alertas de stock bajo</div><div class="val">${alertas.length}</div></div>
-      <div class="kpi-card w"><div class="lbl">Facturas pendientes de cobro</div><div class="val">${facturasPend.length}</div></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h2>Órdenes de plagas — solicitadas sin agendar</h2></div>
-      ${tableHTML(
-        [
-          { key: "numero_orden", label: "Orden" },
-          { key: "cliente", label: "Cliente", fmt: (r) => esc(r.asa_clientes?.nombre_contacto || "—") },
-          { key: "tipo_plaga_reportada", label: "Tipo de plaga" },
-          { key: "prioridad", label: "Prioridad", fmt: (r) => badge(r.prioridad) },
-          { key: "created_at", label: "Reportada", fmt: (r) => fmtDateTime(r.created_at) },
-        ],
-        ordenesAbiertas,
-        "No hay órdenes pendientes por agendar. 🎉"
-      )}
-    </div>
-    <div class="card">
-      <div class="card-head"><h2>Alertas de inventario (stock por debajo del mínimo)</h2></div>
-      ${tableHTML(
-        [
-          { key: "tipo_item", label: "Tipo" },
-          { key: "nombre", label: "Producto", fmt: (r) => esc(r.nombre_comercial || r.nombre || "—") },
-          { key: "stock_actual", label: "Stock actual" },
-          { key: "stock_minimo", label: "Mínimo" },
-        ],
-        alertas,
-        "Inventario dentro de los niveles mínimos."
-      )}
-    </div>
-    <div id="dash-histograma"></div>`;
-
-  // El histograma vive en admin.js; si ese archivo no cargó, el dashboard
-  // simplemente no lo muestra en vez de reventar.
-  if (typeof pintarHistograma === "function") {
-    try {
-      await pintarHistograma($("#dash-histograma"));
-    } catch (e) {
-      $("#dash-histograma").innerHTML =
-        `<div class="card"><div class="form-error" style="display:block">${esc(e.message)}</div></div>`;
-    }
+  if (typeof tableroASA !== "function") {
+    content.innerHTML = `<div class="card"><div class="form-error" style="display:block">
+      No se cargó admin.js, que es donde vive el tablero.</div></div>`;
+    return;
   }
+  await tableroASA(content);
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// CLIENTES
-// ═══════════════════════════════════════════════════════════════════════
 async function viewClientes(content) {
   content.innerHTML = `
     <div class="card">
@@ -1419,6 +1370,7 @@ async function abrirPlanta(sitioId) {
         <button class="tab active" data-tab="puntos">Puntos de control</button>
         <button class="tab" data-tab="hoy">Habitaciones — hoy</button>
         <button class="tab" data-tab="pasadas">Habitaciones — pasadas</button>
+        <button class="tab" data-tab="mapa">Mapa</button>
         <button class="tab" data-tab="areas">Áreas (${areas.length})</button>
       </div>
       <div id="tab-cuerpo"><div class="center-msg">Cargando…</div></div>
@@ -1436,6 +1388,7 @@ async function abrirPlanta(sitioId) {
     puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
     hoy: () => tabHabitacionesHoy(cuerpo, sitioId),
     pasadas: () => tabHabitacionesPasadas(cuerpo, sitioId),
+    mapa: () => tabMapa(cuerpo, sitioId, areas),
     areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
   };
 

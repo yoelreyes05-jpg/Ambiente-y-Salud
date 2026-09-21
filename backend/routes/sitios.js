@@ -225,4 +225,98 @@ router.post("/:id/planos", requireRol("operaciones"), async (req, res) => {
   res.status(201).json(data);
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /sitios/:id/planos/subir — sube la imagen del plano y crea el registro
+//
+// El plano llega en base64 desde el panel y se guarda en Supabase Storage, en
+// el bucket público `asa-planos`. Se guarda la URL, no la imagen, porque un
+// plano de hotel pesa megas y meterlo en la tabla haría lentas todas las
+// consultas que la tocan.
+//
+// El bucket se crea solo la primera vez, así no hay un paso manual en la
+// consola de Supabase que alguien vaya a olvidar.
+// ─────────────────────────────────────────────────────────────────────────────
+const BUCKET_PLANOS = "asa-planos";
+
+async function asegurarBucket() {
+  const { data } = await supabase.storage.getBucket(BUCKET_PLANOS);
+  if (data) return;
+  await supabase.storage.createBucket(BUCKET_PLANOS, {
+    public: true,
+    fileSizeLimit: 20 * 1024 * 1024,
+    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
+  });
+}
+
+router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => {
+  const sitio_id = req.params.id;
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+
+  const { nombre, archivo_base64, tipo_mime = "image/png", area_id, ancho_px, alto_px } = req.body;
+  if (!nombre || !archivo_base64) {
+    return res.status(400).json({ error: true, mensaje: "nombre y archivo_base64 son requeridos" });
+  }
+
+  let binario;
+  try {
+    binario = Buffer.from(String(archivo_base64).replace(/^data:[^,]+,/, ""), "base64");
+  } catch {
+    return res.status(400).json({ error: true, mensaje: "El archivo no es base64 válido" });
+  }
+  if (!binario.length) return res.status(400).json({ error: true, mensaje: "El archivo llegó vacío" });
+  if (binario.length > 20 * 1024 * 1024) {
+    return res.status(400).json({ error: true, mensaje: "El plano no puede pasar de 20 MB" });
+  }
+
+  try {
+    await asegurarBucket();
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: `No se pudo preparar el almacenamiento: ${e.message}` });
+  }
+
+  const ext = (tipo_mime.split("/")[1] || "png").replace("svg+xml", "svg");
+  const ruta = `${sitio_id}/${Date.now()}-${String(nombre).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}.${ext}`;
+
+  const { error: errSubida } = await supabase.storage
+    .from(BUCKET_PLANOS)
+    .upload(ruta, binario, { contentType: tipo_mime, upsert: false });
+  if (errSubida) {
+    return res.status(500).json({ error: true, mensaje: `No se pudo subir el plano: ${errSubida.message}` });
+  }
+
+  const { data: pub } = supabase.storage.from(BUCKET_PLANOS).getPublicUrl(ruta);
+
+  const { data, error } = await supabase
+    .from("asa_planos")
+    .insert([{
+      sitio_id,
+      area_id: area_id || null,
+      nombre,
+      imagen_url: pub.publicUrl,
+      ancho_px: ancho_px || null,
+      alto_px: alto_px || null,
+    }])
+    .select()
+    .single();
+  if (error) {
+    // Si falla el insert, el archivo subido quedaría huérfano ocupando espacio
+    await supabase.storage.from(BUCKET_PLANOS).remove([ruta]).catch(() => {});
+    return res.status(500).json({ error: true, mensaje: error.message });
+  }
+
+  res.status(201).json(data);
+});
+
+// DELETE /sitios/planos/:planoId — baja lógica
+//
+// No se borra el archivo ni se limpian los pines: los puntos conservan su
+// posición, así que si se vuelve a subir el mismo plano no hay que recolocar
+// 170 cebaderos a mano.
+router.delete("/planos/:planoId", requireRol("operaciones"), async (req, res) => {
+  const { error } = await supabase.from("asa_planos").update({ activo: false }).eq("id", req.params.planoId);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json({ ok: true });
+});
+
 export default router;

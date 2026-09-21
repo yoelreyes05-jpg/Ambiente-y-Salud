@@ -3,10 +3,18 @@
    contraste alto y nada de menús escondidos. */
 
 :root {
-  --verde: #15803d;
-  --verde-claro: #dcfce7;
-  --verde-borde: #86efac;
-  --cian: #0891b2;
+  /* Paleta de marca ASA, la misma del panel administrativo:
+     azul #32539C, azul claro #BAC9E1, verde #609C63.
+     Los nombres de variable se conservan para no reescribir la hoja. */
+  --azul: #32539C;
+  --azul-osc: #24407C;
+  --azul-claro: #BAC9E1;
+  --azul-pastel: #EAF0F8;
+
+  --verde: #4A7D4D;          /* verde ASA oscurecido: contrasta sobre blanco */
+  --verde-claro: #EDF5EE;
+  --verde-borde: #609C63;
+  --cian: var(--azul);
   --rojo: #b91c1c;
   --rojo-claro: #fee2e2;
   --ambar: #b45309;
@@ -40,7 +48,7 @@ html, body {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--verde);
+  background: var(--azul-osc);
   color: #fff;
   padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
   display: flex;
@@ -265,8 +273,16 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
     --gris-900: #f1f5f9; --gris-600: #94a3b8; --gris-400: #64748b;
     --gris-200: #334155; --gris-100: #0f172a; --gris-50: #1e293b;
     --blanco: #1e293b;
-    --verde-claro: #064e3b; --verde-borde: #15803d;
+    --verde: #7FB582; --verde-claro: #1B3320; --verde-borde: #4A7D4D;
+    --azul-claro: #4A6FB5; --azul-pastel: #1B2A4A;
     --rojo-claro: #450a0a; --ambar-claro: #451a03;
   }
   body { background: #0f172a; }
+}
+
+/* Selector de plano en la pantalla del mapa */
+.sel-plano{
+  width:100%;margin-top:10px;padding:11px 12px;font-size:16px;
+  border:1px solid var(--gris-200);border-radius:var(--radio);
+  background:var(--blanco);color:var(--gris-900);
 }
