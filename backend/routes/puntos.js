@@ -207,6 +207,69 @@ router.get("/:id", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// QR ya impreso
+//
+// ASA tiene rollos de etiquetas impresas de antes. El QR de esas etiquetas
+// codifica ÚNICAMENTE el código (ej. "C205050474718"), sin URL ni dominio, así
+// que no está atado a ningún sistema: se puede reutilizar tal cual.
+//
+// Estas etiquetas se pegan primero y se asignan después, por eso el alta
+// unitaria acepta un qr_token explícito. Una vez asignado no se puede cambiar
+// (lo impide un trigger en la base de datos), así que vale la pena validarlo
+// bien ANTES de insertar y dar un mensaje claro si ya está en uso.
+// ─────────────────────────────────────────────────────────────────────────────
+const FORMATO_QR = /^[A-Z0-9][A-Z0-9-]{5,63}$/;
+
+function normalizarQR(valor) {
+  return String(valor).trim().toUpperCase().replace(/\s+/g, "");
+}
+
+// Devuelve { ok:true, token } o { ok:false, status, mensaje }
+async function validarQRImpreso(valor) {
+  const token = normalizarQR(valor);
+
+  if (!FORMATO_QR.test(token)) {
+    return {
+      ok: false,
+      status: 400,
+      mensaje:
+        `"${valor}" no parece un código de etiqueta válido. Se esperan entre 6 y 64 ` +
+        "caracteres, solo letras, números y guiones.",
+    };
+  }
+
+  const { data: enUso, error } = await supabase
+    .from("asa_puntos_control")
+    .select("id, codigo_visible, activo, asa_sitios(nombre)")
+    .eq("qr_token", token)
+    .maybeSingle();
+
+  if (error) return { ok: false, status: 500, mensaje: mensajeAmable(error) };
+
+  if (enUso) {
+    const donde = enUso.asa_sitios?.nombre ? ` en ${enUso.asa_sitios.nombre}` : "";
+    return {
+      ok: false,
+      status: 409,
+      mensaje:
+        `Esa etiqueta ya está asignada al punto ${enUso.codigo_visible}${donde}` +
+        (enUso.activo ? "." : " (desactivado). Un QR no se reutiliza aunque el punto se haya dado de baja."),
+    };
+  }
+
+  return { ok: true, token };
+}
+
+// GET /puntos/qr/:token/disponible — la app escanea una etiqueta en blanco y
+// pregunta si se puede usar, antes de abrir el formulario de alta.
+router.get("/qr/:token/disponible", async (req, res) => {
+  const r = await validarQRImpreso(req.params.token);
+  if (r.ok) return res.json({ disponible: true, token: r.token });
+  if (r.status === 500) return res.status(500).json({ error: true, mensaje: r.mensaje });
+  res.json({ disponible: false, motivo: r.mensaje });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Alta: unitaria, masiva o desde Excel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -226,7 +289,15 @@ router.post("/", requireRol("operaciones", "comercial"), async (req, res) => {
     frecuencia: req.body.frecuencia || tipo.frecuencia_default,
   };
   delete fila.tipo_codigo;
-  delete fila.qr_token; // nunca se acepta del cliente: lo genera la base de datos
+
+  // Si viene qr_token, es una etiqueta YA IMPRESA que se está reutilizando.
+  // Se valida contra la base antes de insertar; si no viene, la base genera uno.
+  delete fila.qr_token;
+  if (req.body.qr_token) {
+    const r = await validarQRImpreso(req.body.qr_token);
+    if (!r.ok) return res.status(r.status).json({ error: true, mensaje: r.mensaje });
+    fila.qr_token = r.token;
+  }
 
   const { data, error } = await supabase.from("asa_puntos_control").insert([fila]).select().single();
   if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
