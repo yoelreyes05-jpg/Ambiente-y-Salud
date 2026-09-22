@@ -583,11 +583,13 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
             "Déjalo vacío para que el sistema genere un QR nuevo. Si pegas una etiqueta de las que ya tienes impresas, escribe su código aquí.")
         : `<div class="campo"><span>Etiqueta QR</span><code class="qr-fijo">${esc(punto.qr_token)}</code>
              <small class="ayuda">El QR no se puede cambiar. Si la etiqueta se dañó, desactiva el punto y crea otro.</small></div>
+           <div id="punto-etiquetas"></div>
            <button type="button" class="btn btn-danger" id="punto-baja" style="margin-top:6px">
              Dar de baja este punto
            </button>`),
     onMount() {
       $("#punto-baja")?.addEventListener("click", () => darDeBajaPunto(punto, onSaved));
+      if (!esNuevo && typeof pintarEtiquetasPunto === "function") pintarEtiquetasPunto($("#punto-etiquetas"), punto);
     },
     async onSubmit(fd) {
       const cuerpo = {

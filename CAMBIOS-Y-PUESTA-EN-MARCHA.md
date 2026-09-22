@@ -396,3 +396,51 @@ el sistema y los tres lados ven lo mismo en tiempo real.
    hotel" a operaciones/comercial (el admin la ve siempre).
 4. Los técnicos deben tener su **empleado** con rol técnico para aparecer en
    "Técnico asignado".
+
+---
+
+## Etiquetas QR impresas que no abren nada (22-sep-2026)
+
+**Idea.** El QR principal de un punto sigue sin poder cambiarse. Para
+aprovechar las etiquetas ya impresas y pegadas, a un punto se le cuelgan
+**etiquetas adicionales**: escanear cualquiera abre el mismo punto, con su
+mismo historial.
+
+**Qué hay**
+
+- **Grupo impreso** (`asa_qr_impresos`): la lista de códigos que ASA mandó a
+  imprimir. Con ella el sistema dice si una etiqueta "es nuestra".
+- **Panel → Plantas → planta → Puntos de control → "Etiquetas QR"**:
+  1. Verificar un código escribiéndolo o con **foto del QR** → dice si es del
+     grupo impreso y si ya abre algún punto; si está libre, se busca el punto y
+     se asigna.
+  2. Lista de etiquetas que los técnicos **escanearon sin que abrieran nada**
+     en esa planta (cuántas veces, cuándo, quién) para asignarlas de un clic.
+  3. Cargar el grupo impreso: pegar códigos o subir .txt/.csv.
+- **Ficha de un punto** (panel): sección "Etiquetas adicionales" para agregar
+  (escrito o por foto) o quitar.
+- **App del técnico**:
+  - Botón "📷 No lee — tomar foto del QR" en el escáner (etiquetas gastadas o
+    con reflejo).
+  - Si el QR no abre nada y quien escanea es **admin u operaciones**, sale
+    "Etiqueta sin asignar" con buscador: se toca el punto y queda asignada;
+    desde ese momento abre ese punto.
+  - Si es un técnico, se le avisa y queda anotada para la oficina.
+- El servidor entiende códigos en minúsculas, con espacios o dentro de una URL
+  de otro sistema (`...?code=C2050...`, `.../C2050...`).
+- Un mismo código nunca puede abrir dos puntos (lo garantiza la base).
+
+**Archivos**
+
+- `supabase/31_etiquetas_qr.sql`
+- `backend/routes/puntos.js`
+- `panel-web/etiquetas.js` (nuevo), `panel-web/admin.js`, `panel-web/app.js`,
+  `panel-web/index.html`, `panel-web/styles.css`
+- `app-tecnico/app.js`, `app-tecnico/sw.js` (caché `asa-tecnico-v7`)
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/31_etiquetas_qr.sql` (muestra 1 · 1 · 1).
+2. Subir a GitHub.
+3. Cargar el grupo impreso (panel → Etiquetas QR → 3), o pasarle los archivos
+   a Claude para que los procese.

@@ -348,6 +348,185 @@ router.get("/estado", async (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ETIQUETAS QR ADICIONALES (31_etiquetas_qr.sql)
+//
+// Hay muchas etiquetas ya impresas y pegadas que no abren ningún punto. El QR
+// principal de un punto no se puede cambiar, así que a un punto se le pueden
+// colgar etiquetas EXTRA: escanear cualquiera abre el mismo punto.
+//
+//   asa_qr_impresos       — el grupo de etiquetas que ASA mandó a imprimir
+//   asa_qr_etiquetas      — etiqueta extra → punto
+//   asa_qr_no_reconocidos — lo que se escaneó y no abrió nada (para asignarlo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Lo que venga en el QR, tal cual o como URL, reducido al código.
+function tokenDesdeTexto(valor) {
+  let t = String(valor || "").trim();
+  try { t = decodeURIComponent(t); } catch {}
+  const conP = t.match(/\/p\/([^/?#\s]+)/i);
+  if (conP) t = conP[1];
+  else if (/^https?:\/\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      const param = ["qr", "code", "codigo", "id", "token", "c"].map((k) => u.searchParams.get(k)).find(Boolean);
+      t = param || u.pathname.split("/").filter(Boolean).pop() || "";
+    } catch {}
+  }
+  return normalizarQR(t);
+}
+
+// Devuelve el id del punto que abre ese código, o null. Busca en el QR
+// principal (tal cual y en mayúsculas) y en las etiquetas adicionales.
+async function puntoPorToken(valor) {
+  const crudo = String(valor || "").trim();
+  const token = tokenDesdeTexto(crudo);
+  const candidatos = [...new Set([crudo, token].filter(Boolean))];
+  const { data: principal, error } = await supabase
+    .from("asa_puntos_control").select("id").in("qr_token", candidatos).limit(1);
+  if (error) throw error;
+  if (principal?.length) return { punto_id: principal[0].id, token, via: "principal" };
+  const { data: extra, error: e2 } = await supabase
+    .from("asa_qr_etiquetas").select("punto_id").eq("token", token).maybeSingle();
+  if (e2 && e2.code !== "42P01") throw e2; // 42P01: aún no se corrió el SQL 31
+  if (extra) return { punto_id: extra.punto_id, token, via: "etiqueta" };
+  return { punto_id: null, token };
+}
+
+async function enLoteImpreso(token) {
+  const { data, error } = await supabase.from("asa_qr_impresos").select("lote, archivo").eq("token", token).maybeSingle();
+  if (error) return null;
+  return data;
+}
+
+// GET /puntos/etiquetas/estado/:token — qué es este código
+router.get("/etiquetas/estado/:token", async (req, res) => {
+  try {
+    const r = await puntoPorToken(req.params.token);
+    const lote = await enLoteImpreso(r.token);
+    let punto = null;
+    if (r.punto_id) {
+      const { data } = await supabase
+        .from("asa_puntos_control")
+        .select("id, codigo_visible, nombre, numero_habitacion, sitio_id, activo, asa_sitios(nombre), asa_areas(nombre)")
+        .eq("id", r.punto_id).maybeSingle();
+      if (data && puedeVerSitio(req, data.sitio_id)) punto = data;
+    }
+    res.json({ token: r.token, asignado: !!r.punto_id, via: r.via || null, punto, en_lote: !!lote, lote: lote?.lote || null, archivo: lote?.archivo || null });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
+  }
+});
+
+// GET /puntos/etiquetas/no-reconocidas?sitio_id= — escaneadas sin asignar
+router.get("/etiquetas/no-reconocidas", async (req, res) => {
+  let q = supabase.from("asa_qr_no_reconocidos").select("*, asa_sitios(nombre)").order("ultimo_escaneo", { ascending: false }).limit(500);
+  if (req.query.sitio_id) {
+    if (!exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+    q = q.eq("sitio_id", req.query.sitio_id);
+  } else q = filtrarPorSitio(q, req);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+  const tokens = (data || []).map((x) => x.token);
+  const { data: lote } = tokens.length
+    ? await supabase.from("asa_qr_impresos").select("token, lote").in("token", tokens)
+    : { data: [] };
+  const deLote = new Map((lote || []).map((x) => [x.token, x.lote]));
+  res.json((data || []).map((x) => ({ ...x, id: x.token, en_lote: deLote.has(x.token), lote: deLote.get(x.token) || null })));
+});
+
+// GET /puntos/etiquetas/impresos/resumen — cuántas hay por lote y cuántas libres
+router.get("/etiquetas/impresos/resumen", async (req, res) => {
+  const todas = [];
+  for (let ini = 0; ; ini += 1000) {
+    const { data, error } = await supabase.from("asa_qr_impresos").select("token, lote").range(ini, ini + 999);
+    if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+    todas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  const lotes = new Map();
+  for (const t of todas) {
+    const k = t.lote || "Sin lote";
+    lotes.set(k, (lotes.get(k) || 0) + 1);
+  }
+  res.json({ total: todas.length, lotes: [...lotes.entries()].map(([lote, total]) => ({ lote, total })) });
+});
+
+// POST /puntos/etiquetas/impresos — { tokens:[...], lote, archivo }
+// Carga el grupo de etiquetas impresas. Repetidas se ignoran.
+router.post("/etiquetas/impresos", requireRol("operaciones"), async (req, res) => {
+  const { lote = null, archivo = null } = req.body || {};
+  const tokens = [...new Set((req.body?.tokens || []).map(tokenDesdeTexto).filter((t) => FORMATO_QR.test(t)))];
+  if (!tokens.length) return res.status(400).json({ error: true, mensaje: "No se encontró ningún código válido en la lista." });
+  let nuevos = 0;
+  for (let i = 0; i < tokens.length; i += 500) {
+    const trozo = tokens.slice(i, i + 500).map((token) => ({ token, lote, archivo }));
+    const { data, error } = await supabase.from("asa_qr_impresos").upsert(trozo, { onConflict: "token", ignoreDuplicates: true }).select("token");
+    if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+    nuevos += (data || []).length;
+  }
+  logAccion(req, { accion: "crear", modulo: "etiquetas_qr", descripcion: `Lote ${lote || ""}: ${tokens.length} códigos (${nuevos} nuevos)` });
+  res.json({ recibidos: tokens.length, nuevos, repetidos: tokens.length - nuevos });
+});
+
+// GET /puntos/:id/etiquetas — las etiquetas extra de un punto
+router.get("/:id/etiquetas", async (req, res) => {
+  const { data, error } = await supabase.from("asa_qr_etiquetas").select("*").eq("punto_id", req.params.id).order("created_at");
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+  res.json(data || []);
+});
+
+// POST /puntos/:id/etiquetas — { token, origen? } — colgarle una etiqueta al punto
+router.post("/:id/etiquetas", requireRol("operaciones"), async (req, res) => {
+  const token = tokenDesdeTexto(req.body?.token);
+  if (!FORMATO_QR.test(token)) {
+    return res.status(400).json({ error: true, mensaje: `"${req.body?.token || ""}" no parece un código de etiqueta válido.` });
+  }
+  const { data: punto } = await supabase.from("asa_puntos_control").select("id, codigo_visible, sitio_id, activo").eq("id", req.params.id).maybeSingle();
+  if (!punto) return res.status(404).json({ error: true, mensaje: "Punto no encontrado" });
+  if (!exigirSitioPermitido(req, res, punto.sitio_id)) return;
+  if (!punto.activo) return res.status(409).json({ error: true, mensaje: "Ese punto está dado de baja." });
+
+  try {
+    const ya = await puntoPorToken(token);
+    if (ya.punto_id) {
+      const { data: otro } = await supabase.from("asa_puntos_control").select("codigo_visible, asa_sitios(nombre)").eq("id", ya.punto_id).maybeSingle();
+      const mismo = ya.punto_id === punto.id;
+      return res.status(409).json({
+        error: true,
+        mensaje: mismo
+          ? `Esa etiqueta ya abre este mismo punto (${punto.codigo_visible}).`
+          : `Esa etiqueta ya abre el punto ${otro?.codigo_visible || ""}${otro?.asa_sitios?.nombre ? ` en ${otro.asa_sitios.nombre}` : ""}.`,
+      });
+    }
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
+  }
+
+  const origen = ["panel", "foto", "escaneo", "lote"].includes(req.body?.origen) ? req.body.origen : "panel";
+  const { data, error } = await supabase
+    .from("asa_qr_etiquetas")
+    .insert([{ token, punto_id: punto.id, origen, creado_por: req.usuario?.id || null, creado_por_nombre: req.usuario?.nombre || null }])
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+  const lote = await enLoteImpreso(token);
+  logAccion(req, { accion: "crear", modulo: "etiquetas_qr", registroId: punto.id, descripcion: `Etiqueta ${token} → ${punto.codigo_visible}${lote ? "" : " (fuera del lote impreso)"}` });
+  res.status(201).json({ ...data, en_lote: !!lote, lote: lote?.lote || null });
+});
+
+// DELETE /puntos/etiquetas/:token — soltar una etiqueta extra (asignada por error)
+router.delete("/etiquetas/:token", requireRol("operaciones"), async (req, res) => {
+  const token = tokenDesdeTexto(req.params.token);
+  const { data: et } = await supabase.from("asa_qr_etiquetas").select("id, punto_id, asa_puntos_control(sitio_id, codigo_visible)").eq("token", token).maybeSingle();
+  if (!et) return res.status(404).json({ error: true, mensaje: "Esa etiqueta no está asignada como adicional." });
+  if (!exigirSitioPermitido(req, res, et.asa_puntos_control?.sitio_id)) return;
+  const { error } = await supabase.from("asa_qr_etiquetas").delete().eq("id", et.id);
+  if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+  logAccion(req, { accion: "eliminar", modulo: "etiquetas_qr", registroId: et.punto_id, descripcion: `Etiqueta ${token} soltada de ${et.asa_puntos_control?.codigo_visible || ""}` });
+  res.json({ ok: true });
+});
+
 // GET /puntos/buscar?q=&sitio_id= — respaldo cuando el QR está dañado o ilegible
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /puntos/buscar?q=&sitio_id=
@@ -454,6 +633,41 @@ router.get("/buscar", async (req, res) => {
 // Devuelve todo de una vez para que la app no tenga que hacer 4 llamadas en el
 // sótano de un hotel sin señal: ficha, checklist que aplica y últimas visitas.
 router.get("/qr/:token", async (req, res) => {
+  // El código puede ser el QR principal del punto o una etiqueta adicional
+  // (asa_qr_etiquetas), y puede venir en minúsculas o dentro de una URL.
+  let resuelto;
+  try {
+    resuelto = await puntoPorToken(req.params.token);
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
+  }
+  if (!resuelto.punto_id) {
+    // Se anota para que la oficina la asigne desde el panel sin ir a buscarla.
+    const sitioId = req.query.sitio_id && puedeVerSitio(req, req.query.sitio_id) ? req.query.sitio_id : null;
+    const lote = await enLoteImpreso(resuelto.token);
+    if (resuelto.token) {
+      const { data: previo } = await supabase.from("asa_qr_no_reconocidos").select("veces").eq("token", resuelto.token).maybeSingle();
+      await supabase.from("asa_qr_no_reconocidos").upsert([{
+        token: resuelto.token,
+        sitio_id: sitioId,
+        veces: (previo?.veces || 0) + 1,
+        ultimo_escaneo: new Date().toISOString(),
+        ultimo_usuario_nombre: req.usuario?.nombre || null,
+        texto_original: String(req.params.token).slice(0, 300),
+      }], { onConflict: "token" }).then(() => {}, () => {});
+    }
+    return res.status(404).json({
+      error: true,
+      sin_asignar: true,
+      token: resuelto.token,
+      en_lote: !!lote,
+      lote: lote?.lote || null,
+      mensaje: lote
+        ? `La etiqueta ${resuelto.token} es de las impresas por ASA, pero todavía no está asignada a ningún punto.`
+        : `Ese código QR (${resuelto.token || "vacío"}) no corresponde a ningún punto de control. Búscalo por nombre.`,
+    });
+  }
+
   const { data: punto, error } = await supabase
     .from("asa_puntos_control")
     .select(`
@@ -463,7 +677,7 @@ router.get("/qr/:token", async (req, res) => {
       asa_sitios(id, nombre, direccion, cliente_id),
       asa_planos(id, nombre, imagen_url)
     `)
-    .eq("qr_token", req.params.token)
+    .eq("id", resuelto.punto_id)
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
@@ -638,6 +852,22 @@ async function validarQRImpreso(valor) {
     .maybeSingle();
 
   if (error) return { ok: false, status: 500, mensaje: mensajeAmable(error) };
+
+  if (!enUso) {
+    const { data: extra } = await supabase
+      .from("asa_qr_etiquetas")
+      .select("asa_puntos_control(codigo_visible, asa_sitios(nombre))")
+      .eq("token", token)
+      .maybeSingle();
+    if (extra) {
+      const p = extra.asa_puntos_control || {};
+      return {
+        ok: false,
+        status: 409,
+        mensaje: `Esa etiqueta ya está asignada como etiqueta adicional del punto ${p.codigo_visible || ""}${p.asa_sitios?.nombre ? ` en ${p.asa_sitios.nombre}` : ""}.`,
+      };
+    }
+  }
 
   if (enUso) {
     const donde = enUso.asa_sitios?.nombre ? ` en ${enUso.asa_sitios.nombre}` : "";

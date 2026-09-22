@@ -65,7 +65,12 @@ async function api(ruta, opciones = {}) {
   }
   let datos = null;
   try { datos = await res.json(); } catch {}
-  if (!res.ok) throw new Error(datos?.mensaje || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(datos?.mensaje || `Error ${res.status}`);
+    err.status = res.status;
+    err.datos = datos;
+    throw err;
+  }
   return datos;
 }
 const GET = (r) => api(r);
@@ -443,12 +448,33 @@ async function pantallaEscanear() {
       <div class="pie">
         <p id="pista">Apunta al código QR del punto</p>
         <button class="btn secundario" id="cerrar">Cancelar</button>
+        <label class="btn secundario" style="margin-top:8px;display:flex;align-items:center;justify-content:center">
+          📷 No lee — tomar foto del QR
+          <input type="file" id="foto-qr" accept="image/*" capture="environment" hidden />
+        </label>
         <button class="btn secundario" id="a-buscar" style="margin-top:8px">🔍 El código no se lee — buscar por nombre</button>
       </div>
     </div>`;
 
   $("#cerrar").addEventListener("click", () => (location.hash = "#/ruta"));
   $("#a-buscar").addEventListener("click", () => (location.hash = "#/buscar"));
+  $("#foto-qr").addEventListener("change", async (ev) => {
+    const archivo = ev.target.files?.[0];
+    if (!archivo) return;
+    $("#pista").textContent = "Leyendo la foto…";
+    try {
+      const texto = await leerQRDeFoto(archivo);
+      const token = texto && extraerToken(texto);
+      if (!token) { $("#pista").textContent = "No se encontró un QR en la foto. Acércate más y que salga nítido."; return; }
+      vibrar([50, 40, 50]);
+      activo = false;
+      flujo?.getTracks().forEach((t) => t.stop());
+      sessionStorage.setItem("asa_origen_qr", "foto");
+      location.hash = `#/p/${encodeURIComponent(token)}`;
+    } catch {
+      $("#pista").textContent = "No se pudo leer la foto. Inténtalo otra vez.";
+    }
+  });
 
   const video = $("#video");
   let flujo = null;
@@ -479,7 +505,8 @@ async function pantallaEscanear() {
     }
     vibrar([50, 40, 50]);
     detener();
-    location.hash = `#/p/${token}`;
+    sessionStorage.setItem("asa_origen_qr", "escaneo");
+    location.hash = `#/p/${encodeURIComponent(token)}`;
   };
 
   // BarcodeDetector es nativo y rapidísimo (Android/Chrome). Donde no existe
@@ -526,6 +553,9 @@ function extraerToken(texto) {
   const conRuta = t.match(/\/p\/([A-Za-z0-9_-]+)/);
   if (conRuta) return conRuta[1];
   if (/^[A-Za-z0-9_-]{6,64}$/.test(t)) return t;
+  // Etiquetas impresas con otro formato (URL de otro sistema, minúsculas,
+  // espacios): se mandan tal cual y el servidor saca el código.
+  if (t && t.length <= 300) return t;
   return null;
 }
 
@@ -735,9 +765,10 @@ async function pantallaPunto(token) {
 
   let punto;
   try {
-    punto = await GET(`/puntos/qr/${encodeURIComponent(token)}`);
+    punto = await GET(`/puntos/qr/${encodeURIComponent(token)}${SITIO?.id ? `?sitio_id=${SITIO.id}` : ""}`);
     await guardarCache(`punto:${token}`, punto);
   } catch (e) {
+    if (e.datos?.sin_asignar) return pantallaEtiquetaSinAsignar(cuerpo, e.datos);
     punto = await leerCache(`punto:${token}`);
     if (!punto) {
       cuerpo.innerHTML = `
@@ -1307,6 +1338,123 @@ async function pantallaSolicitud(id) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Leer un QR desde una FOTO
+//
+// Para etiquetas gastadas, con reflejo o en sitios donde la cámara en vivo no
+// enfoca: se toma la foto con la cámara normal del teléfono y se lee aquí.
+// Prueba varios tamaños porque jsQR falla con fotos de 12 MP y con QR chicos.
+// ─────────────────────────────────────────────────────────────────────────
+async function leerQRDeFoto(archivo) {
+  const bitmap = await createImageBitmap(archivo);
+  if ("BarcodeDetector" in window) {
+    try {
+      const r = await new BarcodeDetector({ formats: ["qr_code"] }).detect(bitmap);
+      if (r.length) return r[0].rawValue;
+    } catch {}
+  }
+  await cargarJsQR();
+  const lienzo = document.createElement("canvas");
+  const ctx = lienzo.getContext("2d", { willReadFrequently: true });
+  for (const lado of [1600, 1000, 700, 2400]) {
+    const k = Math.min(1, lado / Math.max(bitmap.width, bitmap.height));
+    lienzo.width = Math.round(bitmap.width * k);
+    lienzo.height = Math.round(bitmap.height * k);
+    ctx.drawImage(bitmap, 0, 0, lienzo.width, lienzo.height);
+    const img = ctx.getImageData(0, 0, lienzo.width, lienzo.height);
+    const c = window.jsQR?.(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
+    if (c?.data) return c.data;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Etiqueta sin asignar
+//
+// Se escaneó (o fotografió) un QR que no abre ningún punto. Al administrador
+// y a operaciones se les deja asignarlo ahí mismo al punto correcto; al
+// técnico se le avisa que quedó anotado para la oficina.
+// ─────────────────────────────────────────────────────────────────────────
+const PUEDE_ASIGNAR_QR = () => ["admin", "operaciones"].includes(USUARIO?.rol);
+
+function pantallaEtiquetaSinAsignar(cuerpo, datos) {
+  const origen = sessionStorage.getItem("asa_origen_qr") === "foto" ? "foto" : "escaneo";
+  cuerpo.innerHTML = `
+    <div class="tarjeta" style="border-left:5px solid ${datos.en_lote ? "var(--ambar)" : "var(--rojo)"}">
+      <h2>🏷️ Etiqueta sin asignar</h2>
+      <p style="margin-top:6px">Código: <strong style="font-family:monospace;font-size:16px;color:var(--gris-900)">${esc(datos.token || "—")}</strong></p>
+      <p style="margin-top:8px">${datos.en_lote
+        ? `✅ Es de las etiquetas que ASA mandó a imprimir${datos.lote ? ` (lote <strong>${esc(datos.lote)}</strong>)` : ""}.`
+        : `⚠️ No está en la lista de etiquetas impresas de ASA.`}</p>
+    </div>
+    ${PUEDE_ASIGNAR_QR() ? `
+      <div class="grupo-area">¿A qué punto pertenece?</div>
+      <p style="color:var(--gris-600);font-size:14px;margin:0 0 8px">
+        Busca el punto donde está pegada esta etiqueta${SITIO ? ` en <strong>${esc(SITIO.nombre)}</strong>` : ""}.
+        Desde ese momento, escanearla abre ese punto.
+      </p>
+      <input id="asig-q" class="caja-texto" placeholder="Habitación, código, área o tipo…" autocomplete="off" />
+      <div id="asig-lista"></div>
+      <p style="color:var(--gris-400);font-size:13px;margin-top:12px">
+        Si el punto todavía no existe, créalo en el panel (Plantas → Puntos de control → + Punto) y
+        escribe este código en "Etiqueta QR ya impresa".
+      </p>` : `
+      <div class="vacio" style="padding:20px">
+        Quedó anotada para que la oficina la asigne.<br>Mientras tanto, busca el punto por nombre.
+      </div>
+      <button class="btn secundario" onclick="location.hash='#/buscar'">🔍 Buscar por nombre</button>`}`;
+
+  if (!PUEDE_ASIGNAR_QR()) return;
+  const q = $("#asig-q", cuerpo);
+  const lista = $("#asig-lista", cuerpo);
+  let turno = 0;
+  q.addEventListener("input", () => {
+    const texto = q.value.trim();
+    const mio = ++turno;
+    if (texto.length < 1) { lista.innerHTML = ""; return; }
+    setTimeout(async () => {
+      if (mio !== turno) return;
+      try {
+        const qs = new URLSearchParams({ q: texto });
+        if (SITIO?.id) qs.set("sitio_id", SITIO.id);
+        const r = await GET(`/puntos/buscar?${qs}`);
+        const puntos = Array.isArray(r) ? r : r.puntos || r.resultados || [];
+        if (mio !== turno) return;
+        lista.innerHTML = puntos.length
+          ? puntos.slice(0, 40).map((p) => `
+              <div class="punto" data-id="${esc(p.id)}" data-cod="${esc(p.codigo_visible)}">
+                <span class="icono">${p.asa_tipos_punto?.icono || p.tipo_icono || "📍"}</span>
+                <div class="texto">
+                  <div class="codigo">${esc(p.codigo_visible)}</div>
+                  <div class="detalle">${esc([p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre, p.asa_areas?.nombre || p.area_nombre].filter(Boolean).join(" · "))}</div>
+                </div>
+                <span class="marca">＋</span>
+              </div>`).join("")
+          : `<div class="vacio" style="padding:16px">Nada con "${esc(texto)}".</div>`;
+        lista.querySelectorAll("[data-id]").forEach((el) =>
+          el.addEventListener("click", async () => {
+            if (!confirm(`¿Asignar la etiqueta ${datos.token} al punto ${el.dataset.cod}?`)) return;
+            try {
+              await POST(`/puntos/${el.dataset.id}/etiquetas`, { token: datos.token, origen });
+              vibrar([40, 30, 80]);
+              aviso(`Listo: la etiqueta ya abre ${el.dataset.cod}`, "exito");
+              sessionStorage.removeItem("asa_origen_qr");
+              const destino = `#/p/${encodeURIComponent(datos.token)}`;
+              if (location.hash === destino) enrutar();
+              else location.hash = destino;
+            } catch (err) {
+              aviso(err.message, "error");
+            }
+          })
+        );
+      } catch (err) {
+        lista.innerHTML = `<div class="vacio" style="padding:16px">${esc(navigator.onLine ? err.message : "Sin señal: para asignar etiquetas hace falta conexión.")}</div>`;
+      }
+    }, 250);
+  });
+  q.focus();
+}
+
 function enrutar() {
   const ruta = location.hash.replace(/^#\/?/, "");
 
@@ -1328,7 +1476,9 @@ function enrutar() {
     // pantalla dejó dicho cómo; si no, es un QR escaneado.
     sessionStorage.setItem("asa_via", sessionStorage.getItem("asa_via_sig") || "qr");
     sessionStorage.removeItem("asa_via_sig");
-    return pantallaPunto(ruta.slice(2));
+    let token = ruta.slice(2);
+    try { token = decodeURIComponent(token); } catch {}
+    return pantallaPunto(token);
   }
   if (ruta === "plano") return pantallaPlano(null);
   // El chequeo vehicular no depende del hotel elegido: es del vehículo, no de

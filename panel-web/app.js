@@ -1656,6 +1656,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
       <button class="btn btn-sm" id="pt-estrategia">Estrategia en masa</button>
       <button class="btn btn-sm" id="pt-etiquetas">Imprimir QR</button>
+      <button class="btn btn-sm" id="pt-qr-impresos">Etiquetas QR</button>
       <button class="btn btn-sm btn-danger" id="pt-baja">Dar de baja</button>
     </div>
     <div id="puntos-tabla"><div class="center-msg">Cargando…</div></div>`;
@@ -1725,6 +1726,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
     imprimirEtiquetas(sitioId, $("#f-area").value || null)
   );
   $("#pt-baja").addEventListener("click", () => modalEliminarPuntos(sitioId, areas, tipos, cargar));
+  $("#pt-qr-impresos").addEventListener("click", () => modalEtiquetasQR(sitioId, cargar));
   $("#pt-estrategia").addEventListener("click", async () =>
     modalEstrategiaMasiva(sitioId, areas, tipos, await estrategiasLista(), cargar)
   );
