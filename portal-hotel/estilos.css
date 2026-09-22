@@ -301,3 +301,46 @@ img{max-width:100%}
 .leyenda-semaforo i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:4px}
 .punto-verde{background:#66a36a}
 .punto-rojo{background:#ef4444}
+
+/* ── Solicitudes (listas de habitaciones y reportes) ─────────────────────*/
+.barra-sol{height:6px;background:var(--rojo-claro);border-radius:20px;overflow:hidden;margin:6px 0 2px;max-width:320px}
+.barra-sol span{display:block;height:100%;background:#66a36a;border-radius:20px}
+.pasos{display:flex;gap:6px;margin:4px 0 12px;flex-wrap:wrap}
+.paso{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--suave);padding:4px 10px;border-radius:20px;background:var(--fondo);border:1px solid var(--borde)}
+.paso span{width:9px;height:9px;border-radius:50%;background:var(--borde)}
+.paso.ok{color:var(--verde);border-color:#bcdcbe;background:#f3f9f3;font-weight:700}
+.paso.ok span{background:#66a36a}
+.celda.gris{background:var(--fondo);border-color:var(--borde);color:var(--suave);text-decoration:line-through}
+.celda.punteado{border-style:dashed}
+.celda small{display:block;font-weight:500;font-size:10px;line-height:1.2;margin-top:2px}
+button.celda{font:inherit;font-weight:700;cursor:pointer;background:var(--blanco);border-color:var(--borde);color:var(--texto)}
+.celda.elegible.elegida{background:var(--azul);border-color:var(--azul);color:#fff}
+.grupo-hab{margin-bottom:12px}
+.grupo-hab-titulo{font-size:12px;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
+.fila-campos{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:560px){.fila-campos{grid-template-columns:1fr}}
+.hilo{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;margin-bottom:10px}
+.msg{align-self:flex-start;max-width:85%;background:var(--fondo);border:1px solid var(--borde);border-radius:12px;padding:8px 12px;font-size:14px}
+.msg .txt{white-space:pre-wrap}
+.msg.mio{align-self:flex-end;background:#eaf0f8;border-color:#bac9e1}
+.msg .autor{font-size:11.5px;font-weight:700;color:var(--suave);margin-bottom:2px}
+.msg .hora{font-size:11px;color:var(--suave);margin-top:3px;text-align:right}
+.sol-enviar{display:flex;gap:8px;align-items:flex-end}
+.sol-enviar textarea{flex:1;border:1px solid var(--borde);border-radius:10px;padding:8px 10px;font:inherit;resize:vertical}
+.capa-modal{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:80;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}
+.capa-caja{width:100%;max-width:720px}
+
+/* ── Mapa del hotel ──────────────────────────────────────────────────────*/
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
+.mapa-pdf{border:1px solid var(--borde);border-radius:var(--radio);overflow:hidden;background:var(--blanco);margin-bottom:10px}
+.mapa-pdf iframe{width:100%;height:70vh;min-height:420px;border:0;display:block}
+.mapa-img{position:relative;border:1px solid var(--borde);border-radius:var(--radio);overflow:hidden;background:var(--blanco)}
+.mapa-img img{display:block;width:100%;height:auto}
+.mapa-pin{
+  position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid #fff;padding:0;cursor:pointer;
+  transform:translate(-50%,-50%);box-shadow:0 1px 3px rgba(0,0,0,.35);
+}
+.mapa-pin.verde{background:#43a047}
+.mapa-pin.rojo{background:#e53935}
+.mapa-pin.activo{width:24px;height:24px;z-index:2;outline:3px solid rgba(50,83,156,.45)}
+.mapa-info{margin:10px 0 16px;font-size:13.5px;color:var(--suave);text-align:center;min-height:20px}

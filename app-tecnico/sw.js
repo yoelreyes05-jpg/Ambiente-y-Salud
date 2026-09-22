@@ -11,7 +11,7 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v5";
+const VERSION = "asa-tecnico-v6";
 const CAPARAZON = [
   "./",
   "./index.html",

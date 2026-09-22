@@ -205,10 +205,15 @@ router.get("/:id/planos", async (req, res) => {
     .eq("activo", true)
     .not("plano_id", "is", null);
 
+  // El portal del hotel también ve los planos (pestaña Mapa), pero no el QR:
+  // con el token cualquiera podría abrir el punto en la app del técnico.
+  const externo = req.sitiosPermitidos !== null;
   res.json(
     (planos || []).map((pl) => ({
       ...pl,
-      puntos: (puntos || []).filter((p) => p.plano_id === pl.id),
+      puntos: (puntos || [])
+        .filter((p) => p.plano_id === pl.id)
+        .map((p) => (externo ? { ...p, qr_token: undefined } : p)),
     }))
   );
 });

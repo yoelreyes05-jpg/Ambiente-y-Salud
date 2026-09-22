@@ -373,12 +373,15 @@ async function pantallaRuta() {
     <button class="btn grande" id="btn-escanear">📷 Escanear punto</button>
     <button class="btn secundario" id="btn-buscar">🔍 Buscar por nombre o habitación</button>
 
+    <div id="solicitudes-hotel" style="margin-top:8px"></div>
     <div id="listas" style="margin-top:8px"></div>`;
 
   if (!cuerpo.isConnected) return; // el técnico ya navegó a otra pantalla
 
   $("#btn-escanear", cuerpo)?.addEventListener("click", () => (location.hash = "#/escanear"));
   $("#btn-buscar", cuerpo)?.addEventListener("click", () => (location.hash = "#/buscar"));
+
+  bloqueSolicitudes($("#solicitudes-hotel", cuerpo)).catch(() => {});
 
   const listas = $("#listas", cuerpo);
   listas.innerHTML = `
@@ -614,7 +617,10 @@ function pantallaBuscar() {
       `).join("")}`;
 
     caja.querySelectorAll("[data-token]").forEach((el) =>
-      el.addEventListener("click", () => (location.hash = `#/p/${el.dataset.token}`))
+      el.addEventListener("click", () => {
+        sessionStorage.setItem("asa_via_sig", "busqueda");
+        location.hash = `#/p/${el.dataset.token}`;
+      })
     );
   }
 
@@ -1051,7 +1057,9 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
 
     vibrar([40, 30, 80]);
     await actualizarContadorPendientes();
-    location.hash = "#/ruta";
+    const volver = sessionStorage.getItem("asa_volver");
+    sessionStorage.removeItem("asa_volver");
+    location.hash = volver || "#/ruta";
   });
 }
 
@@ -1144,6 +1152,161 @@ function reducirImagen(archivo, maxLado = 1280, calidad = 0.7) {
 // ─────────────────────────────────────────────────────────────────────────
 // Enrutador
 // ─────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+// Solicitudes del hotel
+//
+// El hotel manda desde su portal la lista de habitaciones que ya liberaron los
+// huéspedes. Aquí salen arriba de la ruta. Tocar una habitación abre el punto
+// como si se hubiera escaneado; al guardar la inspección, la habitación se
+// marca sola en la solicitud (lo hace la base de datos) y el hotel la ve en
+// verde. No hay que marcar nada dos veces.
+// ─────────────────────────────────────────────────────────────────────────
+const MOTIVO_TXT = {
+  permiso_denegado: "El hotel no autorizó", huesped_en_habitacion: "Huésped dentro",
+  area_ocupada: "Área ocupada", sin_llave: "Sin llave", en_mantenimiento: "En mantenimiento",
+  punto_inaccesible: "Inaccesible", evento_en_curso: "Evento en curso", otro: "Otro motivo",
+};
+
+async function bloqueSolicitudes(caja) {
+  const clave = `solicitudes:${SITIO.id}`;
+  let lista;
+  try {
+    lista = await GET(`/solicitudes?sitio_id=${SITIO.id}&estado=abiertas`);
+    await guardarCache(clave, lista);
+  } catch {
+    lista = (await leerCache(clave)) || [];
+  }
+  if (!caja.isConnected) return;
+  if (!lista.length) { caja.innerHTML = ""; return; }
+
+  caja.innerHTML = `
+    <div class="grupo-area" style="color:var(--rojo)">🛎️ Pedidas por el hotel · ${lista.length}</div>
+    ${lista.map((o) => {
+      const p = o.puntos;
+      const faltan = p.pendientes + p.no_realizados;
+      return `
+      <div class="punto solicitud ${o.recibido_tecnico_at ? "" : "sin-recibir"}" data-sol="${esc(o.id)}">
+        <span class="icono">${o.tipo_solicitud === "plaga" ? "🐜" : "🛏️"}</span>
+        <div class="texto">
+          <div class="codigo">
+            ${o.tipo_solicitud === "plaga" ? esc(o.tipo_plaga_reportada || "Reporte de plaga") : `${faltan} por hacer de ${p.total}`}
+            ${o.prioridad === "urgente" ? ` <span class="etiqueta roja">URGENTE</span>` : ""}
+            ${o.recibido_tecnico_at ? "" : ` <span class="etiqueta">NUEVA</span>`}
+          </div>
+          <div class="detalle">${esc(o.numero_orden || "")}${o.creado_por_nombre ? ` · ${esc(o.creado_por_nombre)}` : ""}${o.mensajes_total ? ` · 💬 ${o.mensajes_total}` : ""}</div>
+        </div>
+        <span class="marca">›</span>
+      </div>`;
+    }).join("")}`;
+
+  caja.querySelectorAll("[data-sol]").forEach((el) =>
+    el.addEventListener("click", () => (location.hash = `#/solicitud/${el.dataset.sol}`))
+  );
+}
+
+async function pantallaSolicitud(id) {
+  encabezado("Solicitud del hotel", SITIO?.nombre || "");
+  const cuerpo = document.createElement("div");
+  cuerpo.className = "contenido";
+  cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
+  app().appendChild(cuerpo);
+
+  const clave = `solicitud:${id}`;
+  let o;
+  try {
+    o = await GET(`/solicitudes/${id}`);
+    await guardarCache(clave, o);
+  } catch {
+    o = await leerCache(clave);
+    if (!o) {
+      cuerpo.innerHTML = `<div class="vacio"><span class="emoji">📡</span>Sin señal. Ábrela una vez con conexión para tenerla en el teléfono.</div>`;
+      return;
+    }
+  }
+  if (!cuerpo.isConnected) return;
+
+  // Lo hecho sin señal todavía no llegó al servidor: se marca aquí para no repetirlo.
+  const cola = await BD.todos("cola").catch(() => []);
+  const enCola = new Set(cola.map((c) => c.punto_id));
+
+  const abierta = ["solicitada", "agendada", "en_ruta", "en_sitio"].includes(o.estado);
+  const porArea = {};
+  for (const p of o.puntos) (porArea[p.area_nombre || "Sin área"] ||= []).push(p);
+  const faltan = o.puntos.filter((p) => (p.estado === "pendiente" || p.estado === "no_realizado") && !enCola.has(p.punto_id));
+
+  const fila = (p) => {
+    const local = enCola.has(p.punto_id) && p.estado !== "hecho";
+    const hecho = p.estado === "hecho";
+    const clase = hecho || local ? "hecho" : p.estado === "no_realizado" ? "vencido" : p.estado === "cancelado" ? "" : "vencido";
+    const marca = hecho ? "✅" : local ? "⏳" : p.estado === "cancelado" ? "✖" : p.estado === "no_realizado" ? "⚠️" : "›";
+    const nombre = p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.codigo_visible;
+    const puedeAbrir = abierta && !hecho && !local && p.estado !== "cancelado" && p.qr_token;
+    return `
+      <div class="punto ${clase}" ${puedeAbrir ? `data-token="${esc(p.qr_token)}"` : ""}>
+        <span class="icono">${p.tipo_icono || "🛏️"}</span>
+        <div class="texto">
+          <div class="codigo">${esc(nombre)}</div>
+          <div class="detalle">${esc(p.codigo_visible || "")}${p.estado === "no_realizado" ? ` · No se pudo: ${esc(MOTIVO_TXT[p.motivo_no_realizado] || "")} — toca para reintentar` : ""}${local ? " · Guardada en el teléfono" : ""}</div>
+        </div>
+        <span class="marca">${marca}</span>
+      </div>`;
+  };
+
+  cuerpo.innerHTML = `
+    <div class="tarjeta">
+      <h2>${esc(o.numero_orden || "")} ${o.prioridad === "urgente" ? `<span class="etiqueta roja">URGENTE</span>` : ""}</h2>
+      <p>Pedida por <strong>${esc(o.creado_por_nombre || "el hotel")}</strong> · ${new Date(o.created_at).toLocaleString("es-DO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+      ${o.fecha_requerida ? `<p>Para el ${new Date(o.fecha_requerida + "T12:00:00").toLocaleDateString("es-DO", { weekday: "long", day: "numeric", month: "long" })}</p>` : ""}
+      ${o.tipo_plaga_reportada ? `<p>Plaga: <strong>${esc(o.tipo_plaga_reportada)}</strong></p>` : ""}
+      ${o.descripcion_cliente ? `<p style="margin-top:8px;color:var(--gris-900)">📝 ${esc(o.descripcion_cliente)}</p>` : ""}
+      ${!abierta ? `<p style="margin-top:8px"><strong>Esta solicitud ya está cerrada.</strong></p>` : ""}
+    </div>
+
+    ${abierta && !o.recibido_tecnico_at ? `<button class="btn" id="sol-recibida">✓ La recibí — avisar al hotel</button>` : ""}
+
+    ${o.puntos.length ? `
+      <div class="avance" style="margin-top:12px">
+        <div class="hechos"><div class="numero">${o.puntos.length - faltan.length}</div><div class="rotulo">Hechas</div></div>
+        <div class="faltan"><div class="numero">${faltan.length}</div><div class="rotulo">Faltan</div></div>
+      </div>
+      ${Object.entries(porArea).map(([area, lista]) => `
+        <div class="grupo-area" style="margin-top:14px">${esc(area)}</div>
+        ${lista.map(fila).join("")}`).join("")}` : ""}
+
+    <div class="grupo-area" style="margin-top:18px">Mensajes</div>
+    <div class="hilo">
+      ${o.mensajes.length ? o.mensajes.map((m) => `
+        <div class="msg ${m.usuario_id === USUARIO?.id ? "mio" : ""}">
+          <div class="autor">${esc(m.autor_nombre || "")} · ${m.autor_rol === "cliente_calidad" ? "Hotel" : m.autor_rol === "tecnico_plagas" ? "Técnico" : "Oficina"}</div>
+          <div class="txt">${esc(m.texto)}</div>
+          <div class="hora">${new Date(m.created_at).toLocaleString("es-DO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+        </div>`).join("") : `<div class="vacio" style="padding:14px">Sin mensajes.</div>`}
+    </div>
+    <textarea id="sol-texto" rows="2" class="caja-texto" placeholder="Ej.: La 4318 tiene huésped, vuelvo a las 3:00."></textarea>
+    <button class="btn secundario" id="sol-enviar">Enviar mensaje</button>`;
+
+  cuerpo.querySelectorAll("[data-token]").forEach((el) =>
+    el.addEventListener("click", () => {
+      // Al guardar la inspección se vuelve a esta solicitud, no a la ruta.
+      sessionStorage.setItem("asa_volver", `#/solicitud/${o.id}`);
+      sessionStorage.setItem("asa_via_sig", "manual");
+      location.hash = `#/p/${el.dataset.token}`;
+    })
+  );
+  $("#sol-recibida", cuerpo)?.addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    try { await POST(`/solicitudes/${o.id}/recibida`, {}); aviso("El hotel ya sabe que la recibiste ✓", "exito"); pantallaSolicitud(id); }
+    catch (err) { aviso(navigator.onLine ? err.message : "Sin señal: inténtalo al tener conexión"); e.target.disabled = false; }
+  });
+  $("#sol-enviar", cuerpo).addEventListener("click", async (e) => {
+    const texto = $("#sol-texto", cuerpo).value.trim();
+    if (!texto) return;
+    e.target.disabled = true;
+    try { await POST(`/solicitudes/${o.id}/mensajes`, { texto }); pantallaSolicitud(id); }
+    catch (err) { aviso(navigator.onLine ? err.message : "Sin señal: el mensaje no se envió"); e.target.disabled = false; }
+  });
+}
+
 function enrutar() {
   const ruta = location.hash.replace(/^#\/?/, "");
 
@@ -1161,7 +1324,10 @@ function enrutar() {
   }
 
   if (ruta.startsWith("p/")) {
-    sessionStorage.setItem("asa_via", "qr");
+    // Si se llegó tocando un punto (búsqueda, solicitud del hotel), esa
+    // pantalla dejó dicho cómo; si no, es un QR escaneado.
+    sessionStorage.setItem("asa_via", sessionStorage.getItem("asa_via_sig") || "qr");
+    sessionStorage.removeItem("asa_via_sig");
     return pantallaPunto(ruta.slice(2));
   }
   if (ruta === "plano") return pantallaPlano(null);
@@ -1175,6 +1341,7 @@ function enrutar() {
     return pantallaBuscar();
   }
   if (ruta === "hoteles") return elegirHotel();
+  if (ruta.startsWith("solicitud/")) return pantallaSolicitud(ruta.slice(10));
   if (!SITIO) return elegirHotel();
   return pantallaRuta();
 }

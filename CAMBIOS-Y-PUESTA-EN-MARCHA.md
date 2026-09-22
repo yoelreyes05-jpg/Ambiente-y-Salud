@@ -332,3 +332,67 @@ estrategia nueva no se pega sola a ningún tipo: la marcas donde la quieras.
    Sin esto todo funciona, pero una habitación a la que "no dejaron entrar"
    se sigue contando como hecha (verde) durante su ciclo.
 2. Subir a GitHub: Railway redespliega el backend y Vercel el panel y el portal.
+
+---
+
+## Solicitudes del hotel (hotel ↔ ASA ↔ técnico) y Mapa en el portal (22-sep-2026)
+
+**Para qué.** Hay hoteles que solo liberan las habitaciones cuando sale el
+huésped y le entregan al técnico una lista en papel. Ahora esa lista viaja por
+el sistema y los tres lados ven lo mismo en tiempo real.
+
+**Cómo funciona**
+
+1. **Hotel (portal → Solicitudes):** "Enviar habitaciones". Escribe o pega los
+   números (`4312, 4315, 4320-4325`) o las toca en la cuadrícula; avisa si un
+   número no existe. Elige para cuándo, urgencia y deja una nota. También
+   "Reportar una plaga", que ahora cae en la misma lista.
+2. **Panel (menú → Solicitudes):** globito rojo con las que nadie ha abierto y
+   aviso cuando entra una nueva. Al abrirla queda registrado quién la vio. Se
+   asigna técnico, se cambia el estado y se escribe en el hilo.
+3. **Técnico (app):** arriba de su ruta, "Pedidas por el hotel". Botón "La
+   recibí — avisar al hotel". Toca una habitación, hace la inspección normal y
+   vuelve a la solicitud.
+4. **Automático:** al guardar la inspección de una habitación de la lista, esa
+   habitación se pone VERDE sola (lo hace la base de datos, también con lo que
+   se sube sin señal). Si "no se pudo" (huésped dentro, sin llave…) queda ROJA
+   con el motivo. Cuando todas están hechas, la solicitud se completa sola.
+5. **Mensajes:** cada solicitud tiene su hilo entre hotel, oficina y técnico.
+   Un mensaje del hotel vuelve a marcarla como nueva en el panel.
+
+**Extras incluidos**
+
+- El hotel puede **agregar habitaciones** a una solicitud abierta (siguen
+  saliendo huéspedes durante el día) y **cancelarla**.
+- La oficina puede **crear una solicitud** por el hotel (si llamaron o
+  escribieron por WhatsApp).
+- El portal refresca la solicitud abierta cada 30 segundos.
+- Pasos visibles para el hotel: Enviada → Recibida por ASA → En proceso → Completada.
+- **Mapa (portal → Mapa):** el hotel ve los planos de su planta. En planos de
+  imagen, cada punto sale en verde (hecho) o rojo (por hacer); en PDF (QGIS) se
+  ve el plano tal cual, con botón de pantalla completa. El portal no recibe los
+  códigos QR.
+- Corregido: en la app del técnico, un punto abierto desde la búsqueda se
+  guardaba como si fuera escaneado por QR.
+
+**Archivos**
+
+- `supabase/30_solicitudes_hotel.sql` (tablas `asa_orden_puntos`,
+  `asa_orden_mensajes`, columnas nuevas en `asa_ordenes_trabajo` y el trigger)
+- `backend/routes/solicitudes.js` (nuevo), `backend/server.mjs`,
+  `backend/middleware/auth.js`, `backend/routes/sitios.js`,
+  `backend/routes/configuracion.js`
+- `portal-hotel/app.js`, `portal-hotel/estilos.css`
+- `panel-web/solicitudes.js` (nuevo), `panel-web/index.html`, `panel-web/app.js`,
+  `panel-web/styles.css`
+- `app-tecnico/app.js`, `app-tecnico/estilos.css`, `app-tecnico/sw.js` (caché `asa-tecnico-v6`)
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/30_solicitudes_hotel.sql` en el SQL Editor (y el 29 si no
+   se ha corrido). Al final muestra una fila con 1 · 1 · 1 · 1.
+2. Subir a GitHub: Railway redespliega el backend; Vercel el panel, el portal y la app.
+3. Si usas la matriz de **Permisos por rol**, dale acceso a "Solicitudes del
+   hotel" a operaciones/comercial (el admin la ve siempre).
+4. Los técnicos deben tener su **empleado** con rol técnico para aparecer en
+   "Técnico asignado".

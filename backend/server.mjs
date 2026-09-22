@@ -58,6 +58,7 @@ import veterinariaRouter from "./routes/veterinaria.js";
 import citasRouter from "./routes/citas.js";
 import esteticaRouter from "./routes/estetica.js";
 import plagasRouter from "./routes/plagas.js";
+import solicitudesRouter from "./routes/solicitudes.js";
 import ipmRouter from "./routes/ipm.js";
 import inventarioRouter from "./routes/inventario.js";
 import posRouter from "./routes/pos.js";
@@ -110,6 +111,8 @@ app.use("/estrategias", estrategiasRouter);
 app.use("/hallazgos", hallazgosRouter);
 app.use("/reportes", reportesRouter);
 app.use("/plagas", plagasRouter);
+// Solicitudes del hotel: listas de habitaciones y reportes, con su hilo de mensajes
+app.use("/solicitudes", solicitudesRouter);
 app.use("/ipm", ipmRouter);
 app.use("/inventario", inventarioRouter);
 app.use("/notificaciones", notificacionesRouter);

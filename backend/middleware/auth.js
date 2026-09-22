@@ -114,8 +114,13 @@ export function exigirSitioPermitido(req, res, sitioId) {
 //
 // Se compara la ruta completa (baseUrl + path) porque este middleware corre
 // antes de que Express entre al router, así que req.path todavía es "/".
+// Solicitudes del hotel (routes/solicitudes.js): crear, agregar habitaciones,
+// escribir en el hilo y cancelar. Cada ruta comprueba además que la planta sea
+// de ese usuario. Asignar técnico o cerrar sigue siendo solo de la oficina.
 const ESCRITURAS_PERMITIDAS_EXTERNAS = [
   { metodo: "POST", ruta: "/plagas/reportar" },
+  { metodo: "POST", ruta: "/solicitudes" },
+  { metodo: "POST", patron: /^\/solicitudes\/[0-9a-f-]{36}\/(puntos|mensajes|cancelar)$/i },
 ];
 
 export function soloLectura(req, res, next) {
@@ -123,7 +128,9 @@ export function soloLectura(req, res, next) {
 
   const rutaCompleta = (req.baseUrl || "") + (req.path || "");
   const permitida = ESCRITURAS_PERMITIDAS_EXTERNAS.some(
-    (p) => p.metodo === req.method && rutaCompleta.replace(/\/+$/, "") === p.ruta
+    (p) =>
+      p.metodo === req.method &&
+      (p.patron ? p.patron.test(rutaCompleta.replace(/\/+$/, "")) : rutaCompleta.replace(/\/+$/, "") === p.ruta)
   );
   if (permitida) return next();
 

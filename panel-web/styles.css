@@ -608,3 +608,18 @@ table.data tbody tr.clickable{cursor:pointer}
 .dia-fecha{font-weight:700;text-transform:capitalize;margin-bottom:6px}
 .dia-datos{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
 .dia-flecha{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:22px;color:var(--text-muted)}
+
+/* ── Solicitudes de los hoteles ──────────────────────────────────────────*/
+.nav-item{position:relative}
+.nav-badge{
+  margin-left:auto;background:#dc2626;color:#fff;border-radius:20px;min-width:20px;height:20px;
+  padding:0 6px;font-size:11.5px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;
+}
+.sol-hilo{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;padding:4px}
+.sol-msg{max-width:80%;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:13.5px;background:#f8fafc}
+.sol-msg .txt{white-space:pre-wrap}
+.sol-msg.hotel{align-self:flex-start;background:#fff7ed;border-color:#fed7aa}
+.sol-msg.tecnico{align-self:flex-start;background:var(--asa-verde-pastel);border-color:#cfe5d0}
+.sol-msg.asa{align-self:flex-end;background:var(--asa-azul-pastel);border-color:var(--asa-azul-claro)}
+.sol-msg .autor{font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:2px}
+.sol-msg .hora{font-size:10.5px;color:var(--text-muted);text-align:right;margin-top:2px}

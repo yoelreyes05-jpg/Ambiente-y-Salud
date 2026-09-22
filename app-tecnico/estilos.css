@@ -477,3 +477,16 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
   font-size: 13.5px;
   color: var(--gris-600);
 }
+
+/* ── Solicitudes del hotel ───────────────────────────────────────────────*/
+.punto.solicitud { border-left-color: var(--ambar); }
+.punto.solicitud.sin-recibir { border-left-color: var(--rojo); background: #fff7f7; }
+.etiqueta { display: inline-block; font-size: 10.5px; font-weight: 800; padding: 1px 7px; border-radius: 20px; background: var(--ambar-claro); color: var(--ambar); vertical-align: 2px; }
+.etiqueta.roja { background: var(--rojo-claro); color: var(--rojo); }
+.hilo { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.msg { align-self: flex-start; max-width: 88%; background: var(--gris-100); border-radius: 12px; padding: 8px 12px; font-size: 14px; }
+.msg .txt { white-space: pre-wrap; }
+.msg.mio { align-self: flex-end; background: var(--azul-pastel); }
+.msg .autor { font-size: 11.5px; font-weight: 700; color: var(--gris-600); margin-bottom: 2px; }
+.msg .hora { font-size: 11px; color: var(--gris-400); text-align: right; margin-top: 2px; }
+.caja-texto { width: 100%; box-sizing: border-box; border: 1.5px solid var(--gris-200); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 16px; margin-bottom: 8px; }
