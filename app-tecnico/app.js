@@ -563,7 +563,9 @@ function cargarJsQR() {
   if (window.jsQR) return Promise.resolve();
   return new Promise((ok) => {
     const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js";
+    // Copia local (jsQR 1.4.0): no depende de un CDN y queda en el caché
+    // del service worker, así que también lee QR sin señal.
+    s.src = "jsQR.js";
     s.onload = ok;
     s.onerror = ok; // sin lector: queda la búsqueda por nombre
     document.head.appendChild(s);

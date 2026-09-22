@@ -444,3 +444,8 @@ mismo historial.
 2. Subir a GitHub.
 3. Cargar el grupo impreso (panel → Etiquetas QR → 3), o pasarle los archivos
    a Claude para que los procese.
+
+**Corrección (22-sep-2026):** el lector de QR por foto (jsQR 1.4.0) ya no se
+descarga de cdnjs: va incluido en `panel-web/vendor/jsQR.js` y
+`app-tecnico/jsQR.js` (en el caché de la app, caché `asa-tecnico-v8`). Funciona
+sin internet y no depende de que el navegador pueda llegar al CDN.

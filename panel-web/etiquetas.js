@@ -16,15 +16,15 @@
 // modalPunto (sección de etiquetas adicionales).
 // ═════════════════════════════════════════════════════════════════════════
 
-// Lee el QR de una foto (BarcodeDetector si hay; si no, jsQR desde cdnjs).
+// Lee el QR de una foto (BarcodeDetector si hay; si no, jsQR local en vendor/).
 let _jsqrPromesa = null;
 function cargarJsQRPanel() {
   if (window.jsQR) return Promise.resolve();
   _jsqrPromesa ||= new Promise((ok, ko) => {
     const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js";
+    s.src = "vendor/jsQR.js"; // copia local: sin CDN, igual que vendor/qrcode.js
     s.onload = ok;
-    s.onerror = () => { _jsqrPromesa = null; ko(new Error("No se pudo cargar el lector de QR (¿sin internet?)")); };
+    s.onerror = () => { _jsqrPromesa = null; ko(new Error("No se pudo cargar el lector de QR (vendor/jsQR.js). Recarga la página.")); };
     document.head.appendChild(s);
   });
   return _jsqrPromesa;

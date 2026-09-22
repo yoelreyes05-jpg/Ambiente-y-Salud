@@ -11,7 +11,7 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v7";
+const VERSION = "asa-tecnico-v8";
 const CAPARAZON = [
   "./",
   "./index.html",
@@ -22,7 +22,7 @@ const CAPARAZON = [
   "./config.js",
   "./manifest.json",
   "./logo-asa.png",
-  "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js",
+  "./jsQR.js",
   // Visor de PDF para los mapas. Se guarda con el caparazón porque el plano se
   // consulta justo donde no hay señal: sótanos, cuartos de máquinas, áreas
   // verdes. Sin esto, el mapa solo abriría con cobertura.
