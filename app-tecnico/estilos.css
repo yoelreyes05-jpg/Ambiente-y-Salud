@@ -443,6 +443,11 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
   display: grid; place-items: center;
 }
 
+/* Aviso de configuración: el punto se puede registrar igual, así que el aviso
+   informa, no bloquea. En ámbar y no en rojo a propósito. */
+.aviso-config { background: var(--ambar-claro); border-color: var(--ambar); }
+.aviso-config p { margin-top: 6px; font-size: 14px; color: var(--gris-600); }
+
 /* Fotos de la inspección: tomarlas con la cámara o escogerlas de las que ya
    están en el teléfono. Las dos entradas se ven igual de disponibles — la
    galería no es un plan B — y cada miniatura se puede quitar, que es lo que hace

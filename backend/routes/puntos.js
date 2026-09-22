@@ -67,6 +67,118 @@ router.put("/tipos/:id", requireRol("operaciones"), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Qué lleva cada tipo de punto: sus estrategias y sus plagas
+//
+// Es la amarra que faltaba. Sin ella, la app no tenía forma de saber que en una
+// lámpara no se cuentan chinches y que un aerosol no lleva el checklist de las
+// habitaciones, así que lo mostraba todo en todos lados.
+//
+// Se guarda por reemplazo (borrar y volver a insertar) y no fila por fila: son
+// listas de diez elementos y el panel manda la lista completa, así no quedan
+// sobras de un guardado a medias.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /puntos/tipos/:id/config — lo que tiene el tipo y todo lo que puede tener
+router.get("/tipos/:id/config", async (req, res) => {
+  const tipoId = req.params.id;
+
+  const [tipo, ligadasE, ligadasP, estrategias, plagas, preguntas] = await Promise.all([
+    supabase.from("asa_tipos_punto").select("*").eq("id", tipoId).maybeSingle(),
+    supabase.from("asa_tipo_punto_estrategias").select("estrategia_id, orden").eq("tipo_punto_id", tipoId),
+    supabase.from("asa_tipo_punto_plagas").select("plaga_id, orden").eq("tipo_punto_id", tipoId),
+    supabase.from("asa_estrategias").select("id, nombre, descripcion").eq("activo", true).order("nombre"),
+    supabase.from("asa_plagas").select("id, codigo, nombre, grupo, icono, orden").eq("activo", true).order("orden"),
+    // Cuántas preguntas tiene cada estrategia PARA ESTE TIPO. Es el dato que
+    // hace falta al elegir: marcar una estrategia que no tiene ni una pregunta
+    // de este tipo no cambia nada en la app, y sin este número no se nota.
+    supabase.from("asa_preguntas").select("estrategia_id, tipo_punto_id").eq("activa", true),
+  ]);
+
+  if (!tipo.data) return res.status(404).json({ error: true, mensaje: "Ese tipo de punto no existe" });
+
+  const conteo = {};
+  for (const p of preguntas.data || []) {
+    if (p.tipo_punto_id !== tipoId && p.tipo_punto_id !== null) continue;
+    const c = (conteo[p.estrategia_id] = conteo[p.estrategia_id] || { propias: 0, generales: 0 });
+    if (p.tipo_punto_id === tipoId) c.propias++;
+    else c.generales++;
+  }
+
+  res.json({
+    tipo: tipo.data,
+    estrategias: (estrategias.data || []).map((e) => ({
+      ...e,
+      ligada: (ligadasE.data || []).some((x) => x.estrategia_id === e.id),
+      preguntas_de_este_tipo: conteo[e.id]?.propias || 0,
+      preguntas_generales: conteo[e.id]?.generales || 0,
+    })),
+    plagas: (plagas.data || []).map((p) => ({
+      ...p,
+      ligada: (ligadasP.data || []).some((x) => x.plaga_id === p.id),
+    })),
+  });
+});
+
+// PUT /puntos/tipos/:id/config — guardar las dos listas de una vez
+// Body: { estrategias: [id, …], plagas: [id, …] }
+router.put("/tipos/:id/config", requireRol("operaciones"), async (req, res) => {
+  const tipoId = req.params.id;
+  const limpiar = (v) => [...new Set((Array.isArray(v) ? v : []).filter(Boolean))];
+  const estrategias = limpiar(req.body?.estrategias);
+  const plagas = limpiar(req.body?.plagas);
+
+  const { data: tipo } = await supabase.from("asa_tipos_punto").select("id, nombre").eq("id", tipoId).maybeSingle();
+  if (!tipo) return res.status(404).json({ error: true, mensaje: "Ese tipo de punto no existe" });
+
+  const borrarE = await supabase.from("asa_tipo_punto_estrategias").delete().eq("tipo_punto_id", tipoId);
+  if (borrarE.error) return res.status(500).json({ error: true, mensaje: borrarE.error.message });
+  if (estrategias.length) {
+    const { error } = await supabase
+      .from("asa_tipo_punto_estrategias")
+      .insert(estrategias.map((id, i) => ({ tipo_punto_id: tipoId, estrategia_id: id, orden: i * 10 })));
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  }
+
+  const borrarP = await supabase.from("asa_tipo_punto_plagas").delete().eq("tipo_punto_id", tipoId);
+  if (borrarP.error) return res.status(500).json({ error: true, mensaje: borrarP.error.message });
+  if (plagas.length) {
+    const { error } = await supabase
+      .from("asa_tipo_punto_plagas")
+      .insert(plagas.map((id, i) => ({ tipo_punto_id: tipoId, plaga_id: id, orden: i * 10 })));
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  }
+
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "tipos_punto",
+    registroId: tipoId,
+    descripcion: `${tipo.nombre}: ${estrategias.length} estrategias y ${plagas.length} plagas`,
+    detalle: { estrategias, plagas },
+  });
+
+  res.json({ ok: true, estrategias: estrategias.length, plagas: plagas.length });
+});
+
+// GET /puntos/tipos/resumen — cuántas estrategias y plagas lleva cada tipo
+// Se usa en el listado del panel para ver de un vistazo cuál quedó sin nada.
+router.get("/tipos/resumen", async (req, res) => {
+  const [tipos, ligadasE, ligadasP] = await Promise.all([
+    supabase.from("asa_tipos_punto").select("id").eq("activo", true),
+    supabase.from("asa_tipo_punto_estrategias").select("tipo_punto_id"),
+    supabase.from("asa_tipo_punto_plagas").select("tipo_punto_id"),
+  ]);
+
+  const contar = (filas, id) => (filas || []).filter((x) => x.tipo_punto_id === id).length;
+  res.json(
+    (tipos.data || []).map((t) => ({
+      id: t.id,
+      estrategias: contar(ligadasE.data, t.id),
+      plagas: contar(ligadasP.data, t.id),
+    }))
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Listado y semáforo
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -237,8 +349,12 @@ router.get("/qr/:token", async (req, res) => {
     return res.status(403).json({ error: true, mensaje: "No tienes acceso a este hotel" });
   }
 
-  const [preguntas, historial] = await Promise.all([
+  const [preguntas, plagas, historial] = await Promise.all([
     preguntasDelPunto(punto),
+    // Las plagas viajan con la ficha del punto y no en una llamada aparte: la
+    // app guarda esta respuesta completa en el telefono, asi que en un sotano
+    // sin senal el tecnico sigue teniendo las plagas correctas de ESE punto.
+    plagasDelTipo(punto.tipo_punto_id),
     supabase
       .from("asa_inspecciones")
       .select("id, fecha, estado_punto, nivel_actividad, notas, fotos")
@@ -251,41 +367,84 @@ router.get("/qr/:token", async (req, res) => {
     ...punto,
     url_qr: urlQR(punto.qr_token),
     preguntas,
+    plagas,
+    // Para que la app pueda decir POR QUE no hay checklist en vez de callarse:
+    // no es lo mismo "este punto no lleva preguntas" que "falta configurarlo".
+    sin_estrategia: !punto.estrategia_id && !preguntas.length,
     historial: historial.data || [],
   });
 });
 
-// Checklist que aplica a un punto: las preguntas de la estrategia del cliente
-// (o del contrato/hotel) cuyo tipo de punto coincide, más las generales.
+// Checklist que aplica a un punto.
+//
+// Antes esto tenia una fuga grande: si el punto no traia estrategia asignada
+// —y casi ningun punto importado del sistema anterior la traia— se usaban TODAS
+// las estrategias del hotel o del cliente. El resultado era un dispensador de
+// aerosol mostrando las preguntas generales de las nueve estrategias a la vez,
+// incluida nueve veces "Observaciones".
+//
+// El orden ahora es estrecho y explicito:
+//   1. La estrategia del propio punto, si la tiene. Manda siempre.
+//   2. Si no, las estrategias de SU TIPO de punto (asa_tipo_punto_estrategias,
+//      que se edita en el panel, en Tipos de punto).
+//   3. Si su tipo no tiene ninguna, no hay checklist. Ni inventado ni prestado
+//      de otro tipo: la app avisa y el punto se arregla desde el panel.
 async function preguntasDelPunto(punto) {
-  const clienteId = punto.asa_sitios?.cliente_id;
+  let estrategiaIds = [];
 
-  // La estrategia del propio punto manda. Si no tiene una asignada, se cae a
-  // las estrategias del hotel o del cliente.
-  let estrategias;
   if (punto.estrategia_id) {
-    estrategias = [{ id: punto.estrategia_id }];
-  } else {
-    let qe = supabase.from("asa_estrategias").select("id").eq("activo", true);
-    qe = qe.or(
-      [`sitio_id.eq.${punto.sitio_id}`, clienteId ? `cliente_id.eq.${clienteId}` : null]
-        .filter(Boolean)
-        .join(",")
-    );
-    const { data } = await qe;
-    estrategias = data;
+    estrategiaIds = [punto.estrategia_id];
+  } else if (punto.tipo_punto_id) {
+    const { data } = await supabase
+      .from("asa_tipo_punto_estrategias")
+      .select("estrategia_id, asa_estrategias!inner(id, activo)")
+      .eq("tipo_punto_id", punto.tipo_punto_id)
+      .eq("asa_estrategias.activo", true)
+      .order("orden");
+    estrategiaIds = (data || []).map((x) => x.estrategia_id);
   }
-  if (!estrategias?.length) return [];
+  if (!estrategiaIds.length) return [];
 
   const { data } = await supabase
     .from("asa_preguntas")
     .select("*")
-    .in("estrategia_id", estrategias.map((e) => e.id))
+    .in("estrategia_id", estrategiaIds)
     .eq("activa", true)
     .or(`tipo_punto_id.eq.${punto.tipo_punto_id},tipo_punto_id.is.null`)
     .order("orden");
 
-  return data || [];
+  // Una pregunta sin tipo ("Observaciones") existe en cada estrategia. Con dos
+  // estrategias en el mismo tipo saldria repetida, y al tecnico dos casillas
+  // identicas seguidas le parecen un error de la app — con razon.
+  const vistas = new Set();
+  return (data || []).filter((p) => {
+    const clave = `${p.tipo_punto_id || "-"}|${String(p.texto || "").trim().toLowerCase()}`;
+    if (vistas.has(clave)) return false;
+    vistas.add(clave);
+    return true;
+  });
+}
+
+// Las plagas que se cuentan en un tipo de punto.
+//
+// Antes la app pedia el catalogo completo y pintaba las once plagas del sistema
+// en cualquier punto: chinches de cama en una lampara de moscas, moscas en un
+// cebadero. Ademas de ser ruido, ensucia el dato: una plaga que no se busca en
+// ese punto no deberia poder contarse ahi.
+//
+// Si el tipo no tiene ninguna configurada se devuelve vacio a proposito, y la
+// app no pinta el bloque. Un tipo nuevo no hereda la lista de nadie.
+async function plagasDelTipo(tipoPuntoId) {
+  if (!tipoPuntoId) return [];
+  const { data } = await supabase
+    .from("asa_tipo_punto_plagas")
+    .select("orden, asa_plagas!inner(*)")
+    .eq("tipo_punto_id", tipoPuntoId)
+    .eq("asa_plagas.activo", true);
+
+  return (data || [])
+    .map((x) => ({ ...x.asa_plagas, orden: x.orden ?? x.asa_plagas.orden ?? 0 }))
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0) || String(a.nombre).localeCompare(String(b.nombre)));
 }
 
 // GET /puntos/:id

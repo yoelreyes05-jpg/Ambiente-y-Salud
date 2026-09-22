@@ -351,21 +351,35 @@ async function viewTiposPunto(content) {
         <div class="actions"><button class="btn btn-primary" id="btn-nuevo-tipo">+ Nuevo tipo</button></div>
       </div>
       <p class="text-muted">
-        La frecuencia de aquí es la que se aplica por defecto a los puntos nuevos
-        de ese tipo. Un punto puede tener la suya propia si hace falta.
+        Cada tipo lleva <strong>lo suyo y nada más</strong>: sus estrategias (las
+        preguntas que ve el técnico) y sus plagas (lo que se cuenta en ese punto).
+        Un cebadero no tiene por qué mostrar chinches de cama ni el checklist de
+        las habitaciones. Toca un tipo para elegirlos.
+        La frecuencia es la que se aplica por defecto a los puntos nuevos de ese
+        tipo; un punto puede tener la suya propia si hace falta.
       </p>
       <div id="tipos-tabla"><div class="center-msg">Cargando…</div></div>
     </div>`;
 
   async function cargar() {
     TIPOS_PUNTO_CACHE = null;
-    const lista = await tiposPunto();
+    const [lista, resumen] = await Promise.all([
+      tiposPunto(),
+      get("/puntos/tipos/resumen").catch(() => []),
+    ]);
+    const cuenta = Object.fromEntries((resumen || []).map((r) => [r.id, r]));
+
+    // Un tipo en cero es un tipo que en la app sale pelado: sin checklist o sin
+    // plagas que contar. Se marca en rojo para que se vea sin tener que abrirlo.
+    const enCero = (n) => (n ? String(n) : `<span class="estado-chip pendiente">Ninguna</span>`);
+
     $("#tipos-tabla").innerHTML = tableHTML(
       [
         { key: "icono", label: "", fmt: (t) => t.icono || "" },
         { key: "nombre", label: "Tipo" },
         { key: "codigo", label: "Código" },
-        { key: "prefijo_codigo", label: "Prefijo", fmt: (t) => esc(t.prefijo_codigo || "—") },
+        { key: "estrategias", label: "Estrategias", fmt: (t) => enCero(cuenta[t.id]?.estrategias) },
+        { key: "plagas", label: "Plagas que cuenta", fmt: (t) => enCero(cuenta[t.id]?.plagas) },
         { key: "frecuencia_default", label: "Frecuencia", fmt: (t) => badge(t.frecuencia_default) },
         { key: "requiere_foto", label: "Exige foto", fmt: (t) => (t.requiere_foto ? "Sí" : "No") },
       ],
@@ -380,10 +394,80 @@ async function viewTiposPunto(content) {
   $("#btn-nuevo-tipo").addEventListener("click", () => modalTipoPunto(null, cargar));
 }
 
-function modalTipoPunto(tipo, onSaved) {
+// Grupos de plagas, solo para agrupar las casillas. Una lista de once plagas
+// sueltas se lee peor que tres bloques de tres.
+const GRUPO_PLAGA = { voladora: "Voladoras", rastrera: "Rastreras", roedor: "Roedores", otra: "Otras" };
+
+async function modalTipoPunto(tipo, onSaved) {
   const esNuevo = !tipo;
+
+  // La configuración solo existe para un tipo ya creado. El tipo nuevo se crea
+  // primero y se configura de una vez después: así nace sin nada amarrado, que
+  // es justo lo que se pedía, pero sin quedar olvidado a medio configurar.
+  let cfg = null;
+  if (!esNuevo) {
+    try {
+      cfg = await get(`/puntos/tipos/${tipo.id}/config`);
+    } catch (e) {
+      toast(`No se pudo cargar la configuración: ${e.message}`, true);
+    }
+  }
+
+  const bloqueEstrategias = () => {
+    if (!cfg) return "";
+    const filas = cfg.estrategias.map((e) => {
+      const propias = e.preguntas_de_este_tipo;
+      const nota = propias
+        ? `${propias} pregunta${propias === 1 ? "" : "s"} para este tipo`
+        : `<span class="text-muted">sin preguntas para este tipo</span>`;
+      return `
+        <label class="campo-check lista-check">
+          <input type="checkbox" data-estrategia="${esc(e.id)}" ${e.ligada ? "checked" : ""} />
+          <span><strong>${esc(e.nombre)}</strong><br><small>${nota}</small></span>
+        </label>`;
+    }).join("");
+
+    return `
+      <div class="bloque-config">
+        <h4>Estrategias de este tipo</h4>
+        <p class="text-muted">
+          Es el checklist que ve el técnico cuando el punto <strong>no</strong>
+          tiene una estrategia propia asignada. Marca solo las que apliquen: lo
+          que marques aquí es lo único que va a salir en la app para este tipo.
+        </p>
+        ${filas || `<p class="text-muted">Todavía no hay estrategias creadas.</p>`}
+      </div>`;
+  };
+
+  const bloquePlagas = () => {
+    if (!cfg) return "";
+    const porGrupo = {};
+    for (const p of cfg.plagas) (porGrupo[p.grupo] = porGrupo[p.grupo] || []).push(p);
+
+    const grupos = Object.entries(porGrupo).map(([g, lista]) => `
+      <div class="grupo-plagas">
+        <h5>${esc(GRUPO_PLAGA[g] || g)}</h5>
+        ${lista.map((p) => `
+          <label class="campo-check lista-check">
+            <input type="checkbox" data-plaga="${esc(p.id)}" ${p.ligada ? "checked" : ""} />
+            <span>${esc(p.icono || "")} ${esc(p.nombre)}</span>
+          </label>`).join("")}
+      </div>`).join("");
+
+    return `
+      <div class="bloque-config">
+        <h4>Plagas que se cuentan en este tipo</h4>
+        <p class="text-muted">
+          Son los contadores de + y − que le salen al técnico. Si no marcas
+          ninguna, el bloque no aparece para este tipo de punto.
+        </p>
+        <div class="plagas-grid">${grupos}</div>
+      </div>`;
+  };
+
   openModal({
     title: esNuevo ? "Nuevo tipo de punto" : `Editar: ${tipo.nombre}`,
+    large: !esNuevo,
     bodyHTML:
       campo("Nombre", `<input name="nombre" required value="${esc(tipo?.nombre || "")}" />`) +
       campo("Código interno", `<input name="codigo" required value="${esc(tipo?.codigo || "")}" ${tipo ? "readonly" : ""} />`,
@@ -391,8 +475,16 @@ function modalTipoPunto(tipo, onSaved) {
       campo("Prefijo para códigos nuevos", `<input name="prefijo_codigo" value="${esc(tipo?.prefijo_codigo || "")}" placeholder="CR" />`) +
       campo("Icono", `<input name="icono" value="${esc(tipo?.icono || "")}" placeholder="🐀" />`) +
       campo("Frecuencia por defecto", `<select name="frecuencia_default">${opcionesFrecuencia(tipo?.frecuencia_default || "mensual")}</select>`) +
-      `<label class="campo-check"><input type="checkbox" name="requiere_foto" ${tipo?.requiere_foto ? "checked" : ""} /> Exigir foto en cada inspección</label>`,
-    async onSubmit(fd) {
+      `<label class="campo-check"><input type="checkbox" name="requiere_foto" ${tipo?.requiere_foto ? "checked" : ""} /> Exigir foto en cada inspección</label>` +
+      bloqueEstrategias() +
+      bloquePlagas() +
+      (esNuevo
+        ? `<p class="text-muted" style="margin-top:14px">
+             Al guardarlo se abre de nuevo para que elijas sus estrategias y sus
+             plagas. Un tipo nuevo no hereda las de ningún otro.
+           </p>`
+        : ""),
+    async onSubmit(fd, overlay) {
       const cuerpo = {
         nombre: (fd.get("nombre") || "").trim(),
         prefijo_codigo: (fd.get("prefijo_codigo") || "").trim().toUpperCase() || null,
@@ -400,8 +492,30 @@ function modalTipoPunto(tipo, onSaved) {
         frecuencia_default: fd.get("frecuencia_default"),
         requiere_foto: (fd.get("requiere_foto") === "on"),
       };
-      if (esNuevo) await post("/puntos/tipos", { ...cuerpo, codigo: (fd.get("codigo") || "").trim().toLowerCase() });
-      else await put(`/puntos/tipos/${tipo.id}`, cuerpo);
+
+      if (esNuevo) {
+        const creado = await post("/puntos/tipos", { ...cuerpo, codigo: (fd.get("codigo") || "").trim().toLowerCase() });
+        closeModal();
+        toast("Tipo creado. Ahora elige qué lleva.");
+        onSaved?.();
+        // Se vuelve a abrir ya con sus listas: crear un tipo y dejarlo sin
+        // estrategias ni plagas es dejarlo mudo en la app del técnico.
+        return modalTipoPunto(creado, onSaved);
+      }
+
+      await put(`/puntos/tipos/${tipo.id}`, cuerpo);
+
+      if (cfg) {
+        const marcados = (attr) =>
+          [...overlay.querySelectorAll(`[data-${attr}]`)]
+            .filter((c) => c.checked)
+            .map((c) => c.dataset[attr]);
+        await put(`/puntos/tipos/${tipo.id}/config`, {
+          estrategias: marcados("estrategia"),
+          plagas: marcados("plaga"),
+        });
+      }
+
       closeModal();
       toast("Tipo guardado");
       onSaved?.();

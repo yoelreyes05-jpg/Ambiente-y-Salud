@@ -18,7 +18,28 @@ const router = express.Router();
 // el reporte del hotel no puede mostrar tendencia por plaga, que es lo primero
 // que piden en auditoria.
 // ─────────────────────────────────────────────────────────────────────────────
+// Con ?tipo_punto_id= devuelve SOLO las plagas que se cuentan en ese tipo de
+// punto (asa_tipo_punto_plagas, editable en el panel). Sin el parametro sigue
+// devolviendo el catalogo completo, que es lo que necesita el panel.
+//
+// Un tipo sin plagas configuradas devuelve lista vacia a proposito: antes la app
+// pintaba las once plagas del sistema en cualquier punto, y asi es como
+// terminaban chinches de cama en una lampara de moscas.
 router.get("/catalogo", async (req, res) => {
+  if (req.query.tipo_punto_id) {
+    const { data, error } = await supabase
+      .from("asa_tipo_punto_plagas")
+      .select("orden, asa_plagas!inner(*)")
+      .eq("tipo_punto_id", req.query.tipo_punto_id)
+      .eq("asa_plagas.activo", true);
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    return res.json(
+      (data || [])
+        .map((x) => ({ ...x.asa_plagas, orden: x.orden ?? x.asa_plagas.orden ?? 0 }))
+        .sort((a, b) => (a.orden || 0) - (b.orden || 0) || String(a.nombre).localeCompare(String(b.nombre)))
+    );
+  }
+
   let q = supabase.from("asa_plagas").select("*").order("orden").order("nombre");
   if (req.query.todas !== "true") q = q.eq("activo", true);
   const { data, error } = await q;

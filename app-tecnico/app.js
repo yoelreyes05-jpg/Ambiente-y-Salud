@@ -771,7 +771,13 @@ async function pantallaPunto(token) {
     <form id="form-inspeccion"></form>`;
 
   $("#ver-plano")?.addEventListener("click", () => (location.hash = `#/plano/${punto.id}`));
-  const [plagas, estados] = await Promise.all([catalogoPlagas(), catalogoEstados()]);
+
+  // Las plagas de ESTE punto vienen dentro de la ficha (el backend las saca de
+  // las que lleva su tipo), asi que no hay que pedirlas aparte y funcionan sin
+  // senal. `catalogoPlagas()` queda solo para fichas viejas que se guardaron en
+  // el telefono antes de este cambio y no traen el campo.
+  const plagas = Array.isArray(punto.plagas) ? punto.plagas : await catalogoPlagas();
+  const estados = await catalogoEstados();
   pintarFormulario($("#form-inspeccion"), punto, plagas, estados);
 }
 
@@ -828,8 +834,20 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
       <small class="ayuda">Deja en cero lo que no encontraste. Solo se guarda lo que pasó de cero.</small>
     </div>` : ""}
 
-    ${preguntas.length ? `<div class="grupo-area">Checklist${punto.estrategia_id ? "" : ""}</div>` : ""}
+    ${preguntas.length ? `<div class="grupo-area">Checklist</div>` : ""}
     ${preguntas.map(campoPregunta).join("")}
+
+    <!-- Un punto sin checklist no es normal: es que a su tipo no se le asignó
+         ninguna estrategia. Antes la app se quedaba callada y el técnico
+         registraba el punto pensando que así era. Ahora se dice, porque es lo
+         que hace que alguien lo arregle en el panel. -->
+    ${!preguntas.length && punto.sin_estrategia ? `
+      <div class="tarjeta aviso-config">
+        <strong>Este punto todavía no tiene checklist.</strong>
+        <p>Se puede registrar igual con su estado y nivel de actividad. Para que
+        traiga preguntas, en el panel hay que asignarle una estrategia a
+        <em>${esc(punto.asa_tipos_punto?.nombre || "este tipo de punto")}</em>.</p>
+      </div>` : ""}
 
     <div class="grupo-area">Cierre</div>
     <div class="campo">

@@ -238,3 +238,64 @@ De paso quedaron tapados dos huecos más pequeños del mismo archivo: el
 `addPage()` del detalle se saltaba aunque la hoja estuviera limpia, y un
 encabezado de tabla podía quedar solo al final de una hoja con su primera fila
 en la siguiente.
+
+---
+
+## 7. Cada tipo de punto lleva lo suyo (y nada más)
+
+### Qué hay que correr
+
+| Archivo | Qué hace |
+|---|---|
+| `supabase/28_tipo_punto_estrategias_y_plagas.sql` | Crea `asa_tipo_punto_estrategias` y `asa_tipo_punto_plagas` y las siembra con lo que ya está configurado |
+
+Va después del 27_. Es idempotente, no toca ninguna inspección registrada y
+termina imprimiendo **qué le quedó a cada tipo** y **qué puntos siguen sin
+checklist**, que es la lista de lo que falta por configurar.
+
+### El problema eran dos fugas, no una
+
+**Las plagas eran una sola lista para todo el sistema.** `GET /plagas/catalogo`
+devolvía las once plagas y la app las pintaba en cualquier punto: chinches de
+cama en una lámpara de moscas, moscas en un cebadero. Ahora cada tipo lleva las
+suyas y viajan dentro de la ficha del punto, así que también funcionan sin señal.
+Si un tipo no tiene ninguna marcada, el bloque de contadores no aparece.
+
+**El checklist se desbordaba cuando el punto no tenía estrategia propia.** El
+backend hacía esto: *si el punto no tiene estrategia, usar todas las del hotel*.
+Como casi ningún punto importado del sistema anterior trae estrategia, casi
+todos caían ahí. Medido con datos de prueba sobre las nueve estrategias
+importadas, un dispensador de aerosol mostraba **13 preguntas — nueve de ellas
+"Observaciones" repetida, una por estrategia. Ahora muestra 5, las suyas.**
+
+El orden nuevo es corto y explícito:
+
+1. La estrategia asignada al punto, si la tiene. Manda siempre.
+2. Si no, las estrategias **de su tipo** (lo que marcas en Tipos de punto).
+3. Si su tipo no tiene ninguna, no hay checklist — y la app lo dice en pantalla
+   en vez de callarse, para que alguien lo configure.
+
+Además, cuando un tipo lleva dos estrategias que traen la misma pregunta (el
+cebadero quedó con *Monitoreo permanente* y *Estación de Cebo*, casi gemelas del
+import), la pregunta sale una sola vez: **13 → 7 en el cebadero**. Si prefieres,
+desmarca una de las dos en el panel.
+
+### Dónde se edita
+
+**Tipos de punto**. La tabla ahora muestra cuántas estrategias y cuántas plagas
+lleva cada tipo, y marca en rojo el que quedó en cero — un tipo en cero es un
+tipo que sale pelado en la app. Al abrirlo salen las dos listas de casillas.
+
+Lo que se sembró, para que sepas de dónde salió:
+
+- **Estrategias:** se dedujeron de las preguntas que ya existen. Si una
+  estrategia tiene preguntas para cebadero, es una estrategia de cebadero. No se
+  inventó ninguna relación.
+- **Plagas:** con criterio de campo — lámpara, trampa y aerosol cuentan
+  voladoras; cebadero y estación perimetral, roedores; habitación, chinches y
+  rastreras; apertura, lo que entra por ahí; recorrido de área general, todas.
+  "Otra plaga" va en todos, porque en campo siempre aparece algo fuera de lista.
+
+**Nada queda amarrado solo.** Un tipo de punto nuevo nace sin estrategias y sin
+plagas (al crearlo el panel te lo vuelve a abrir para que elijas), y una
+estrategia nueva no se pega sola a ningún tipo: la marcas donde la quieras.
