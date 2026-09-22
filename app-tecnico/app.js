@@ -665,6 +665,47 @@ async function catalogoPlagas() {
   return PLAGAS;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Catalogo de estados del punto
+//
+// Antes eran seis botones escritos aqui mismo, heredados del sistema anterior,
+// y cambiarle una palabra a uno pedia tocar la app, el backend y la base. Ahora
+// la lista se configura en el panel (Configuracion -> Estados del punto) y la
+// app la baja y la guarda igual que el catalogo de plagas: en un sotano sin
+// senal el tecnico tiene que poder marcar el estado de todas formas.
+//
+// La de abajo es solo la red de seguridad de la primera vez, antes de que la app
+// haya podido bajar el catalogo ni una sola vez.
+// ─────────────────────────────────────────────────────────────────────────
+let ESTADOS = null;
+
+const ESTADOS_RESPALDO = [
+  { codigo: "ok",           etiqueta: "Todo bien",      orden: 10, requiere_motivo: false },
+  { codigo: "actividad",    etiqueta: "Con actividad",  orden: 20, requiere_motivo: false },
+  { codigo: "dañado",       etiqueta: "Dañado",         orden: 30, requiere_motivo: false, genera_hallazgo: true },
+  { codigo: "faltante",     etiqueta: "No está",        orden: 40, requiere_motivo: false, genera_hallazgo: true },
+  { codigo: "no_accesible", etiqueta: "No pude entrar", orden: 50, requiere_motivo: true },
+  { codigo: "reemplazado",  etiqueta: "Lo reemplacé",   orden: 60, requiere_motivo: false },
+];
+
+async function catalogoEstados() {
+  if (ESTADOS) return ESTADOS;
+  const usables = (lista) =>
+    (Array.isArray(lista) ? lista : [])
+      .filter((e) => e?.codigo && e.activo !== false)
+      .sort((a, b) => (Number(a.orden) || 0) - (Number(b.orden) || 0));
+
+  try {
+    const lista = usables(await GET("/config/estados_punto"));
+    ESTADOS = lista.length ? lista : ESTADOS_RESPALDO;
+    await guardarCache("estados-punto", ESTADOS);
+  } catch {
+    ESTADOS = usables(await leerCache("estados-punto"));
+    if (!ESTADOS.length) ESTADOS = ESTADOS_RESPALDO;
+  }
+  return ESTADOS;
+}
+
 // Los motivos por los que un servicio no se pudo hacer, en el idioma del
 // tecnico. El backend guarda la clave; aqui se lee lo de la derecha.
 const MOTIVOS = [
@@ -730,23 +771,26 @@ async function pantallaPunto(token) {
     <form id="form-inspeccion"></form>`;
 
   $("#ver-plano")?.addEventListener("click", () => (location.hash = `#/plano/${punto.id}`));
-  pintarFormulario($("#form-inspeccion"), punto, await catalogoPlagas());
+  const [plagas, estados] = await Promise.all([catalogoPlagas(), catalogoEstados()]);
+  pintarFormulario($("#form-inspeccion"), punto, plagas, estados);
 }
 
-function pintarFormulario(form, punto, plagas = []) {
+function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) {
   const preguntas = punto.preguntas || [];
+  const estadoPorDefecto = estados[0]?.codigo || "ok";
+  const estadoDe = (codigo) => estados.find((e) => e.codigo === codigo) || null;
 
   form.innerHTML = `
     <div class="grupo-area">Estado del punto</div>
     <div class="campo">
-      ${botonera("estado_punto", [
-        ["ok", "Todo bien"],
-        ["actividad", "Con actividad"],
-        ["dañado", "Dañado"],
-        ["faltante", "No está"],
-        ["no_accesible", "No pude entrar"],
-        ["reemplazado", "Lo reemplacé"],
-      ], "ok", "dos")}
+      ${botonera(
+        "estado_punto",
+        // El tercer elemento pinta el boton en rojo al marcarlo: los estados que
+        // piden motivo o abren hallazgo tienen que verse distintos de "todo bien".
+        estados.map((e) => [e.codigo, e.etiqueta, e.requiere_motivo || e.genera_hallazgo ? "alerta" : ""]),
+        estadoPorDefecto,
+        "dos"
+      )}
     </div>
 
     <!-- Solo aparece si marco "No pude entrar". El motivo es obligatorio:
@@ -789,9 +833,18 @@ function pintarFormulario(form, punto, plagas = []) {
 
     <div class="grupo-area">Cierre</div>
     <div class="campo">
-      <label for="fotos">Fotos</label>
-      <input type="file" id="fotos" accept="image/*" capture="environment" multiple />
-      <div id="vista-fotos" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
+      <label>Fotos</label>
+      <!-- Dos botones en vez de un input suelto. El input con capture abre la
+           camara directo; el otro abre la galeria del telefono, que es lo que
+           hace falta cuando la foto ya se tomo antes de abrir la app (sin senal,
+           con el telefono de otro, o porque se documento el area al entrar). -->
+      <div class="foto-acciones">
+        <button type="button" class="btn secundario" id="btn-camara">📷 Tomar foto</button>
+        <button type="button" class="btn secundario" id="btn-galeria">🖼️ Elegir de mis fotos</button>
+      </div>
+      <input type="file" id="fotos-camara" accept="image/*" capture="environment" multiple hidden />
+      <input type="file" id="fotos-galeria" accept="image/*" multiple hidden />
+      <div id="vista-fotos" class="vista-fotos"></div>
     </div>
     <div class="campo">
       <label for="notas">Observaciones</label>
@@ -802,25 +855,41 @@ function pintarFormulario(form, punto, plagas = []) {
       <button class="btn" type="submit" id="guardar">✓ Guardar inspección</button>
     </div>`;
 
-  // Botoneras
+  // Botoneras de una sola opcion
   form.querySelectorAll("[data-grupo]").forEach((grupo) => {
     grupo.addEventListener("click", (e) => {
       const op = e.target.closest(".opcion");
       if (!op) return;
       grupo.querySelectorAll(".opcion").forEach((o) => o.classList.remove("activa", "no"));
       op.classList.add("activa");
-      if (["false", "no", "dañado", "faltante"].includes(op.dataset.valor)) op.classList.add("no");
+      if (["false", "no"].includes(op.dataset.valor) || op.classList.contains("alerta")) op.classList.add("no");
       grupo.dataset.valor = op.dataset.valor;
       vibrar(15);
     });
   });
 
-  // Al marcar "No pude entrar" el formulario cambia de cara: pide el motivo y
-  // esconde lo que ya no aplica (nivel de actividad y conteo de plagas de un
-  // punto al que no se entro). Asi no quedan filas contradictorias.
+  // Listas de varias opciones (Áreas tratadas, Plagas observadas, Indicios…).
+  //
+  // Antes toda pregunta de lista se pintaba con la misma botonera de una sola
+  // opcion, asi que marcar "Clóset" borraba "Baño" aunque en el panel la
+  // pregunta estuviera configurada para varias. Aqui cada opcion se prende y se
+  // apaga sola, y al guardar se manda la lista completa en valor_opciones.
+  form.querySelectorAll("[data-multi]").forEach((grupo) => {
+    grupo.addEventListener("click", (e) => {
+      const op = e.target.closest(".opcion");
+      if (!op) return;
+      op.classList.toggle("activa");
+      vibrar(12);
+    });
+  });
+
+  // Al marcar un estado que pide motivo ("No pude entrar" y los que ASA haya
+  // configurado igual) el formulario cambia de cara: pide el motivo y esconde lo
+  // que ya no aplica (nivel de actividad y conteo de plagas de un punto al que
+  // no se entro). Asi no quedan filas contradictorias.
   const grupoEstado = form.querySelector('[data-grupo="estado_punto"]');
   const sincronizarCaras = () => {
-    const noEntro = grupoEstado.dataset.valor === "no_accesible";
+    const noEntro = !!estadoDe(grupoEstado.dataset.valor)?.requiere_motivo;
     form.querySelector("#caja-motivo").style.display = noEntro ? "" : "none";
     form.querySelector("#caja-actividad").style.display = noEntro ? "none" : "";
     const cajaPlagas = form.querySelector("#caja-plagas");
@@ -847,26 +916,54 @@ function pintarFormulario(form, punto, plagas = []) {
     );
   });
 
-  // Fotos: se guardan como data URL para que sobrevivan sin señal en la cola
+  // Fotos: se guardan como data URL para que sobrevivan sin señal en la cola.
+  // Da igual si salieron de la camara o de la galeria: entran por el mismo sitio
+  // y se achican igual antes de guardarse.
   const fotos = [];
-  form.querySelector("#fotos").addEventListener("change", async (e) => {
-    for (const archivo of e.target.files) {
-      const dataUrl = await reducirImagen(archivo);
-      fotos.push(dataUrl);
-      const img = document.createElement("img");
-      img.src = dataUrl;
-      img.style.cssText = "width:72px;height:72px;object-fit:cover;border-radius:10px";
-      form.querySelector("#vista-fotos").appendChild(img);
+  const vista = form.querySelector("#vista-fotos");
+
+  const pintarFotos = () => {
+    vista.innerHTML = fotos
+      .map(
+        (f, i) => `
+        <figure class="foto-mini">
+          <img src="${f}" alt="Foto ${i + 1}" />
+          <button type="button" class="foto-quitar" data-quitar="${i}" aria-label="Quitar la foto ${i + 1}">×</button>
+        </figure>`
+      )
+      .join("");
+    vista.querySelectorAll("[data-quitar]").forEach((b) =>
+      b.addEventListener("click", () => {
+        fotos.splice(Number(b.dataset.quitar), 1);
+        pintarFotos();
+        vibrar(15);
+      })
+    );
+  };
+
+  const agregarFotos = async (lista) => {
+    for (const archivo of lista) {
+      if (!archivo.type?.startsWith("image/")) continue;
+      fotos.push(await reducirImagen(archivo));
     }
-    e.target.value = "";
-  });
+    pintarFotos();
+  };
+
+  form.querySelector("#btn-camara").addEventListener("click", () => form.querySelector("#fotos-camara").click());
+  form.querySelector("#btn-galeria").addEventListener("click", () => form.querySelector("#fotos-galeria").click());
+  ["#fotos-camara", "#fotos-galeria"].forEach((sel) =>
+    form.querySelector(sel).addEventListener("change", async (e) => {
+      await agregarFotos(e.target.files);
+      e.target.value = "";   // para poder volver a escoger la misma foto
+    })
+  );
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const boton = form.querySelector("#guardar");
 
-    const estado = grupoEstado.dataset.valor || "ok";
-    const noEntro = estado === "no_accesible";
+    const estado = grupoEstado.dataset.valor || estadoPorDefecto;
+    const noEntro = !!estadoDe(estado)?.requiere_motivo;
     const motivo = form.querySelector('[data-grupo="motivo_no_realizado"]').dataset.valor || null;
     if (noEntro && !motivo) return aviso("Dime por qué no se pudo hacer", "error");
 
@@ -879,19 +976,25 @@ function pintarFormulario(form, punto, plagas = []) {
     for (const p of preguntas) {
       if (noEntro) break;   // no se entro: no hay checklist que responder
       const valor = leerRespuesta(form, p);
-      if (p.obligatoria && (valor === null || valor === "")) {
+      const vacio = valor === null || valor === "" || (Array.isArray(valor) && !valor.length);
+      if (p.obligatoria && vacio) {
         falta ||= p.texto;
         continue;
       }
-      if (valor === null || valor === "") continue;
+      if (vacio) continue;
       respuestas.push({
         pregunta_id: p.id,
         pregunta_texto: p.texto,
-        ...(p.tipo_respuesta === "si_no"
-          ? { valor_bool: valor === "true" }
-          : p.tipo_respuesta === "numero"
-            ? { valor_numero: Number(valor) }
-            : { valor_texto: String(valor) }),
+        // Una lista de varias opciones viaja en valor_opciones, que es lo que el
+        // panel y el PDF leen primero. El valor_texto va de acompanante para las
+        // exportaciones viejas que solo miraban esa columna.
+        ...(Array.isArray(valor)
+          ? { valor_opciones: valor, valor_texto: valor.join(", ") }
+          : p.tipo_respuesta === "si_no"
+            ? { valor_bool: valor === "true" }
+            : p.tipo_respuesta === "numero"
+              ? { valor_numero: Number(valor) }
+              : { valor_texto: String(valor) }),
       });
     }
     if (falta) return aviso(`Falta responder: ${falta}`, "error");
@@ -934,14 +1037,25 @@ function pintarFormulario(form, punto, plagas = []) {
   });
 }
 
+// Botonera de una sola opcion. El tercer elemento de cada opcion es una clase
+// extra opcional ("alerta" pinta el boton en rojo al marcarlo).
 function botonera(nombre, opciones, porDefecto, clase = "") {
   return `<div class="opciones ${clase}" data-grupo="${nombre}" data-valor="${porDefecto ?? ""}">
     ${opciones
       .map(
-        ([valor, texto]) =>
-          `<div class="opcion ${valor === porDefecto ? "activa" : ""}" data-valor="${esc(valor)}">${esc(texto)}</div>`
+        ([valor, texto, extra]) =>
+          `<div class="opcion ${extra || ""} ${valor === porDefecto ? "activa" : ""}${
+            valor === porDefecto && extra === "alerta" ? " no" : ""
+          }" data-valor="${esc(valor)}">${esc(texto)}</div>`
       )
       .join("")}
+  </div>`;
+}
+
+// Botonera de varias opciones: cada una se prende y se apaga por su cuenta.
+function botoneraMulti(nombre, opciones, clase = "") {
+  return `<div class="opciones multi ${clase}" data-multi="${nombre}">
+    ${opciones.map((o) => `<div class="opcion" data-valor="${esc(o)}">${esc(o)}</div>`).join("")}
   </div>`;
 }
 
@@ -952,9 +1066,14 @@ function campoPregunta(p) {
   if (p.tipo_respuesta === "si_no") {
     return `<div class="campo">${etiqueta}${botonera(id, [["true", "Sí"], ["false", "No"]], null, "dos")}</div>`;
   }
+  // Toda pregunta de lista acepta varias respuestas: en campo casi nunca se trata
+  // una sola area ni se ve una sola plaga, y obligar a escoger una sola era lo
+  // que hacia que el tecnico dejara la mitad de lo que hizo sin registrar.
   if (p.tipo_respuesta === "seleccion" || p.tipo_respuesta === "multiple") {
-    const ops = (p.opciones || []).map((o) => [String(o), String(o)]);
-    return `<div class="campo">${etiqueta}${botonera(id, ops, null, ops.length > 3 ? "dos" : "")}</div>`;
+    const ops = (p.opciones || []).map(String);
+    return `<div class="campo">${etiqueta}
+      ${botoneraMulti(id, ops, ops.length > 3 ? "dos" : "")}
+      <small class="ayuda">Marca todas las que apliquen.</small></div>`;
   }
   if (p.tipo_respuesta === "numero") {
     return `<div class="campo">${etiqueta}
@@ -968,6 +1087,8 @@ function campoPregunta(p) {
 
 function leerRespuesta(form, p) {
   const id = `p_${p.id}`;
+  const multi = form.querySelector(`[data-multi="${id}"]`);
+  if (multi) return [...multi.querySelectorAll(".opcion.activa")].map((o) => o.dataset.valor);
   const grupo = form.querySelector(`[data-grupo="${id}"]`);
   if (grupo) return grupo.dataset.valor || null;
   const campo = form.querySelector(`#${CSS.escape(id)}`);

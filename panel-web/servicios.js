@@ -23,6 +23,10 @@ const MOTIVOS_TEXTO = {
   otro: "Otro motivo",
 };
 
+// Los estados del punto se editan en Configuracion -> Estados del punto, asi que
+// esta tabla ya no manda: es solo el respaldo para dibujar algo mientras llega el
+// catalogo (o si la llamada falla). Sin esto, renombrar un estado en el panel se
+// veria bien en la app del tecnico y seguiria saliendo con el nombre viejo aqui.
 const ESTADO_TEXTO = {
   ok: "Conforme",
   actividad: "Con actividad",
@@ -31,6 +35,22 @@ const ESTADO_TEXTO = {
   no_accesible: "No realizado",
   reemplazado: "Reemplazado",
 };
+
+let ESTADOS_PUNTO = null;
+
+async function cargarEstadosPunto() {
+  if (ESTADOS_PUNTO) return ESTADOS_PUNTO;
+  try {
+    const lista = await get("/config/estados_punto");
+    ESTADOS_PUNTO = Object.fromEntries((Array.isArray(lista) ? lista : []).map((e) => [e.codigo, e.etiqueta]));
+  } catch {
+    ESTADOS_PUNTO = {};
+  }
+  return ESTADOS_PUNTO;
+}
+
+const estadoTexto = (codigo) =>
+  ESTADOS_PUNTO?.[codigo] || ESTADO_TEXTO[codigo] || String(codigo || "").replace(/_/g, " ");
 
 const NIVEL_TEXTO = { ninguna: "Sin actividad", bajo: "Actividad baja", medio: "Actividad media", alto: "Actividad alta" };
 const NIVEL_CLASE = { ninguna: "hecho", bajo: "hecho", medio: "fuera", alto: "pendiente" };
@@ -241,7 +261,9 @@ async function abrirDesglose(inspeccionId) {
 
   let d;
   try {
-    d = await get(`/inspecciones/${inspeccionId}/desglose`);
+    // El catalogo de estados se pide junto con el desglose (y se guarda en
+    // memoria), para que la ficha imprima el nombre que ASA configuro hoy.
+    [d] = await Promise.all([get(`/inspecciones/${inspeccionId}/desglose`), cargarEstadosPunto()]);
   } catch (e) {
     $(".modal-body").innerHTML = `<div class="form-error" style="display:block">${esc(e.message)}</div>`;
     return;
@@ -268,7 +290,7 @@ function fichaServicioHTML(d) {
           <div class="fs-sub">${esc(d.punto.codigo)} · ${esc(d.punto.tipo || "")}</div>
         </div>
         <div class="fs-estado ${noHecho ? "rojo" : ""}">
-          ${esc(noHecho ? "NO REALIZADO" : ESTADO_TEXTO[d.estado_punto] || d.estado_punto)}
+          ${esc(noHecho ? "NO REALIZADO" : estadoTexto(d.estado_punto))}
           <small>${esc(noHecho ? "" : NIVEL_TEXTO[d.nivel_actividad] || "")}</small>
         </div>
       </div>

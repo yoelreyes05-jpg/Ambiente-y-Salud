@@ -8,6 +8,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio } from "../middleware/auth.js";
 import { guardarFotos } from "../lib/evidencias.js";
+import { leerEstadosPunto } from "./configuracion.js";
 
 const router = express.Router();
 
@@ -325,18 +326,39 @@ async function registrarInspeccion(req, cuerpo) {
   const { punto_id, respuestas = [], capturas = [], clave_local: _omit, ...resto } = cuerpo;
   if (!punto_id) return { error: true, codigo: 400, mensaje: "punto_id es requerido" };
 
+  // ── Estado del punto ──────────────────────────────────────────────────────
+  // La lista de estados ya no esta clavada aqui ni en un CHECK de la base: vive
+  // en Configuracion -> Estados del punto (ver 27_estados_punto...sql). Se sigue
+  // validando, pero contra lo que ASA tenga configurado hoy, no contra seis
+  // palabras escritas en el codigo hace un ano.
+  const estadosPunto = await leerEstadosPunto();
+  if (resto.estado_punto && !estadosPunto.some((e) => e.codigo === resto.estado_punto)) {
+    return {
+      error: true, codigo: 400,
+      mensaje: `El estado "${resto.estado_punto}" ya no existe. Validos: ${estadosPunto.map((e) => e.codigo).join(", ")}`,
+    };
+  }
+  const estadoActual = estadosPunto.find((e) => e.codigo === resto.estado_punto) || null;
+
   // ── No realizado: motivo obligatorio ──────────────────────────────────────
   // "No pude entrar" sin decir por que no sirve para nada en auditoria, y es
-  // justo el caso que el hotel discute. Si el tecnico marca no_accesible, el
-  // motivo es obligatorio; y si manda un motivo, el estado se corrige solo para
-  // que no queden filas contradictorias (estado ok con motivo de no realizado).
+  // justo el caso que el hotel discute. Si el tecnico marca un estado de los que
+  // piden motivo, el motivo es obligatorio; y si manda un motivo, el estado se
+  // corrige solo para que no queden filas contradictorias (estado ok con motivo
+  // de no realizado).
+  const estadoNoRealizado =
+    estadosPunto.find((e) => e.requiere_motivo && e.activo) ||
+    estadosPunto.find((e) => e.requiere_motivo);
+
   if (resto.motivo_no_realizado) {
     if (!MOTIVOS_NO_REALIZADO.includes(resto.motivo_no_realizado)) {
       return { error: true, codigo: 400, mensaje: `motivo_no_realizado no valido. Validos: ${MOTIVOS_NO_REALIZADO.join(", ")}` };
     }
-    resto.estado_punto = "no_accesible";
+    if (!estadoActual?.requiere_motivo) {
+      resto.estado_punto = estadoNoRealizado?.codigo || "no_accesible";
+    }
     resto.nivel_actividad = "ninguna";
-  } else if (resto.estado_punto === "no_accesible") {
+  } else if (estadoActual?.requiere_motivo) {
     return {
       error: true, codigo: 400,
       mensaje: "Si el servicio no se pudo hacer, hay que decir por que (motivo_no_realizado).",
@@ -411,7 +433,7 @@ async function registrarInspeccion(req, cuerpo) {
     if (errC) console.warn("[ASA][inspecciones] capturas no guardadas:", errC.message);
   }
 
-  await abrirHallazgosAutomaticos(inspeccion, punto, respuestas);
+  await abrirHallazgosAutomaticos(inspeccion, punto, respuestas, estadoActual);
 
   logAccion(req, {
     accion: "crear",
@@ -428,7 +450,7 @@ async function registrarInspeccion(req, cuerpo) {
 // Una respuesta puede estar configurada para abrir un hallazgo sola
 // (asa_preguntas.genera_hallazgo_si). También se abre uno si el punto quedó
 // dañado, faltante o con actividad alta.
-async function abrirHallazgosAutomaticos(inspeccion, punto, respuestas) {
+async function abrirHallazgosAutomaticos(inspeccion, punto, respuestas, estado = null) {
   const hallazgos = [];
 
   // Un servicio que no se pudo hacer abre su propio hallazgo, con el
@@ -449,9 +471,12 @@ async function abrirHallazgosAutomaticos(inspeccion, punto, respuestas) {
     });
   }
 
-  if (["dañado", "faltante"].includes(inspeccion.estado_punto)) {
+  // Que un estado abra hallazgo tambien se configura desde el panel: si ASA
+  // agrega "Tapa suelta" y lo marca para que genere hallazgo, funciona igual que
+  // "dañado" sin tocar este archivo.
+  if (estado?.genera_hallazgo ?? ["dañado", "faltante"].includes(inspeccion.estado_punto)) {
     hallazgos.push({
-      titulo: `Punto ${punto.codigo_visible} ${inspeccion.estado_punto}`,
+      titulo: `Punto ${punto.codigo_visible} — ${estado?.etiqueta || inspeccion.estado_punto}`,
       descripcion: inspeccion.notas || null,
       severidad: "media",
       responsable: "asa",

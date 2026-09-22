@@ -8,6 +8,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { exigirSitioPermitido, filtrarPorSitio } from "../middleware/auth.js";
 import { construirReporte } from "../lib/reportePdf.js";
 import { logAccion } from "../lib/auditoria.js";
+import { leerEstadosPunto } from "./configuracion.js";
 
 const router = express.Router();
 
@@ -419,8 +420,8 @@ async function juntarEvidencia(req) {
     qHallazgos = filtrarPorSitio(qHallazgos, req);
   }
 
-  const [empresa, sitio, servicios, puntos, hallazgos] = await Promise.all([
-    qEmpresa, qSitio, qServicios, qPuntos, qHallazgos,
+  const [empresa, sitio, servicios, puntos, hallazgos, estadosPunto] = await Promise.all([
+    qEmpresa, qSitio, qServicios, qPuntos, qHallazgos, leerEstadosPunto(),
   ]);
   if (servicios.error) throw new Error(servicios.error.message);
 
@@ -538,6 +539,10 @@ async function juntarEvidencia(req) {
 
   return {
     empresa: empresa.data?.valor || {},
+    // Como los estados del punto se editan desde el panel, el reporte tiene que
+    // imprimir la etiqueta de hoy y no una tabla de traducciones clavada en el
+    // codigo: un estado nuevo saldria como "tapa_suelta" en plena auditoria.
+    estados: Object.fromEntries(estadosPunto.map((e) => [e.codigo, e.etiqueta])),
     sitio: sitio.data
       ? {
           nombre: sitio.data.nombre,

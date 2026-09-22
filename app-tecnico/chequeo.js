@@ -219,12 +219,15 @@ async function formularioChequeo(vehiculoId, conductorId, datos) {
         <div class="fotos-angulos">
           ${ANGULOS.map(([codigo, etiqueta]) => `
             <label class="foto-angulo" data-angulo="${codigo}">
-              <input type="file" accept="image/*" capture="environment" hidden />
+              <!-- Sin el atributo capture: así el teléfono pregunta si se toma
+                   ahora o se escoge una del carrete. Con capture abría la cámara
+                   de una y no había forma de usar una foto ya tomada. -->
+              <input type="file" accept="image/*" hidden />
               <span class="fa-txt">${esc(etiqueta)}</span>
               <span class="fa-marca">+</span>
             </label>`).join("")}
         </div>
-        <small class="ayuda">Cinco ángulos. Se achican en el teléfono antes de subirlas.</small>
+        <small class="ayuda">Cinco ángulos. Puedes tomarlas ahora o escogerlas de tus fotos; se achican en el teléfono antes de subirlas.</small>
       </div>
 
       <div class="campo">

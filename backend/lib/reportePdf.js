@@ -135,15 +135,46 @@ async function bajarFotos(refs) {
 // Piezas de dibujo
 // ════════════════════════════════════════════════════════════════════════════
 const ANCHO_UTIL = (doc) => doc.page.width - doc.page.margins.left - doc.page.margins.right;
+const FONDO_HOJA = (doc) => doc.page.height - doc.page.margins.bottom;
+
+// ── Hojas en blanco ──────────────────────────────────────────────────────────
+//
+// De aqui salian las paginas vacias del reporte. Dos causas, las dos silenciosas:
+//
+//   1. `espacio()` saltaba de hoja mirando solo la Y. Si la hoja en la que
+//      estabamos ya era una hoja recien abierta y lo que venia no cabia (una
+//      tabla larga, una rejilla de fotos), saltaba otra vez y dejaba la anterior
+//      en blanco.
+//   2. Un `doc.addPage()` escrito a mano —el de "Detalle de cada servicio"— que
+//      se ejecutaba aunque la hoja actual estuviera limpia.
+//
+// La solucion es saber si la hoja en la que estamos tiene algo escrito. `marcar`
+// lo dice cada vez que se dibuja de verdad, y `hojaLimpia` lo confirma mirando
+// tambien la Y, porque pdfkit abre hojas por su cuenta cuando un texto largo se
+// desborda y en esas la hoja si tiene contenido.
+function marcar(doc) {
+  doc._hojaVacia = false;
+}
+const hojaLimpia = (doc) => doc._hojaVacia === true && doc.y <= doc.page.margins.top + 0.5;
+
+// Salto de hoja con conciencia: no abre una hoja nueva si la de ahora esta vacia.
+function nuevaHoja(doc) {
+  if (!hojaLimpia(doc)) doc.addPage();
+}
 
 // Deja listo el espacio de `alto` puntos: si no cabe en la pagina, salta.
 // Es lo que evita un titulo de seccion solo al final de una hoja.
 function espacio(doc, alto) {
-  if (doc.y + alto > doc.page.height - doc.page.margins.bottom) doc.addPage();
+  if (hojaLimpia(doc)) return;                 // ya estamos en una hoja limpia
+  if (doc.y + alto > FONDO_HOJA(doc)) doc.addPage();
 }
 
-function tituloSeccion(doc, texto, color = C.azul) {
-  espacio(doc, 46);
+// `conservar` es cuanto contenido tiene que caber DEBAJO del titulo para que el
+// titulo se quede en esta hoja. Sin eso salian hojas terminadas en un titulo
+// solo, con su contenido empezando en la siguiente.
+function tituloSeccion(doc, texto, color = C.azul, conservar = 90) {
+  espacio(doc, conservar);
+  marcar(doc);
   const x = doc.page.margins.left;
   doc.moveDown(0.6);
   const y = doc.y;
@@ -155,6 +186,7 @@ function tituloSeccion(doc, texto, color = C.azul) {
 }
 
 function parrafo(doc, texto, opciones = {}) {
+  marcar(doc);
   // Anclar la x al margen en cada parrafo. pdfkit deja `doc.x` donde lo dejo la
   // ultima escritura, asi que despues de una tabla o de las tarjetas de
   // indicadores el texto arrancaba corrido a la derecha y se salia de la hoja.
@@ -181,6 +213,7 @@ function kpis(doc, tarjetas, opciones = {}) {
   for (let i = 0; i < tarjetas.length; i += cols) {
     const fila = tarjetas.slice(i, i + cols);
     espacio(doc, alto + hueco);
+    marcar(doc);
     const y = doc.y;
 
     fila.forEach((t, j) => {
@@ -213,7 +246,17 @@ function tabla(doc, columnas, filas, opciones = {}) {
     ...columnas.map((c, i) => doc.heightOfString(limpiar(c.titulo).toUpperCase(), { width: anchos[i] - 8 }) + 9)
   );
 
+  // Alto de una fila, medido igual que al dibujarla. Se usa para no dejar un
+  // encabezado de tabla solo al final de una hoja.
+  const altoFila = (fila) => {
+    doc.font("Helvetica").fontSize(8.4);
+    return Math.max(
+      ...columnas.map((c, i) => doc.heightOfString(limpiar(fila[i]) || " ", { width: anchos[i] - 8 }))
+    ) + 8;
+  };
+
   const encabezado = () => {
+    marcar(doc);
     const y = doc.y;
     doc.rect(x0, y, ANCHO_UTIL(doc), altoEnc).fill(opciones.colorEncabezado || C.azul);
     let x = x0;
@@ -227,21 +270,22 @@ function tabla(doc, columnas, filas, opciones = {}) {
     doc.fillColor(C.texto);
   };
 
-  espacio(doc, 40);
+  // El encabezado solo se dibuja aqui si detras de el cabe al menos la primera
+  // fila. Un encabezado azul solito al pie de una hoja es justo lo que se veia
+  // como "hoja vacia con un encabezado".
+  espacio(doc, altoEnc + (filas.length ? Math.min(altoFila(filas[0]), 90) : 0) + 4);
   encabezado();
 
   filas.forEach((fila, n) => {
     const celdas = columnas.map((c, i) => limpiar(fila[i]));
-    doc.font("Helvetica").fontSize(8.4);
-    const alto = Math.max(
-      ...celdas.map((t, i) => doc.heightOfString(t || " ", { width: anchos[i] - 8 }))
-    ) + 8;
+    const alto = altoFila(fila);
 
-    if (doc.y + alto > doc.page.height - doc.page.margins.bottom) {
+    if (doc.y + alto > FONDO_HOJA(doc)) {
       doc.addPage();
       encabezado();
     }
 
+    marcar(doc);
     const y = doc.y;
     if (fila._fondo) doc.rect(x0, y, ANCHO_UTIL(doc), alto).fill(fila._fondo);
     else if (n % 2 === 1) doc.rect(x0, y, ANCHO_UTIL(doc), alto).fill("#FAFBFC");
@@ -274,6 +318,7 @@ function histograma(doc, datos, series, colores, opciones = {}) {
 
   const altoGrafico = opciones.alto || 150;
   espacio(doc, altoGrafico + 60);
+  marcar(doc);
 
   const x0 = doc.page.margins.left;
   const ancho = ANCHO_UTIL(doc);
@@ -350,6 +395,7 @@ function rejillaFotos(doc, fotos, opciones = {}) {
   for (let i = 0; i < fotos.length; i += porFila) {
     const fila = fotos.slice(i, i + porFila);
     espacio(doc, h + 26);
+    marcar(doc);
     const y = doc.y;
 
     fila.forEach((f, j) => {
@@ -398,8 +444,20 @@ export async function construirReporte(d, opciones = {}) {
   doc.on("data", (t) => trozos.push(t));
   const terminado = new Promise((ok) => doc.on("end", () => ok(Buffer.concat(trozos))));
 
+  // Cada hoja nueva nace vacia; `marcar()` la da por escrita en cuanto se dibuja
+  // algo. Es lo que impide que un salto de hoja se coma una hoja en blanco.
+  doc._hojaVacia = true;
+  doc.on("pageAdded", () => { doc._hojaVacia = true; });
+
+  // Los estados del punto se editan desde el panel, asi que el texto viene con
+  // los datos. La tabla de aqui abajo queda solo como respaldo para reportes de
+  // ambientes donde todavia no se corrio la migracion.
+  const estadoTexto = (codigo) =>
+    d.estados?.[codigo] || ESTADOS_TEXTO[codigo] || String(codigo || "").replace(/_/g, " ");
+
   // ── Portada ───────────────────────────────────────────────────────────────
   const e = d.empresa || {};
+  marcar(doc);
   const x0 = doc.page.margins.left;
   const ancho = ANCHO_UTIL(doc);
 
@@ -574,13 +632,13 @@ export async function construirReporte(d, opciones = {}) {
 
   // ── Detalle servicio por servicio ─────────────────────────────────────────
   if (conDetalle && d.servicios?.length) {
-    doc.addPage();
+    nuevaHoja(doc);
     tituloSeccion(doc, "Detalle de cada servicio realizado");
     parrafo(doc, `${d.servicios.length} servicios, con las preguntas que el tecnico verifico una por una, lo que encontro y su evidencia fotografica. El texto de cada pregunta es el que estaba vigente el dia de la visita, no el de hoy: por eso el reporte sigue siendo valido si despues se cambio el checklist.`);
     doc.moveDown(0.5);
 
     for (const s of d.servicios) {
-      await bloqueServicio(doc, s, { conFotos });
+      await bloqueServicio(doc, s, { conFotos, estadoTexto });
     }
   }
 
@@ -604,15 +662,33 @@ export async function construirReporte(d, opciones = {}) {
   }
 
   // ── Pie y numeracion ──────────────────────────────────────────────────────
+  //
+  // Aqui estaba el grueso de las hojas vacias, y no se veia a simple vista: el
+  // pie se escribe a 34 puntos del borde, o sea POR DEBAJO del margen inferior
+  // (52). Cuando a `text` se le pasa un `width`, pdfkit lo trata como texto
+  // normal, ve que no cabe antes del margen y abre una hoja nueva para
+  // escribirlo alli — una hoja por cada pie, cada una con esa linea suelta
+  // arriba, que es lo que se veia como "hoja vacia con un encabezado". Y como el
+  // total de paginas ya estaba contado, esas hojas extra ni siquiera llevaban
+  // numero.
+  //
+  // Bajar el margen a cero mientras se escribe el pie le dice a pdfkit que ahi
+  // abajo si se puede escribir. Se devuelve el margen al salir por si alguien
+  // dibuja algo despues.
   const rango = doc.bufferedPageRange();
   for (let i = 0; i < rango.count; i++) {
     doc.switchToPage(rango.start + i);
+    const margenAbajo = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+
     const y = doc.page.height - 34;
     doc.moveTo(40, y - 6).lineTo(doc.page.width - 40, y - 6).lineWidth(0.5).strokeColor(C.linea).stroke();
     doc.font("Helvetica").fontSize(7).fillColor(C.gris);
     doc.text(limpiar(`${e.nombre || "Ambiente y Salud RD"} · ${d.sitio?.nombre || ""} · ${d.periodo.desde} a ${d.periodo.hasta}`),
              40, y, { width: doc.page.width - 160, lineBreak: false });
     doc.text(`Pagina ${i + 1} de ${rango.count}`, doc.page.width - 120, y, { width: 80, align: "right", lineBreak: false });
+
+    doc.page.margins.bottom = margenAbajo;
   }
 
   doc.end();
@@ -622,8 +698,9 @@ export async function construirReporte(d, opciones = {}) {
 // Un servicio: cabecera con donde y quien, la tabla de respuestas, las plagas y
 // sus fotos. Se mantiene junto en la medida de lo posible (`espacio`) para que
 // un servicio no quede partido entre dos hojas sin necesidad.
-async function bloqueServicio(doc, s, { conFotos }) {
+async function bloqueServicio(doc, s, { conFotos, estadoTexto = (v) => ESTADOS_TEXTO[v] || v }) {
   espacio(doc, 96);
+  marcar(doc);
   const x0 = doc.page.margins.left;
   const ancho = ANCHO_UTIL(doc);
   const y = doc.y;
@@ -644,7 +721,7 @@ async function bloqueServicio(doc, s, { conFotos }) {
            x0 + 10, y + 31, { width: ancho - 160 });
 
   doc.font("Helvetica-Bold").fontSize(8.2).fillColor(acento)
-     .text(limpiar(noHecho ? "NO REALIZADO" : (ESTADOS_TEXTO[s.estado_punto] || s.estado_punto)),
+     .text(limpiar(noHecho ? "NO REALIZADO" : estadoTexto(s.estado_punto)),
            x0 + ancho - 150, y + 7, { width: 140, align: "right" });
   doc.font("Helvetica").fontSize(7.6).fillColor(C.suave)
      .text(limpiar(`${fechaCorta(s.fecha)} · ${horaCorta(s.fecha)}`), x0 + ancho - 150, y + 20, { width: 140, align: "right" })

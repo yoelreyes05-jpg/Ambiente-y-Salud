@@ -22,6 +22,7 @@ async function viewConfiguracion(content) {
   content.innerHTML = `
     <div class="tabs" id="tabs-config">
       <button class="tab active" data-tab="empresa">Mi empresa</button>
+      <button class="tab" data-tab="estados">Estados del punto</button>
       <button class="tab" data-tab="permisos">Permisos por rol</button>
     </div>
     <div id="config-cuerpo"><div class="center-msg">Cargando…</div></div>`;
@@ -29,6 +30,7 @@ async function viewConfiguracion(content) {
   const cuerpo = $("#config-cuerpo");
   const pintores = {
     empresa: () => pintarEmpresa(cuerpo),
+    estados: () => pintarEstadosPunto(cuerpo),
     permisos: () => pintarPermisos(cuerpo),
   };
 
@@ -101,6 +103,174 @@ async function pintarEmpresa(cuerpo) {
       toast(err.message, true);
     }
   });
+}
+
+// ── Estados del punto ────────────────────────────────────────────────────
+//
+// Lo primero que el técnico ve al abrir un punto. Venía clavado del sistema
+// anterior: seis botones escritos dentro de la app, repetidos en el backend y
+// blindados con un CHECK en la base, así que no se podía cambiar ni una palabra
+// desde aquí. Ahora es una lista editable y la app la baja sola.
+//
+// Dos cosas que no se tocan a propósito:
+//   · El código es lo que queda escrito en cada inspección y en los reportes ya
+//     entregados. Se puede cambiar el nombre que lee el técnico sin tocarlo; si
+//     se cambia el código, los registros viejos se quedan con el anterior.
+//   · "Todo bien" y "No pude entrar" no se borran: el primero es el valor por
+//     defecto y el segundo es de donde sale todo el reporte de no realizados.
+const COLORES_ESTADO = [
+  ["#4A7D4D", "Verde — todo en orden"],
+  ["#B45309", "Ámbar — ojo con esto"],
+  ["#B91C1C", "Rojo — problema"],
+  ["#32539C", "Azul — informativo"],
+  ["#475569", "Gris — neutro"],
+];
+
+async function pintarEstadosPunto(cuerpo) {
+  let estados = await get("/config/estados_punto");
+  if (!Array.isArray(estados)) estados = [];
+
+  const fila = (e, i) => `
+    <tr data-i="${i}">
+      <td><input class="est-etiqueta" value="${esc(e.etiqueta || "")}" placeholder="Lo que lee el técnico" /></td>
+      <td>
+        <input class="est-codigo" value="${esc(e.codigo || "")}" placeholder="codigo_interno"
+               ${e.sistema ? "disabled title='Este código no se cambia: lo usan las inspecciones ya guardadas'" : ""} />
+      </td>
+      <td>
+        <select class="est-color">
+          ${COLORES_ESTADO.map(([c, n]) => `<option value="${c}"${(e.color || "#475569") === c ? " selected" : ""}>${esc(n)}</option>`).join("")}
+        </select>
+      </td>
+      <td style="text-align:center">
+        <input type="checkbox" class="est-motivo" ${e.requiere_motivo ? "checked" : ""}
+               ${e.codigo === "no_accesible" ? "disabled title='Este siempre pide motivo'" : ""} />
+      </td>
+      <td style="text-align:center"><input type="checkbox" class="est-hallazgo" ${e.genera_hallazgo ? "checked" : ""} /></td>
+      <td style="text-align:center"><input type="checkbox" class="est-activo" ${e.activo !== false ? "checked" : ""} /></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-sm" data-subir="${i}" title="Subir">↑</button>
+        <button class="btn btn-sm" data-bajar="${i}" title="Bajar">↓</button>
+        ${e.sistema
+          ? `<button class="btn btn-sm" disabled title="No se puede borrar: lo usan inspecciones ya registradas">🔒</button>`
+          : `<button class="btn btn-sm" data-borrar="${i}" title="Quitar">✕</button>`}
+      </td>
+    </tr>`;
+
+  const pintar = () => {
+    cuerpo.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <h2>Estado del punto</h2>
+          <div class="actions">
+            <button class="btn" id="est-nuevo">+ Agregar estado</button>
+            <button class="btn btn-primary" id="est-guardar">Guardar</button>
+          </div>
+        </div>
+        <p class="text-muted">
+          Es la primera pregunta que el técnico ve al escanear un punto. Cambia
+          los nombres, agrega los que te falten y desactiva los que no uses: la
+          app se actualiza sola la próxima vez que el técnico tenga señal.
+          <strong>El código</strong> es lo que queda escrito en la inspección y en
+          los reportes ya entregados; cámbiale el nombre cuando quieras, pero el
+          código déjalo quieto.
+        </p>
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Lo que lee el técnico</th>
+                <th>Código guardado</th>
+                <th>Color</th>
+                <th title="Pide el motivo y se salta el checklist: es lo que marca el servicio como NO REALIZADO">Pide motivo</th>
+                <th title="Abre un hallazgo para que quede pendiente de corregir">Abre hallazgo</th>
+                <th>Activo</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${estados.map(fila).join("")}</tbody>
+          </table>
+        </div>
+        <p class="text-muted" style="margin-top:12px">
+          Desactivar un estado lo saca de la app, pero no toca las inspecciones
+          que ya lo usaron: el reporte de meses pasados sigue leyéndose igual.
+        </p>
+      </div>`;
+
+    // Lo escrito en la tabla se guarda en memoria antes de reordenar o borrar,
+    // porque volver a pintar la tabla borra lo que no se haya leído.
+    const leerTabla = () => {
+      cuerpo.querySelectorAll("tbody tr[data-i]").forEach((tr) => {
+        const e = estados[Number(tr.dataset.i)];
+        if (!e) return;
+        e.etiqueta = tr.querySelector(".est-etiqueta").value.trim();
+        const cod = tr.querySelector(".est-codigo");
+        if (!cod.disabled) e.codigo = cod.value.trim();
+        e.color = tr.querySelector(".est-color").value;
+        e.requiere_motivo = tr.querySelector(".est-motivo").checked;
+        e.genera_hallazgo = tr.querySelector(".est-hallazgo").checked;
+        e.activo = tr.querySelector(".est-activo").checked;
+      });
+      estados.forEach((e, i) => { e.orden = (i + 1) * 10; });
+    };
+
+    const mover = (i, salto) => {
+      leerTabla();
+      const j = i + salto;
+      if (j < 0 || j >= estados.length) return;
+      [estados[i], estados[j]] = [estados[j], estados[i]];
+      pintar();
+    };
+
+    cuerpo.querySelectorAll("[data-subir]").forEach((b) =>
+      b.addEventListener("click", () => mover(Number(b.dataset.subir), -1)));
+    cuerpo.querySelectorAll("[data-bajar]").forEach((b) =>
+      b.addEventListener("click", () => mover(Number(b.dataset.bajar), 1)));
+    cuerpo.querySelectorAll("[data-borrar]").forEach((b) =>
+      b.addEventListener("click", () => {
+        leerTabla();
+        estados.splice(Number(b.dataset.borrar), 1);
+        pintar();
+      }));
+
+    $("#est-nuevo").addEventListener("click", () => {
+      leerTabla();
+      estados.push({
+        codigo: "", etiqueta: "", color: "#475569",
+        orden: (estados.length + 1) * 10, activo: true,
+        sistema: false, requiere_motivo: false, genera_hallazgo: false,
+      });
+      pintar();
+      // El foco en la casilla nueva: agregar un estado y tener que buscar dónde
+      // escribir es el tipo de fricción que hace que nadie lo use.
+      cuerpo.querySelector("tbody tr:last-child .est-etiqueta")?.focus();
+    });
+
+    $("#est-guardar").addEventListener("click", async () => {
+      leerTabla();
+
+      // El código se deduce del nombre cuando el estado es nuevo: quien lo está
+      // agregando piensa en "Tapa suelta", no en "tapa_suelta".
+      for (const e of estados) {
+        if (!e.codigo && e.etiqueta) {
+          e.codigo = e.etiqueta.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_ñáéíóúü]/g, "");
+        }
+      }
+      const sinNombre = estados.filter((e) => !e.etiqueta.trim());
+      if (sinNombre.length) return toast("Hay un estado sin nombre", true);
+
+      try {
+        const r = await put("/config/estados_punto", { valor: estados });
+        estados = Array.isArray(r?.valor) ? r.valor : estados;
+        pintar();
+        toast("Estados guardados. Los técnicos los verán al próximo sincronizar.");
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  };
+
+  pintar();
 }
 
 // ── Permisos ─────────────────────────────────────────────────────────────

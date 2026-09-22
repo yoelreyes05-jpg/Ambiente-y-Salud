@@ -163,3 +163,78 @@ preguntas sembradas con reglas como `{ mayor_que: 0, severidad: "alta" }` se
 convertían en `{ igual: "sí" }` al guardarlas desde el panel, y dejaban de
 abrir hallazgos sin que nadie lo notara. Ahora la regla se conserva y se
 muestra escrita en palabras debajo de las casillas.
+
+---
+
+## 6. Tanda del 22/09/2026 — estados editables, listas de varias opciones, fotos de la galería y el PDF sin hojas en blanco
+
+### Qué hay que correr
+
+| Archivo | Qué hace |
+|---|---|
+| `supabase/27_estados_punto_y_multiseleccion.sql` | Quita el `CHECK` de `asa_inspecciones.estado_punto`, siembra el catálogo de estados en `asa_config_sistema` y pasa a "varias opciones" las preguntas de lista |
+
+Es idempotente y no toca ninguna inspección ya registrada. Después hay que
+desplegar **backend, panel y app del técnico**: el backend valida los estados
+contra el catálogo y la app los baja de ahí.
+
+> La app del técnico es una PWA: la versión del caché subió a `asa-tecnico-v5`,
+> así que los teléfonos se actualizan solos la próxima vez que abran con señal.
+
+### 1. "Estado del punto" ya se edita desde el panel
+
+Era la lista heredada del sistema anterior y estaba clavada en tres sitios a la
+vez —la app, el backend y un `CHECK` de la base—, así que cambiar una palabra
+no servía de nada: la base rechazaba el registro. Ahora vive en
+**Configuración → Estados del punto**: se renombra, se reordena, se agrega, se
+desactiva y se le pone color.
+
+Dos banderas por estado:
+
+- **Pide motivo** — el técnico tiene que decir por qué, se le salta el checklist
+  y el servicio cuenta como NO REALIZADO. "No pude entrar" viene así.
+- **Abre hallazgo** — deja el pendiente registrado para que el hotel lo corrija.
+  "Dañado" y "No está" vienen así.
+
+El **código** es lo que queda escrito en cada inspección y en los reportes ya
+entregados: el nombre se cambia cuando quieras, el código conviene dejarlo
+quieto. "Todo bien" y "No pude entrar" no se pueden borrar — el primero es el
+valor por defecto de la columna y el segundo es de donde sale todo el reporte de
+no realizados.
+
+### 2. Las listas del checklist aceptan varias opciones
+
+"Áreas tratadas" estaba configurada en el panel como *Lista (varias opciones)*,
+pero la app pintaba **toda** pregunta de lista con la botonera de una sola: al
+marcar "Clóset" se apagaba "Baño". Por eso en campo se registraba una sola área
+de las cuatro que se trataban.
+
+Ahora cualquier pregunta de lista deja marcar todas las que apliquen (con su
+casilla de check delante, para que se vea sin leer la ayuda) y la respuesta
+viaja en `valor_opciones`, que el panel y el PDF ya sabían leer. La migración
+convierte a "varias opciones" las preguntas que estaban como una sola.
+
+### 3. Fotos: tomarlas o escogerlas del teléfono
+
+En la inspección hay dos botones — **Tomar foto** y **Elegir de mis fotos** — y
+cada miniatura se puede quitar con la ✕, que es lo que hacía falta cuando se
+escoge la foto equivocada del carrete. En el chequeo del vehículo se le quitó el
+`capture` a los cinco ángulos, así que el teléfono pregunta si se toma ahora o
+se busca una ya tomada. Se siguen achicando igual antes de subirlas.
+
+### 4. El PDF ya no trae hojas en blanco
+
+No era el contenido: era el pie de página. Se escribe a 34 puntos del borde, o
+sea **por debajo del margen inferior** (52), y cuando a `doc.text` se le pasa un
+`width`, pdfkit lo trata como texto normal, ve que no cabe y **abre una hoja
+nueva** para escribirlo ahí. Una hoja por cada pie — y como el total de páginas
+ya estaba contado, esas hojas extra ni siquiera llevaban número: salían con esa
+línea suelta arriba, que es lo que se veía como "hoja vacía con un encabezado".
+
+Medido con un reporte de prueba de 120 servicios: **138 hojas, 92 de ellas
+vacías → 46 hojas, ninguna vacía.**
+
+De paso quedaron tapados dos huecos más pequeños del mismo archivo: el
+`addPage()` del detalle se saltaba aunque la hoja estuviera limpia, y un
+encabezado de tabla podía quedar solo al final de una hoja con su primera fila
+en la siguiente.

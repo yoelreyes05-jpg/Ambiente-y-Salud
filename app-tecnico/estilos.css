@@ -207,6 +207,25 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 .opcion.activa { background: var(--verde); border-color: var(--verde); color: #fff; font-weight: 600; }
 .opcion.activa.no { background: var(--rojo); border-color: var(--rojo); }
 
+/* Lista de varias opciones. Se ve distinta a propósito de la de una sola: el
+   check delante avisa que se pueden marcar todas las que hagan falta, sin tener
+   que leer la ayudita de abajo. */
+.opciones.multi .opcion { justify-content: flex-start; gap: 10px; text-align: left; padding-left: 14px; }
+.opciones.multi .opcion::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border: 2px solid var(--gris-400);
+  border-radius: 6px;
+  background: var(--blanco);
+}
+.opciones.multi .opcion.activa::before {
+  content: "✓";
+  display: flex; align-items: center; justify-content: center;
+  border-color: #fff; color: var(--verde); background: #fff;
+  font-weight: 800; font-size: 15px;
+}
+
 /* ── Escáner ─────────────────────────────────────────────────────────── */
 .escaner { position: fixed; inset: 0; background: #000; z-index: 50; }
 .escaner video { width: 100%; height: 100%; object-fit: cover; }
@@ -422,6 +441,28 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
   font-size: 20px; color: var(--verde); font-weight: 700;
   background: rgba(255,255,255,.85); border-radius: 50%; width: 28px; height: 28px;
   display: grid; place-items: center;
+}
+
+/* Fotos de la inspección: tomarlas con la cámara o escogerlas de las que ya
+   están en el teléfono. Las dos entradas se ven igual de disponibles — la
+   galería no es un plan B — y cada miniatura se puede quitar, que es lo que hace
+   falta cuando se escoge la foto equivocada del carrete. */
+.foto-acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.foto-acciones .btn { min-height: 50px; font-size: 15px; gap: 6px; }
+@media (max-width: 360px) { .foto-acciones { grid-template-columns: 1fr; } }
+
+.vista-fotos { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.foto-mini { position: relative; margin: 0; }
+.foto-mini img {
+  width: 82px; height: 82px; object-fit: cover;
+  border-radius: 10px; border: 1.5px solid var(--gris-200); display: block;
+}
+.foto-quitar {
+  position: absolute; top: -8px; right: -8px;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid var(--blanco); background: var(--rojo); color: #fff;
+  font-size: 17px; line-height: 1; font-weight: 700;
+  display: grid; place-items: center; cursor: pointer; padding: 0;
 }
 
 /* Resumen sobre los resultados de la búsqueda: cuántos puntos y en cuántas
