@@ -586,3 +586,25 @@ table.data tbody tr.clickable{cursor:pointer}
      información, no decoración. */
   #area-impresion * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ── Pendientes por área y días anteriores ───────────────────────────────*/
+.kpi-card.r .val{color:var(--danger)}
+.estado-chip.aldia{background:#f3f9f3;color:var(--asa-verde);border:1px solid #cfe5d0}
+.estado-chip.norealizado{background:#fff;color:#b91c1c;border:1.5px dashed #ef4444}
+.hab.aldia{background:#f6fbf6;border-color:#bcdcbe;color:var(--asa-verde)}
+.hab.norealizado{background:#fff5f5;border:1.5px dashed #ef4444;color:#b91c1c}
+.hab[data-insp]{cursor:pointer}
+.hab:not([data-insp]){cursor:default}
+.resumen-dia .leyenda{flex-wrap:wrap}
+.dia-cabecera .estado-chip{margin:0 6px}
+
+.lista-dias{display:flex;flex-direction:column;gap:8px}
+.dia-fila{
+  position:relative;border:1px solid var(--border);border-left:4px solid var(--asa-verde);
+  border-radius:var(--radius);padding:12px 40px 12px 14px;background:var(--card);cursor:pointer;
+  transition:box-shadow .15s;
+}
+.dia-fila:hover{box-shadow:0 4px 14px rgba(31,45,77,.10)}
+.dia-fecha{font-weight:700;text-transform:capitalize;margin-bottom:6px}
+.dia-datos{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+.dia-flecha{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:22px;color:var(--text-muted)}

@@ -151,6 +151,78 @@ router.get("/dia", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /inspecciones/dias?sitio_id=&dias=30
+//
+// La lista de "Días anteriores" del panel: un renglón por día con lo que se
+// hizo (de TODOS los tipos, no solo habitaciones). Al tocar un día el panel
+// abre el día completo con GET /inspecciones/dia?fecha=, que ya trae cada
+// servicio y su desglose.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/dias", async (req, res) => {
+  const { sitio_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+
+  const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
+  const hoy = hoyRD();
+  const d = new Date(`${hoy}T12:00:00`);
+  d.setDate(d.getDate() - dias);
+  const desde = d.toISOString().slice(0, 10);
+
+  // PostgREST corta en 1000 filas: se pide por páginas.
+  const filas = [];
+  for (let ini = 0; ; ini += 1000) {
+    const { data, error } = await supabase
+      .from("asa_inspecciones")
+      .select(`
+        fecha_local, nivel_actividad, motivo_no_realizado,
+        asa_puntos_control(asa_tipos_punto(codigo, nombre, icono)),
+        asa_empleados(nombre_completo)
+      `)
+      .eq("sitio_id", sitio_id)
+      .gte("fecha_local", desde)
+      .lt("fecha_local", hoy)
+      .order("fecha_local", { ascending: false })
+      .range(ini, ini + 999);
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    filas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+
+  const porDia = new Map();
+  for (const f of filas) {
+    if (!porDia.has(f.fecha_local)) {
+      porDia.set(f.fecha_local, { fecha: f.fecha_local, hechos: 0, no_realizados: 0, con_actividad: 0, tecnicos: new Set(), tipos: new Map() });
+    }
+    const dia = porDia.get(f.fecha_local);
+    const t = f.asa_puntos_control?.asa_tipos_punto || {};
+    const k = t.codigo || "otro";
+    if (!dia.tipos.has(k)) dia.tipos.set(k, { codigo: k, nombre: t.nombre || "Otros", icono: t.icono || "", hechos: 0, no_realizados: 0 });
+    if (f.motivo_no_realizado) {
+      dia.no_realizados++;
+      dia.tipos.get(k).no_realizados++;
+    } else {
+      dia.hechos++;
+      dia.tipos.get(k).hechos++;
+      if (f.nivel_actividad && f.nivel_actividad !== "ninguna") dia.con_actividad++;
+    }
+    if (f.asa_empleados?.nombre_completo) dia.tecnicos.add(f.asa_empleados.nombre_completo);
+  }
+
+  res.json({
+    desde,
+    hasta: hoy,
+    dias: [...porDia.values()]
+      .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+      .map((x) => ({
+        ...x,
+        tecnicos: [...x.tecnicos],
+        tipos: [...x.tipos.values()].sort((a, b) => b.hechos - a.hechos),
+      })),
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /inspecciones/:id/desglose — TODO lo de un servicio, para la tarjeta que
 // se abre al hacerle clic y para imprimirlo en PDF.
 //

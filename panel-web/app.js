@@ -1588,7 +1588,7 @@ async function abrirPlanta(sitioId) {
       </div>
       <div class="tabs" id="tabs-planta">
         <button class="tab active" data-tab="servicios">Servicios de hoy</button>
-        <button class="tab" data-tab="hoy">Inspecciones de hoy</button>
+        <button class="tab" data-tab="hoy">Pendientes por área</button>
         <button class="tab tab-rojo" data-tab="norealizados">No realizados</button>
         <button class="tab" data-tab="puntos">Puntos de control</button>
         <button class="tab" data-tab="pasadas">Días anteriores</button>
@@ -1614,10 +1614,10 @@ async function abrirPlanta(sitioId) {
     // punto de lo hecho contra lo pendiente. Antes solo existia la rejilla y
     // solo de habitaciones, asi que el grueso del trabajo del dia no se veia.
     servicios: () => tabServiciosHoy(cuerpo, sitioId),
-    hoy: () => tabHabitacionesHoy(cuerpo, sitioId),
+    hoy: () => tabPendientesArea(cuerpo, sitioId),
     norealizados: () => tabNoRealizados(cuerpo, sitioId),
     puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
-    pasadas: () => tabHabitacionesPasadas(cuerpo, sitioId),
+    pasadas: () => tabDiasAnteriores(cuerpo, sitioId),
     mapa: () => tabMapa(cuerpo, sitioId, areas),
     areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
   };
@@ -1728,75 +1728,6 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
   );
 
   await cargar();
-}
-
-// ── Pestaña: habitaciones de hoy (verde / rojo) ──────────────────────────
-async function tabHabitacionesHoy(cuerpo, sitioId) {
-  const r = await get(`/puntos?sitio_id=${sitioId}&tipo=habitacion`);
-  const hechas = r.realizados || [];
-  const faltan = r.pendientes || [];
-  const total = hechas.length + faltan.length;
-
-  if (!total) {
-    cuerpo.innerHTML = `<div class="center-msg">Esta planta no tiene habitaciones cargadas como puntos de control.</div>`;
-    return;
-  }
-
-  const pct = Math.round((hechas.length / total) * 100);
-  const celda = (p, clase) =>
-    `<div class="hab ${clase}" title="${esc(p.area_nombre || "")}" data-punto="${esc(p.id || "")}">
-       ${esc(p.numero_habitacion || p.codigo_visible)}
-     </div>`;
-
-  cuerpo.innerHTML = `
-    <div class="resumen-dia">
-      <div><strong>${hechas.length}</strong> de <strong>${total}</strong> habitaciones hechas hoy</div>
-      <div class="barra"><span style="width:${pct}%"></span></div>
-      <div class="leyenda">
-        <span class="estado-chip hecho">Hecha</span>
-        <span class="estado-chip pendiente">Pendiente</span>
-      </div>
-    </div>
-    <div class="grid-habitaciones">
-      ${hechas.map((p) => celda(p, "hecho")).join("")}
-      ${faltan.map((p) => celda(p, "pendiente")).join("")}
-    </div>`;
-}
-
-// ── Pestaña: días anteriores ─────────────────────────────────────────────
-async function tabHabitacionesPasadas(cuerpo, sitioId) {
-  const r = await get(`/reportes/habitaciones?sitio_id=${sitioId}&dias=30`);
-  const dias = (r.por_dia || []).filter((d) => d.fecha !== hoyLocal());
-
-  if (!dias.length) {
-    cuerpo.innerHTML = `<div class="center-msg">Todavía no hay días anteriores registrados.</div>`;
-    return;
-  }
-
-  cuerpo.innerHTML = `
-    <div class="resumen-dia">
-      <div><strong>${r.habitaciones_total}</strong> habitaciones en la planta ·
-           <strong>${(r.vencidas || []).length}</strong> vencidas</div>
-    </div>
-    ${dias
-      .map(
-        (d) => `
-      <div class="dia-bloque">
-        <div class="dia-cabecera">${fmtDate(d.fecha)} — ${d.cantidad} habitaciones</div>
-        <div class="grid-habitaciones">
-          ${d.habitaciones
-            .map(
-              (x) =>
-                `<div class="hab hecho" title="${esc(x.tecnico || "")}">
-                   ${esc(x.habitacion)}
-                   ${x.actividad && x.actividad !== "ninguna" ? `<small>${esc(x.actividad)}</small>` : ""}
-                 </div>`
-            )
-            .join("")}
-        </div>
-      </div>`
-      )
-      .join("")}`;
 }
 
 // ── Pestaña: áreas ───────────────────────────────────────────────────────

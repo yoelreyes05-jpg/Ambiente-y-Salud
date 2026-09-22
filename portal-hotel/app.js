@@ -296,30 +296,106 @@ function engancharServicios(raiz) {
 
 // ── Por hacer ────────────────────────────────────────────────────────────
 //
-// Dos cosas distintas que conviene no mezclar: lo que el técnico intentó y no
-// pudo (con su motivo y con quién habló), y lo que ya pasó su frecuencia y no
-// tiene ningún registro. La columna de responsable existe porque no es lo mismo
-// que el hotel no autorizara el acceso a que ASA no llegara.
-async function vistaPendientes(cuerpo) {
-  const d = await GET(`/inspecciones/dia?sitio_id=${PLANTA.id}`);
+// Arriba, el semáforo: cada punto del tipo elegido (habitaciones, cebaderos,
+// lámparas...) agrupado por área, en VERDE lo que está hecho y en ROJO lo que
+// falta por hacer. Abajo, el detalle de lo que el técnico intentó hoy y no pudo
+// (con su motivo y con quién habló), porque no es lo mismo que el hotel no
+// autorizara el acceso a que ASA no llegara.
+let PH_TIPO = null;
+let PH_VER = "";
 
-  if (!d.no_realizados.length && !d.pendientes.length) {
-    cuerpo.innerHTML = `
-      <div class="vacio"><span class="emoji">✅</span>
-        No hay nada pendiente: todo lo programado está dentro de su frecuencia y
-        no hubo accesos negados.</div>`;
+async function vistaPendientes(cuerpo) {
+  const qs = new URLSearchParams({ sitio_id: PLANTA.id });
+  if (PH_TIPO) qs.set("tipo", PH_TIPO);
+  let [e, d] = await Promise.all([GET(`/puntos/estado?${qs}`), GET(`/inspecciones/dia?sitio_id=${PLANTA.id}`)]);
+
+  if (!e.tipos.length) {
+    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">📍</span>Esta planta todavía no tiene puntos de control cargados.</div>`;
     return;
   }
+  // El tipo elegido puede no existir en otra planta: se vuelve a elegir.
+  if (!PH_TIPO || !e.tipos.some((t) => t.codigo === PH_TIPO)) {
+    PH_TIPO = (e.tipos.find((t) => t.codigo === "habitacion") || e.tipos[0]).codigo;
+    e = await GET(`/puntos/estado?${new URLSearchParams({ sitio_id: PLANTA.id, tipo: PH_TIPO })}`);
+  }
+
+  const esVerde = (p) => p.estado === "hecho_hoy" || p.estado === "al_dia";
+  const verdes = e.puntos.filter(esVerde).length;
+  const rojos = e.puntos.length - verdes;
+  const pct = e.puntos.length ? Math.round((verdes / e.puntos.length) * 100) : 0;
+  const tipoNombre = e.tipos.find((t) => t.codigo === PH_TIPO)?.nombre || "Puntos";
+
+  const visibles = e.puntos.filter((p) => (PH_VER === "rojo" ? !esVerde(p) : PH_VER === "verde" ? esVerde(p) : true));
+  const grupos = new Map();
+  for (const p of visibles) {
+    const k = p.area_id || "sin_area";
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(p);
+  }
+  const areas = e.areas.filter((a) => grupos.has(a.id || "sin_area"));
+
+  const detalle = (p) =>
+    [
+      p.punto_nombre || p.codigo_visible,
+      p.estado === "hecho_hoy" ? `Hecho hoy ${p.hora ? horaCorta(p.hora) : ""}` :
+      p.estado === "al_dia" ? `Hecho el ${fecha(p.ultima_inspeccion)} · al día` :
+      p.estado === "no_realizado" ? `No se pudo hoy: ${MOTIVOS_TEXTO[p.motivo_no_realizado] || "sin motivo"}` :
+      p.ultima_inspeccion ? `Por hacer · último servicio ${fecha(p.ultima_inspeccion)}` : "Por hacer · nunca revisado",
+    ].join("\n");
+
+  const noRealizados = d.no_realizados;
 
   cuerpo.innerHTML = `
-    ${d.no_realizados.length ? `
+    <div class="acciones">
+      <select class="btn" id="ph-tipo">
+        ${e.tipos.map((t) => `<option value="${esc(t.codigo)}"${t.codigo === PH_TIPO ? " selected" : ""}>${esc(t.icono || "")} ${esc(t.nombre)}</option>`).join("")}
+      </select>
+      <select class="btn" id="ph-ver">
+        <option value="">Todo</option>
+        <option value="rojo"${PH_VER === "rojo" ? " selected" : ""}>Solo lo que falta</option>
+        <option value="verde"${PH_VER === "verde" ? " selected" : ""}>Solo lo hecho</option>
+      </select>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi ok"><div class="n">${verdes}</div><div class="t">${esc(tipoNombre)} hechos</div></div>
+      <div class="kpi ${rojos ? "mal" : "ok"}"><div class="n">${rojos}</div><div class="t">Por hacer</div></div>
+      <div class="kpi"><div class="n">${pct}%</div><div class="t">Avance del ciclo</div></div>
+    </div>
+
+    <div class="leyenda-semaforo">
+      <span><i class="punto-verde"></i> Hecho</span>
+      <span><i class="punto-rojo"></i> Por hacer</span>
+    </div>
+
+    ${areas.length
+      ? areas.map((a) => {
+          const ps = grupos.get(a.id || "sin_area");
+          return `
+        <div class="tarjeta">
+          <h2>${esc(a.nombre)}
+            ${a.por_hacer ? `<span class="marca mal">${a.por_hacer} por hacer</span>` : `<span class="marca ok">Completa</span>`}
+          </h2>
+          <div class="semaforo">
+            ${ps.map((p) => `
+              <div class="celda ${esVerde(p) ? "verde" : "rojo"}${p.inspeccion_id ? " clicable" : ""}"
+                   title="${esc(detalle(p))}"
+                   ${p.inspeccion_id ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
+                ${esc(p.numero_habitacion || p.codigo_visible)}
+              </div>`).join("")}
+          </div>
+        </div>`;
+        }).join("")
+      : `<div class="vacio"><span class="emoji">✅</span>${PH_VER === "rojo" ? "No falta nada por hacer." : "No hay puntos con este filtro."}</div>`}
+
+    ${noRealizados.length ? `
       <div class="tarjeta borde-rojo">
-        <h2>Se intentó y no se pudo — ${d.no_realizados.length}</h2>
+        <h2>Hoy se intentó y no se pudo — ${noRealizados.length}</h2>
         <p style="margin:0 0 12px;color:var(--suave);font-size:13px">
           El técnico se presentó y no pudo trabajar el punto. Queda registrado el
           motivo y con quién se habló.
         </p>
-        ${d.no_realizados.map((n) => `
+        ${noRealizados.map((n) => `
           <div class="registro clicable" data-insp="${esc(n.inspeccion_id)}">
             <div class="cab">
               <div>
@@ -338,28 +414,13 @@ async function vistaPendientes(cuerpo) {
           </div>`).join("")}
       </div>` : ""}
 
-    ${d.pendientes.length ? `
-      <div class="tarjeta">
-        <h2>Fuera de su frecuencia — ${d.pendientes.length}</h2>
-        <p style="margin:0 0 12px;color:var(--suave);font-size:13px">
-          Puntos que ya pasaron el ciclo que les toca y todavía no tienen registro.
-        </p>
-        ${d.pendientes.map((p) => `
-          <div class="registro">
-            <div class="cab">
-              <div>
-                <div class="punto">${esc(p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.codigo_visible)}</div>
-                <div class="meta">${esc([p.tipo_nombre, p.area].filter(Boolean).join(" · "))} · cada ${esc(p.frecuencia)}</div>
-              </div>
-              <div class="fecha">
-                <span class="marca mal">
-                  ${p.dias_sin_revisar == null ? "Nunca" : `${p.dias_sin_revisar} días`}
-                </span>
-              </div>
-            </div>
-          </div>`).join("")}
-      </div>` : ""}`;
+    <p style="color:var(--suave);font-size:12.5px;text-align:center">
+      Verde: hecho dentro de su frecuencia. Rojo: le toca y todavía no se ha hecho.
+      Toca un punto hecho hoy para ver el servicio completo.
+    </p>`;
 
+  $("#ph-tipo").addEventListener("change", (ev) => { PH_TIPO = ev.target.value; vistaPendientes(cuerpo); });
+  $("#ph-ver").addEventListener("change", (ev) => { PH_VER = ev.target.value; vistaPendientes(cuerpo); });
   engancharServicios(cuerpo);
 }
 

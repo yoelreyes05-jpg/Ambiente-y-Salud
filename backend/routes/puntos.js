@@ -217,6 +217,137 @@ router.get("/", async (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /puntos/estado?sitio_id=&tipo=&area_id=
+//
+// El semáforo de la planta: cada punto en verde (hecho) o en rojo (por hacer),
+// agrupable por área y filtrable por tipo, para que "habitaciones" muestre solo
+// habitaciones y "cebaderos" solo cebaderos. Lo usan el panel (pestaña
+// "Pendientes por área") y el portal del hotel ("Por hacer").
+//
+// Estados:
+//   hecho_hoy     — tiene un servicio realizado hoy                    (verde)
+//   al_dia        — no se tocó hoy, pero está dentro de su frecuencia  (verde)
+//   no_realizado  — hoy se intentó y no se pudo (con motivo)           (rojo)
+//   por_hacer     — ya pasó su frecuencia y no tiene servicio          (rojo)
+//
+// Los tipos y las áreas se cuentan ANTES de filtrar, para que los selectores
+// siempre muestren todas las opciones con su total.
+// ─────────────────────────────────────────────────────────────────────────────
+async function traerTodo(armarConsulta) {
+  // PostgREST corta en 1000 filas; una planta grande tiene más puntos que eso.
+  const out = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await armarConsulta().range(desde, desde + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+router.get("/estado", async (req, res) => {
+  const { sitio_id, tipo, area_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+
+  let puntos, servicios;
+  try {
+    [puntos, servicios] = await Promise.all([
+      traerTodo(() =>
+        supabase.from("asa_v_puntos_estado")
+          .select("id, codigo_visible, punto_nombre, numero_habitacion, area_id, area_nombre, tipo_codigo, tipo_nombre, tipo_icono, tipo_color, frecuencia, ultima_inspeccion, vencido")
+          .eq("sitio_id", sitio_id)
+          .order("area_nombre").order("codigo_visible")
+      ),
+      traerTodo(() =>
+        supabase.from("asa_v_servicios_dia")
+          .select("inspeccion_id, punto_id, fecha, no_realizado, motivo_no_realizado, tecnico, nivel_actividad")
+          .eq("sitio_id", sitio_id)
+          .eq("fecha_local", hoy)
+          .order("fecha", { ascending: true })
+      ),
+    ]);
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: e.message });
+  }
+
+  // Por punto: el último realizado de hoy manda sobre un no realizado de hoy
+  // (si primero no lo dejaron entrar y después sí, el punto quedó hecho).
+  const hechoHoy = new Map();
+  const intentoHoy = new Map();
+  for (const s of servicios) {
+    if (s.no_realizado) intentoHoy.set(s.punto_id, s);
+    else hechoHoy.set(s.punto_id, s);
+  }
+
+  const tipos = new Map();
+  for (const p of puntos) {
+    const k = p.tipo_codigo || "otro";
+    if (!tipos.has(k)) tipos.set(k, { codigo: k, nombre: p.tipo_nombre, icono: p.tipo_icono, total: 0 });
+    tipos.get(k).total++;
+  }
+
+  const filtrados = puntos.filter((p) => (!tipo || p.tipo_codigo === tipo) && (!area_id || p.area_id === area_id));
+
+  const lista = filtrados.map((p) => {
+    const h = hechoHoy.get(p.id);
+    const n = intentoHoy.get(p.id);
+    let estado;
+    if (h) estado = "hecho_hoy";
+    else if (n) estado = "no_realizado";
+    else if (p.frecuencia === "por_orden") estado = "al_dia";
+    else estado = p.vencido ? "por_hacer" : "al_dia";
+    return {
+      id: p.id,
+      codigo_visible: p.codigo_visible,
+      punto_nombre: p.punto_nombre,
+      numero_habitacion: p.numero_habitacion,
+      area_id: p.area_id,
+      area_nombre: p.area_nombre || "Sin área",
+      tipo_codigo: p.tipo_codigo,
+      tipo_nombre: p.tipo_nombre,
+      tipo_icono: p.tipo_icono,
+      frecuencia: p.frecuencia,
+      ultima_inspeccion: p.ultima_inspeccion,
+      estado,
+      inspeccion_id: (h || n)?.inspeccion_id || null,
+      hora: (h || n)?.fecha || null,
+      tecnico: (h || n)?.tecnico || null,
+      motivo_no_realizado: !h && n ? n.motivo_no_realizado : null,
+      nivel_actividad: h?.nivel_actividad || null,
+    };
+  });
+
+  // Áreas del tipo elegido (no de toda la planta), con su conteo verde / rojo.
+  const areas = new Map();
+  for (const p of lista) {
+    const k = p.area_id || "sin_area";
+    if (!areas.has(k)) areas.set(k, { id: p.area_id, nombre: p.area_nombre, total: 0, hechos: 0, por_hacer: 0 });
+    const a = areas.get(k);
+    a.total++;
+    if (p.estado === "hecho_hoy" || p.estado === "al_dia") a.hechos++;
+    else a.por_hacer++;
+  }
+
+  const cuenta = (e) => lista.filter((p) => p.estado === e).length;
+  res.json({
+    fecha: hoy,
+    tipos: [...tipos.values()].sort((a, b) => b.total - a.total),
+    areas: [...areas.values()].sort((a, b) => b.por_hacer - a.por_hacer || String(a.nombre).localeCompare(String(b.nombre))),
+    resumen: {
+      total: lista.length,
+      hechos_hoy: cuenta("hecho_hoy"),
+      al_dia: cuenta("al_dia"),
+      no_realizados: cuenta("no_realizado"),
+      por_hacer: cuenta("por_hacer"),
+    },
+    puntos: lista,
+  });
+});
+
 // GET /puntos/buscar?q=&sitio_id= — respaldo cuando el QR está dañado o ilegible
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /puntos/buscar?q=&sitio_id=

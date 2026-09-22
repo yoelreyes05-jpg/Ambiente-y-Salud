@@ -299,3 +299,36 @@ Lo que se sembró, para que sepas de dónde salió:
 **Nada queda amarrado solo.** Un tipo de punto nuevo nace sin estrategias y sin
 plagas (al crearlo el panel te lo vuelve a abrir para que elijas), y una
 estrategia nueva no se pega sola a ningún tipo: la marcas donde la quieras.
+
+---
+
+## Días anteriores, pendientes por área y semáforo del portal (22-sep-2026)
+
+**Qué cambió**
+
+- **Panel → Planta → Días anteriores.** Ahora lista cada día con TODO lo que se
+  hizo (todos los tipos, no solo habitaciones), con rango de 7/30/90/180 días.
+  Al tocar un día se abre el día completo; cada servicio abre su desglose
+  (preguntas, plagas y fotos). Botón "← Días anteriores" para regresar.
+- **Panel → Planta → Pendientes por área** (antes "Inspecciones de hoy"). Se
+  elige el tipo de punto (habitaciones, cebaderos, lámparas...) y se ve SOLO ese
+  tipo, agrupado por área, con filtro de área y "solo lo que falta".
+  Verde = hecho hoy / al día; rojo = por hacer; rojo punteado = se intentó hoy y
+  no se pudo.
+- **Portal del hotel → Por hacer.** Mismo semáforo por tipo y área: verde lo
+  hecho, rojo lo que falta. Debajo sigue el detalle de lo que no se pudo hacer hoy.
+
+**Archivos**
+
+- `backend/routes/puntos.js` — nuevo `GET /puntos/estado?sitio_id=&tipo=&area_id=`
+- `backend/routes/inspecciones.js` — nuevo `GET /inspecciones/dias?sitio_id=&dias=`
+- `panel-web/servicios.js`, `panel-web/app.js`, `panel-web/styles.css`
+- `portal-hotel/app.js`, `portal-hotel/estilos.css`
+- `supabase/29_vista_puntos_sin_no_realizados.sql`
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/29_vista_puntos_sin_no_realizados.sql` en el SQL Editor.
+   Sin esto todo funciona, pero una habitación a la que "no dejaron entrar"
+   se sigue contando como hecha (verde) durante su ciclo.
+2. Subir a GitHub: Railway redespliega el backend y Vercel el panel y el portal.

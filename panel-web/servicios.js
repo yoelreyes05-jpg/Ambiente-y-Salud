@@ -60,10 +60,13 @@ const NIVEL_CLASE = { ninguna: "hecho", bajo: "hecho", medio: "fuera", alto: "pe
 const MOTIVOS_DEL_HOTEL = ["permiso_denegado", "sin_llave", "huesped_en_habitacion", "area_ocupada", "evento_en_curso"];
 
 // ── Pestaña: servicios de hoy ────────────────────────────────────────────
-async function tabServiciosHoy(cuerpo, sitioId) {
+// opts.fecha abre un día concreto; opts.volver pone el botón para regresar a
+// "Días anteriores" (desde donde se abre el día completo).
+async function tabServiciosHoy(cuerpo, sitioId, opts = {}) {
   cuerpo.innerHTML = `
     <div class="toolbar">
-      <input type="date" id="sv-fecha" value="${hoyLocal()}" />
+      ${opts.volver ? `<button class="btn btn-sm" id="sv-volver">← Días anteriores</button>` : ""}
+      <input type="date" id="sv-fecha" value="${opts.fecha || hoyLocal()}" />
       <select id="sv-tipo"><option value="">Todos los tipos de servicio</option></select>
       <span class="toolbar-sep"></span>
       <button class="btn btn-sm" id="sv-reporte">Generar reporte</button>
@@ -132,6 +135,7 @@ async function tabServiciosHoy(cuerpo, sitioId) {
       </div>`;
   }
 
+  if (opts.volver) $("#sv-volver").addEventListener("click", () => opts.volver());
   $("#sv-fecha").addEventListener("change", cargar);
   $("#sv-tipo").addEventListener("change", cargar);
   $("#sv-reporte").addEventListener("click", () => modalReporte(sitioId));
@@ -522,4 +526,234 @@ async function descargarPdf(ruta, nombreArchivo) {
   a.download = nombreArchivo;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Pestaña: pendientes por área (verde / rojo) ──────────────────────────
+//
+// Antes era "Inspecciones de hoy" y solo pintaba habitaciones. Ahora se elige
+// el tipo de punto (habitaciones, cebaderos, lámparas...) y se ve SOLO ese tipo,
+// agrupado por área, con lo hecho en verde y lo que falta en rojo.
+//
+//   verde fuerte — hecho hoy          verde claro — al día (dentro de su frecuencia)
+//   rojo         — por hacer (vencido) rojo punteado — se intentó hoy y no se pudo
+const ESTADO_CELDA = {
+  hecho_hoy: { clase: "hecho", texto: "Hecho hoy" },
+  al_dia: { clase: "aldia", texto: "Al día" },
+  no_realizado: { clase: "norealizado", texto: "No se pudo hoy" },
+  por_hacer: { clase: "pendiente", texto: "Por hacer" },
+};
+
+async function tabPendientesArea(cuerpo, sitioId) {
+  let tipoSel = null; // se decide con la primera respuesta
+  let areaSel = "";
+  let verSel = "";
+
+  cuerpo.innerHTML = `
+    <div class="toolbar">
+      <select id="pa-tipo"></select>
+      <select id="pa-area"><option value="">Todas las áreas</option></select>
+      <select id="pa-ver">
+        <option value="">Todo</option>
+        <option value="rojo">Solo lo que falta (rojo)</option>
+        <option value="verde">Solo lo hecho (verde)</option>
+      </select>
+      <span class="toolbar-sep"></span>
+      <button class="btn btn-sm" id="pa-recargar">Actualizar</button>
+    </div>
+    <div id="pa-cuerpo"><div class="center-msg">Cargando…</div></div>`;
+
+  async function cargar() {
+    const destino = $("#pa-cuerpo");
+    destino.innerHTML = `<div class="center-msg">Cargando…</div>`;
+
+    const qs = new URLSearchParams({ sitio_id: sitioId });
+    if (tipoSel) qs.set("tipo", tipoSel);
+    let d = await get(`/puntos/estado?${qs}`);
+
+    if (!d.tipos.length) {
+      destino.innerHTML = `<div class="center-msg">Esta planta no tiene puntos de control cargados.</div>`;
+      return;
+    }
+    // Primera carga: arranca en habitaciones si existen, si no en el tipo con más puntos.
+    if (!tipoSel) {
+      tipoSel = (d.tipos.find((t) => t.codigo === "habitacion") || d.tipos[0]).codigo;
+      d = await get(`/puntos/estado?${new URLSearchParams({ sitio_id: sitioId, tipo: tipoSel })}`);
+    }
+
+    $("#pa-tipo").innerHTML = d.tipos
+      .map((t) => `<option value="${esc(t.codigo)}"${t.codigo === tipoSel ? " selected" : ""}>${esc(t.icono || "")} ${esc(t.nombre)} (${t.total})</option>`)
+      .join("");
+    if (areaSel && !d.areas.some((a) => (a.id || "sin_area") === areaSel)) areaSel = "";
+    $("#pa-area").innerHTML =
+      `<option value="">Todas las áreas (${d.areas.length})</option>` +
+      d.areas
+        .map((a) => {
+          const k = a.id || "sin_area";
+          return `<option value="${esc(k)}"${k === areaSel ? " selected" : ""}>${esc(a.nombre)} — ${a.por_hacer ? `${a.por_hacer} por hacer` : "completa"}</option>`;
+        })
+        .join("");
+
+    const r = d.resumen;
+    const verdes = r.hechos_hoy + r.al_dia;
+    const pct = r.total ? Math.round((verdes / r.total) * 100) : 0;
+    const tipoNombre = d.tipos.find((t) => t.codigo === tipoSel)?.nombre || "puntos";
+
+    const visibles = d.puntos.filter((p) => {
+      if (areaSel && (p.area_id || "sin_area") !== areaSel) return false;
+      const rojo = p.estado === "por_hacer" || p.estado === "no_realizado";
+      if (verSel === "rojo" && !rojo) return false;
+      if (verSel === "verde" && rojo) return false;
+      return true;
+    });
+
+    const grupos = new Map();
+    for (const p of visibles) {
+      const k = p.area_id || "sin_area";
+      if (!grupos.has(k)) grupos.set(k, []);
+      grupos.get(k).push(p);
+    }
+    const areasOrden = d.areas.filter((a) => grupos.has(a.id || "sin_area"));
+
+    const titulo = (p) => (p.numero_habitacion ? p.numero_habitacion : p.codigo_visible);
+    const ayuda = (p) =>
+      [
+        p.punto_nombre || p.codigo_visible,
+        ESTADO_CELDA[p.estado].texto,
+        p.frecuencia ? `Frecuencia: ${p.frecuencia}` : "",
+        p.hora ? `Hoy ${new Date(p.hora).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })}${p.tecnico ? ` · ${p.tecnico}` : ""}` : "",
+        p.motivo_no_realizado ? `Motivo: ${MOTIVOS_TEXTO[p.motivo_no_realizado] || p.motivo_no_realizado}` : "",
+        !p.hora && p.ultima_inspeccion ? `Último servicio: ${fmtDate(p.ultima_inspeccion)}` : "",
+        !p.ultima_inspeccion && !p.hora ? "Nunca se ha revisado" : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+    destino.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi-card g"><div class="lbl">Hechos hoy</div><div class="val">${r.hechos_hoy}</div></div>
+        <div class="kpi-card g"><div class="lbl">Al día</div><div class="val">${r.al_dia}</div></div>
+        <div class="kpi-card ${r.por_hacer ? "r" : ""}"><div class="lbl">Por hacer</div><div class="val">${r.por_hacer}</div></div>
+        <div class="kpi-card ${r.no_realizados ? "r" : ""}"><div class="lbl">No se pudieron hoy</div><div class="val">${r.no_realizados}</div></div>
+      </div>
+      <div class="resumen-dia">
+        <div><strong>${verdes}</strong> de <strong>${r.total}</strong> ${esc(tipoNombre.toLowerCase())} en verde (${pct}%)</div>
+        <div class="barra"><span style="width:${pct}%"></span></div>
+        <div class="leyenda">
+          <span class="estado-chip hecho">Hecho hoy</span>
+          <span class="estado-chip aldia">Al día</span>
+          <span class="estado-chip pendiente">Por hacer</span>
+          <span class="estado-chip norealizado">No se pudo hoy</span>
+        </div>
+      </div>
+      ${
+        areasOrden.length
+          ? areasOrden
+              .map((a) => {
+                const ps = grupos.get(a.id || "sin_area");
+                return `
+            <div class="dia-bloque">
+              <div class="dia-cabecera">
+                ${esc(a.nombre)} —
+                ${a.por_hacer ? `<span class="estado-chip pendiente">${a.por_hacer} por hacer</span>` : `<span class="estado-chip hecho">Completa</span>`}
+                <span class="text-muted">${a.hechos} de ${a.total} en verde</span>
+              </div>
+              <div class="grid-habitaciones">
+                ${ps
+                  .map(
+                    (p) => `<div class="hab ${ESTADO_CELDA[p.estado].clase}"
+                              title="${esc(ayuda(p))}"
+                              ${p.inspeccion_id ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
+                              ${esc(titulo(p))}
+                              ${p.estado === "hecho_hoy" && p.nivel_actividad && p.nivel_actividad !== "ninguna" ? `<small>${esc(p.nivel_actividad)}</small>` : ""}
+                            </div>`
+                  )
+                  .join("")}
+              </div>
+            </div>`;
+              })
+              .join("")
+          : `<div class="center-msg">${verSel === "rojo" ? "No falta nada con este filtro. ✅" : "No hay puntos con este filtro."}</div>`
+      }
+      <p class="text-muted" style="margin-top:14px">
+        Pasa el cursor sobre un punto para ver su detalle. Los que tienen servicio
+        hoy se abren con un clic.
+      </p>`;
+
+    $$("#pa-cuerpo [data-insp]").forEach((el) =>
+      el.addEventListener("click", () => abrirDesglose(el.dataset.insp))
+    );
+  }
+
+  $("#pa-tipo").addEventListener("change", (e) => {
+    tipoSel = e.target.value;
+    areaSel = "";
+    cargar();
+  });
+  $("#pa-area").addEventListener("change", (e) => {
+    areaSel = e.target.value;
+    cargar();
+  });
+  $("#pa-ver").addEventListener("change", (e) => {
+    verSel = e.target.value;
+    cargar();
+  });
+  $("#pa-recargar").addEventListener("click", cargar);
+  await cargar();
+}
+
+// ── Pestaña: días anteriores ─────────────────────────────────────────────
+//
+// Un renglón por día con TODO lo que se hizo (no solo habitaciones). Al tocar
+// un día se abre el día completo — la misma vista de "Servicios de hoy" con esa
+// fecha — y ahí cada servicio abre su desglose: preguntas, plagas y fotos.
+async function tabDiasAnteriores(cuerpo, sitioId, dias = 30) {
+  cuerpo.innerHTML = `
+    <div class="toolbar">
+      <select id="da-rango">
+        ${[7, 30, 90, 180].map((n) => `<option value="${n}"${n === dias ? " selected" : ""}>Últimos ${n} días</option>`).join("")}
+      </select>
+      <span class="text-muted">Toca un día para ver todo lo que se hizo.</span>
+    </div>
+    <div id="da-cuerpo"><div class="center-msg">Cargando…</div></div>`;
+
+  $("#da-rango").addEventListener("change", (e) => tabDiasAnteriores(cuerpo, sitioId, Number(e.target.value)));
+
+  const r = await get(`/inspecciones/dias?sitio_id=${sitioId}&dias=${dias}`);
+  const destino = $("#da-cuerpo");
+  if (!r.dias.length) {
+    destino.innerHTML = `<div class="center-msg">No hay servicios registrados en los últimos ${dias} días.</div>`;
+    return;
+  }
+
+  const nombreDia = (f) =>
+    new Date(`${f}T12:00:00`).toLocaleDateString("es-DO", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+  destino.innerHTML = `
+    <div class="lista-dias">
+      ${r.dias
+        .map(
+          (d) => `
+        <div class="dia-fila" data-fecha="${esc(d.fecha)}">
+          <div class="dia-fecha">${esc(nombreDia(d.fecha))}</div>
+          <div class="dia-datos">
+            <span class="estado-chip hecho">${d.hechos} hecho${d.hechos === 1 ? "" : "s"}</span>
+            ${d.no_realizados ? `<span class="estado-chip pendiente">${d.no_realizados} no realizado${d.no_realizados === 1 ? "" : "s"}</span>` : ""}
+            ${d.con_actividad ? `<span class="estado-chip fuera">${d.con_actividad} con actividad</span>` : ""}
+            ${d.tipos.map((t) => `<span class="chip">${esc(t.icono || "")} ${esc(t.nombre)}: ${t.hechos}</span>`).join("")}
+          </div>
+          ${d.tecnicos.length ? `<div class="text-muted">${esc(d.tecnicos.join(", "))}</div>` : ""}
+          <div class="dia-flecha">›</div>
+        </div>`
+        )
+        .join("")}
+    </div>`;
+
+  $$("#da-cuerpo .dia-fila").forEach((el) =>
+    el.addEventListener("click", () =>
+      tabServiciosHoy(cuerpo, sitioId, {
+        fecha: el.dataset.fecha,
+        volver: () => tabDiasAnteriores(cuerpo, sitioId, dias),
+      })
+    )
+  );
 }
