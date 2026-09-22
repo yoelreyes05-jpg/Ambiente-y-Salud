@@ -35,7 +35,10 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--gris-100);
+  /* Fondo blanco pedido por ASA. Las tarjetas y los puntos, que antes se
+     separaban del fondo gris por su color blanco, ahora se separan por el
+     borde (--gris-200): ver .tarjeta y .punto mas abajo. */
+  background: var(--blanco);
   color: var(--gris-900);
   font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overscroll-behavior-y: contain;
@@ -263,21 +266,21 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 /* Barra fija de acción al pie del formulario */
 .pie-fijo {
   position: sticky; bottom: 0;
-  background: linear-gradient(transparent, var(--gris-100) 18px);
+  background: linear-gradient(transparent, var(--blanco) 18px);
   padding: 18px 0 calc(12px + env(safe-area-inset-bottom));
   margin-top: 8px;
 }
 
+/* Sobre fondo blanco, una tarjeta blanca sin borde no se ve. Se le marca el
+   contorno en vez de pintarle un fondo distinto, que es lo que rompia el
+   "todo blanco" que pidio ASA. */
+.tarjeta, .punto { border: 1px solid var(--gris-200); }
+
+/* El modo oscuro del telefono invertia toda la app. ASA quiere fondo blanco
+   siempre, asi que aqui solo se fuerza claro. Se conserva el bloque para que
+   quede escrito que fue una decision y no un olvido. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --gris-900: #f1f5f9; --gris-600: #94a3b8; --gris-400: #64748b;
-    --gris-200: #334155; --gris-100: #0f172a; --gris-50: #1e293b;
-    --blanco: #1e293b;
-    --verde: #7FB582; --verde-claro: #1B3320; --verde-borde: #4A7D4D;
-    --azul-claro: #4A6FB5; --azul-pastel: #1B2A4A;
-    --rojo-claro: #450a0a; --ambar-claro: #451a03;
-  }
-  body { background: #0f172a; }
+  html, body { background: #fff; color: var(--gris-900); }
 }
 
 /* Selector de plano en la pantalla del mapa */
@@ -285,4 +288,146 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
   width:100%;margin-top:10px;padding:11px 12px;font-size:16px;
   border:1px solid var(--gris-200);border-radius:var(--radio);
   background:var(--blanco);color:var(--gris-900);
+}
+
+/* ── Conteo de plagas ──────────────────────────────────────────────────
+   Una fila por plaga, con los botones grandes y separados: se usa con
+   guantes y con una sola mano. El +/- es tactil a proposito; el teclado
+   numerico obliga a mirar la pantalla y a quitarse el guante. */
+.plagas { display: flex; flex-direction: column; gap: 8px; }
+.plaga {
+  display: grid;
+  grid-template-columns: 30px 1fr 48px 42px 48px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--gris-200);
+  border-radius: var(--radio);
+  background: var(--blanco);
+}
+.plaga.con-algo { border-color: var(--ambar); background: var(--ambar-claro); }
+.plaga .pl-ic  { font-size: 20px; text-align: center; }
+.plaga .pl-nom { font-size: 14.5px; line-height: 1.25; min-width: 0; }
+.plaga .pl-cant {
+  text-align: center; font-weight: 700; font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.plaga .pl-btn {
+  min-height: 44px; border: 1px solid var(--gris-200);
+  background: var(--gris-50); color: var(--gris-900);
+  border-radius: 10px; font-size: 22px; line-height: 1; font-weight: 600;
+}
+.plaga .pl-btn:active { background: var(--verde); border-color: var(--verde); color: #fff; }
+
+.obligatorio { color: var(--rojo); font-weight: 700; }
+
+/* ── Mapa de la planta (mapa.js) ───────────────────────────────────────
+   El visor ocupa toda la pantalla que queda bajo la barra: un plano de hotel
+   en media pantalla no se lee, y el técnico lo está mirando de pie en un
+   pasillo, no sentado. */
+.contenido-mapa { padding: 0; max-width: none; display: flex; flex-direction: column;
+                  height: calc(100vh - 66px); }
+
+.mapa-barra {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--gris-200); background: var(--blanco);
+}
+.mapa-nombre { font-weight: 600; flex: 1; min-width: 0;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mapa-barra .sel-plano { flex: 1; margin: 0; }
+.mapa-botones { display: flex; gap: 6px; }
+.mapa-btn {
+  width: 44px; height: 44px; border-radius: 12px;
+  border: 1px solid var(--gris-200); background: var(--gris-50);
+  font-size: 18px; color: var(--gris-900); display: grid; place-items: center;
+}
+.mapa-btn:active { background: var(--azul); border-color: var(--azul); color: #fff; }
+.mapa-btn.activo { background: var(--azul); border-color: var(--azul); color: #fff; }
+
+.mapa-estado { padding: 8px 12px; font-size: 13px; min-height: 34px; background: var(--gris-50); }
+.mapa-estado .pista { color: var(--gris-600); }
+.mapa-estado .pista.ok { color: var(--verde); font-weight: 600; }
+.mapa-estado .pista.aviso { color: var(--ambar); }
+
+.mapa-visor {
+  position: relative; flex: 1; overflow: hidden;
+  background: var(--gris-100); touch-action: none; cursor: grab;
+}
+.mapa-lienzo { position: absolute; inset: 0; }
+.mapa-capa { position: absolute; transform-origin: 0 0; will-change: transform; }
+.mapa-medio { display: block; width: 100%; height: 100%; }
+
+/* El punto azul del técnico. El halo NO es decoración: es la precisión real
+   del GPS a la escala del plano, así que un halo grande significa
+   "el teléfono no sabe bien dónde estás" — que bajo techo es lo normal. */
+.mapa-yo { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+.mapa-yo-halo {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: var(--halo, 4%); height: var(--halo, 4%); min-width: 42px; min-height: 42px;
+  border-radius: 50%; background: rgba(50, 83, 156, .18); border: 1px solid rgba(50, 83, 156, .45);
+}
+.mapa-yo-punto {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #32539C; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+
+/* ── Chequeo del vehículo (chequeo.js) ─────────────────────────────────
+   Todo a toques: los objetivos son grandes porque se usa de pie, con una
+   mano y a veces con guantes. */
+
+.combustible { display: flex; align-items: center; gap: 14px; justify-content: center; }
+.comb-btn {
+  width: 62px; height: 56px; border-radius: 14px;
+  border: 1px solid var(--gris-200); background: var(--gris-50);
+  font-size: 22px; color: var(--gris-900);
+}
+.comb-btn:active { background: var(--verde); border-color: var(--verde); color: #fff; }
+.comb-valor { font-size: 34px; font-weight: 700; min-width: 76px; text-align: center; }
+.comb-barra { height: 12px; border-radius: 99px; background: var(--gris-200); margin-top: 12px; overflow: hidden; }
+.comb-barra > span { display: block; height: 100%; background: var(--verde); transition: width .2s; }
+
+.chk-lista { display: flex; flex-direction: column; gap: 8px; }
+.chk-item, .falla-item {
+  display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px;
+  padding: 12px 12px; min-height: 54px;
+  border: 1.5px solid var(--gris-200); border-radius: var(--radio); background: var(--blanco);
+}
+.chk-ic  { font-size: 19px; text-align: center; }
+.chk-txt { font-size: 15px; line-height: 1.25; }
+.chk-estado { font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--verde); }
+
+.chk-item.bien { border-color: var(--verde-borde); background: var(--verde-claro); }
+.chk-item.mal  { border-color: var(--rojo); background: var(--rojo-claro); }
+.chk-item.mal  .chk-estado { color: var(--rojo); }
+.chk-item.na   { border-color: var(--gris-400); background: var(--gris-50); }
+.chk-item.na   .chk-estado { color: var(--gris-600); }
+
+.falla-item.activa { border-color: var(--ambar); background: var(--ambar-claro); }
+
+/* Las fotos: el recuadro se llena con la miniatura al tomarla, así se ve de un
+   golpe cuáles faltan sin contar nada. */
+.fotos-angulos { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.foto-angulo {
+  position: relative; height: 92px; border-radius: var(--radio);
+  border: 1.5px dashed var(--gris-400); background: var(--gris-50) center/cover no-repeat;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+}
+.foto-angulo.lista { border-style: solid; border-color: var(--verde); }
+.foto-angulo .fa-txt {
+  font-size: 12px; font-weight: 600; color: var(--gris-900);
+  background: rgba(255,255,255,.85); padding: 2px 6px; border-radius: 6px;
+}
+.foto-angulo .fa-marca {
+  font-size: 20px; color: var(--verde); font-weight: 700;
+  background: rgba(255,255,255,.85); border-radius: 50%; width: 28px; height: 28px;
+  display: grid; place-items: center;
+}
+
+/* Resumen sobre los resultados de la búsqueda: cuántos puntos y en cuántas
+   áreas. Antes del agrupado, cuarenta cebaderos en fila no decían nada. */
+.resumen-busqueda {
+  margin: 4px 0 12px;
+  font-size: 13.5px;
+  color: var(--gris-600);
 }

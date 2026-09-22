@@ -161,6 +161,8 @@ async function abrirEstrategia(id, onVolver) {
         </div>
         <div class="actions">
           <button class="btn" id="btn-editar-est">Editar datos</button>
+          <button class="btn" id="btn-duplicar-est">Duplicar</button>
+          <button class="btn btn-danger" id="btn-borrar-est">Eliminar</button>
           <button class="btn btn-primary" id="btn-nueva-pregunta">+ Pregunta</button>
         </div>
       </div>
@@ -175,6 +177,33 @@ async function abrirEstrategia(id, onVolver) {
   $("#btn-nueva-pregunta").addEventListener("click", () =>
     modalPregunta(id, null, tipos, () => abrirEstrategia(id, onVolver))
   );
+
+  // Duplicar es la salida limpia cuando la estrategia ya se uso en cientos de
+  // inspecciones: se copia con todas sus preguntas, se ajusta la copia y se
+  // reasigna a los puntos, sin tocar el historial de lo ya inspeccionado.
+  $("#btn-duplicar-est").addEventListener("click", async () => {
+    const nombre = prompt("Nombre de la copia:", `${estrategia.nombre} (copia)`);
+    if (nombre === null) return;
+    try {
+      const copia = await post(`/estrategias/${id}/duplicar`, { nombre: nombre.trim() || undefined });
+      toast(`Copia creada con ${copia.preguntas_copiadas} preguntas`);
+      abrirEstrategia(copia.id, onVolver);
+    } catch (e) { toast(e.message, true); }
+  });
+
+  $("#btn-borrar-est").addEventListener("click", async () => {
+    if (!confirm(
+      `Se va a dar de baja la estrategia "${estrategia.nombre}".\n\n` +
+      `Los puntos que la tengan asignada quedan sin estrategia (y sin preguntas ` +
+      `para el tecnico, hasta que les asignes otra). Las inspecciones ya hechas ` +
+      `no se tocan.\n\n¿Continuar?`
+    )) return;
+    try {
+      const r = await del(`/estrategias/${id}`);
+      toast(r.puntos_liberados ? `Estrategia dada de baja · ${r.puntos_liberados} puntos quedaron sin estrategia` : "Estrategia dada de baja");
+      navigate("estrategias");
+    } catch (e) { toast(e.message, true); }
+  });
 
   function pintarPreguntas() {
     const activas = preguntas.filter((p) => p.activa !== false);
@@ -235,6 +264,34 @@ async function abrirEstrategia(id, onVolver) {
   pintarPreguntas();
 }
 
+// Las reglas viven en JSON: { igual: "si" }, { mayor_que: 0, severidad: "alta",
+// responsable: "asa" }, { menor_que: 20 }... El panel las respeta en vez de
+// reescribirlas, y las muestra en palabras para que se sepa que hay debajo.
+function conservarRegla(marcada, reglaActual) {
+  if (!marcada) return null;
+  if (reglaActual && typeof reglaActual === "object") return reglaActual;
+  return { igual: "si" };
+}
+
+function reglaLegible(pregunta) {
+  const partes = [];
+  const describir = (r, que) => {
+    if (!r || typeof r !== "object") return;
+    const cond =
+      r.igual !== undefined ? `la respuesta sea "${r.igual}"`
+      : r.mayor_que !== undefined ? `el numero pase de ${r.mayor_que}`
+      : r.menor_que !== undefined ? `el numero baje de ${r.menor_que}`
+      : "se cumpla la condicion guardada";
+    const extra = [r.severidad ? `severidad ${r.severidad}` : null, r.responsable ? `responsable ${r.responsable === "cliente" ? "hotel" : r.responsable}` : null]
+      .filter(Boolean).join(", ");
+    partes.push(`${que} cuando ${cond}${extra ? ` (${extra})` : ""}`);
+  };
+  describir(pregunta?.requiere_foto_si, "Pide foto");
+  describir(pregunta?.genera_hallazgo_si, "Abre hallazgo");
+  if (!partes.length) return "";
+  return `<small class="ayuda" style="display:block;margin-top:6px">Regla guardada: ${esc(partes.join(" · "))}</small>`;
+}
+
 function modalPregunta(estrategiaId, pregunta, tipos, onSaved) {
   const esNueva = !pregunta;
   openModal({
@@ -257,8 +314,9 @@ function modalPregunta(estrategiaId, pregunta, tipos, onSaved) {
         `<input name="opciones" value="${esc((pregunta?.opciones || []).join(", "))}" placeholder="Sin actividad, Consumo leve, Consumo alto" />`,
         "Sepáralas con comas.") +
       `<label class="campo-check"><input type="checkbox" name="obligatoria" ${pregunta?.obligatoria !== false ? "checked" : ""} /> Obligatoria</label>
-       <label class="campo-check"><input type="checkbox" name="foto_si" ${pregunta?.requiere_foto_si ? "checked" : ""} /> Exigir foto cuando la respuesta sea "sí"</label>
-       <label class="campo-check"><input type="checkbox" name="hallazgo_si" ${pregunta?.genera_hallazgo_si ? "checked" : ""} /> Abrir un hallazgo cuando la respuesta sea "sí"</label>`,
+       <label class="campo-check"><input type="checkbox" name="foto_si" ${pregunta?.requiere_foto_si ? "checked" : ""} /> Exigir foto cuando la respuesta dispare la regla</label>
+       <label class="campo-check"><input type="checkbox" name="hallazgo_si" ${pregunta?.genera_hallazgo_si ? "checked" : ""} /> Abrir un hallazgo cuando la respuesta dispare la regla</label>
+       ${reglaLegible(pregunta)}`,
     async onSubmit(fd) {
       const cuerpo = {
         texto: (fd.get("texto") || "").trim(),
@@ -266,8 +324,12 @@ function modalPregunta(estrategiaId, pregunta, tipos, onSaved) {
         tipo_respuesta: fd.get("tipo_respuesta"),
         opciones: String(fd.get("opciones") || "").split(",").map((s) => s.trim()).filter(Boolean),
         obligatoria: (fd.get("obligatoria") === "on"),
-        requiere_foto_si: (fd.get("foto_si") === "on") ? { igual: "si" } : null,
-        genera_hallazgo_si: (fd.get("hallazgo_si") === "on") ? { igual: "si" } : null,
+        // Si la regla ya venia cargada (ej. { mayor_que: 0, severidad: "alta" }),
+        // se conserva tal cual. Antes se sobreescribia con { igual: "si" } cada
+        // vez que se editaba la pregunta, y una pregunta de conteo sembrada por
+        // el sistema anterior dejaba de abrir hallazgos sin que nadie lo notara.
+        requiere_foto_si: conservarRegla(fd.get("foto_si") === "on", pregunta?.requiere_foto_si),
+        genera_hallazgo_si: conservarRegla(fd.get("hallazgo_si") === "on", pregunta?.genera_hallazgo_si),
       };
       if (esNueva) await post(`/estrategias/${estrategiaId}/preguntas`, cuerpo);
       else await put(`/estrategias/preguntas/${pregunta.id}`, cuerpo);
@@ -821,8 +883,14 @@ async function tableroASA(content) {
         <option value="90">Últimos 90 días</option>
       </select>
       <select id="tab-sitio"><option value="">Todas las plantas</option></select>
+      <span class="toolbar-sep"></span>
+      <button class="btn btn-primary btn-sm" id="tab-reporte">Generar reporte</button>
     </div>
     <div id="tab-cuerpo"><div class="center-msg">Cargando…</div></div>`;
+
+  // El reporte de evidencia se pide desde aqui con la planta que este elegida
+  // arriba: es el documento que se entrega en auditoria.
+  $("#tab-reporte").addEventListener("click", () => modalReporte($("#tab-sitio").value || undefined));
 
   // El selector de planta es opcional: si falla, el tablero igual funciona
   // con todas las plantas juntas.
@@ -1059,8 +1127,11 @@ async function tabMapa(cuerpo, sitioId, areas) {
       </select>
       <span class="toolbar-sep"></span>
       <button class="btn btn-sm" id="mapa-subir">+ Plano</button>
+      <button class="btn btn-sm" id="mapa-geo">Coordenadas</button>
+      <button class="btn btn-sm" id="mapa-abrir">Abrir archivo</button>
       <button class="btn btn-sm btn-danger" id="mapa-borrar">Quitar plano</button>
     </div>
+    <div id="mapa-aviso"></div>
     <div class="mapa-wrap">
       <div class="mapa-lienzo" id="mapa-lienzo"></div>
       <aside class="mapa-lateral">
@@ -1077,6 +1148,12 @@ async function tabMapa(cuerpo, sitioId, areas) {
   let sinUbicar = [];
 
   async function cargarSinUbicar() {
+    // En un plano PDF no se colocan pines, así que la lista lateral sobra.
+    if (planoActual.tipo_archivo === "pdf") {
+      $("#mapa-pendientes").innerHTML = "";
+      $("#mapa-ayuda").innerHTML = "Plano en PDF: los puntos vienen dibujados dentro del archivo.";
+      return;
+    }
     const r = await get(`/puntos?sitio_id=${sitioId}`);
     const todos = [...(r.realizados || []), ...(r.pendientes || [])];
     const colocados = new Set(planoActual.puntos.map((p) => p.id));
@@ -1118,6 +1195,37 @@ async function tabMapa(cuerpo, sitioId, areas) {
   }
 
   function pintarPlano() {
+    const esPdf = planoActual.tipo_archivo === "pdf" || /\.pdf($|\?)/i.test(planoActual.imagen_url || "");
+    const conGeo = planoActual.geo_norte != null;
+
+    $("#mapa-aviso").innerHTML = conGeo
+      ? `<p class="text-muted">
+           Georreferenciado (${planoActual.geo_fuente === "pdf" ? "leído del PDF" : "cargado a mano"}):
+           N ${planoActual.geo_norte} · S ${planoActual.geo_sur} · E ${planoActual.geo_este} · O ${planoActual.geo_oeste}.
+           La app del técnico puede ubicarlo con el GPS encima de este plano.
+         </p>`
+      : `<p class="text-muted" style="color:#b45309">
+           Sin coordenadas: el técnico ve el plano y lo puede agrandar, pero el GPS
+           no lo ubica encima. Cárgalas con el botón <strong>Coordenadas</strong>.
+         </p>`;
+
+    // Un PDF no se puede pinchar con pines desde aquí, y no hace falta: el mapa
+    // de QGIS ya trae los puntos dibujados. Se muestra para revisarlo y se deja
+    // la colocación de pines para los planos que son imagen.
+    if (esPdf) {
+      $("#mapa-lienzo").innerHTML = `
+        <div class="plano-pdf">
+          <iframe src="${esc(planoActual.imagen_url)}#toolbar=1&view=FitH"
+                  title="${esc(planoActual.nombre)}"></iframe>
+        </div>
+        <p class="text-muted" style="margin-top:10px">
+          Este plano es un PDF con los puntos ya dibujados, así que no se colocan
+          pines encima desde el panel. El técnico lo abre en su app, lo agranda sin
+          que se pixele y, con las coordenadas cargadas, se ve ubicado dentro.
+        </p>`;
+      return;
+    }
+
     $("#mapa-lienzo").innerHTML = `
       <div class="plano" id="plano">
         <img src="${esc(planoActual.imagen_url)}" alt="${esc(planoActual.nombre)}" />
@@ -1179,6 +1287,10 @@ async function tabMapa(cuerpo, sitioId, areas) {
   $("#mapa-subir").addEventListener("click", () =>
     modalSubirPlano(sitioId, areas, () => tabMapa(cuerpo, sitioId, areas))
   );
+  $("#mapa-geo").addEventListener("click", () =>
+    modalCoordenadasPlano(planoActual, () => tabMapa(cuerpo, sitioId, areas))
+  );
+  $("#mapa-abrir").addEventListener("click", () => window.open(planoActual.imagen_url, "_blank"));
   $("#mapa-borrar").addEventListener("click", async () => {
     if (!confirm(`¿Quitar el plano "${planoActual.nombre}"? Los puntos conservan su posición por si lo vuelves a subir.`)) return;
     await del(`/sitios/planos/${planoActual.id}`);
@@ -1193,29 +1305,108 @@ async function tabMapa(cuerpo, sitioId, areas) {
 
 function modalSubirPlano(sitioId, areas, onSaved) {
   openModal({
-    title: "Subir un plano",
+    title: "Subir un plano o mapa",
+    large: true,
     bodyHTML:
       `<p class="text-muted">
-         Sirve cualquier imagen del hotel: un PDF exportado a PNG, la foto del
-         cartel de evacuación o un croquis. Máximo 20 MB.
+         Sirve el <strong>PDF que exportas de QGIS</strong> con los puntos ya marcados
+         — es el recomendado: el técnico lo agranda en el celular sin que se pixele
+         y puede descargarlo. También sirve una imagen (PNG, JPG) para croquis o
+         fotos del cartel de evacuación. Hasta 40 MB.
        </p>` +
       campo("Nombre", `<input name="nombre" required placeholder="Planta baja — cocinas" />`) +
       campo("Área (opcional)", `<select name="area_id"><option value="">Toda la planta</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
-      campo("Imagen", `<input name="archivo" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required />`),
+      campo("Archivo", `<input name="archivo" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/svg+xml" required id="plano-archivo" />`) +
+      `<div id="plano-aviso-pdf" class="text-muted" style="display:none;margin:-4px 0 12px">
+         Si lo exportaste desde QGIS marcando <strong>«Crear GeoPDF»</strong>, el sistema
+         lee las coordenadas solo y no hace falta llenar nada más abajo.
+       </div>
+       <details class="bloque-geo">
+         <summary>Coordenadas del mapa (para que el GPS ubique al técnico encima)</summary>
+         <p class="text-muted" style="margin-top:8px">
+           Son los cuatro bordes del área que abarca el mapa, en grados. QGIS los
+           muestra en el diseñador de impresión, en las propiedades del elemento
+           mapa. <strong>Déjalos en blanco si el PDF ya los trae.</strong> En República
+           Dominicana la latitud es positiva (18.x) y la longitud negativa (−68.x).
+         </p>
+         <div class="form-grid">
+           <div class="form-group"><label>Norte (latitud mayor)</label><input name="geo_norte" type="number" step="any" placeholder="18.7031" /></div>
+           <div class="form-group"><label>Sur (latitud menor)</label><input name="geo_sur" type="number" step="any" placeholder="18.6974" /></div>
+           <div class="form-group"><label>Este (longitud mayor)</label><input name="geo_este" type="number" step="any" placeholder="-68.4412" /></div>
+           <div class="form-group"><label>Oeste (longitud menor)</label><input name="geo_oeste" type="number" step="any" placeholder="-68.4498" /></div>
+         </div>
+         <p class="text-muted">
+           Van los cuatro o ninguno: un recuadro a medias pondría al técnico en el
+           lugar equivocado con toda confianza, que es peor que no ubicarlo.
+         </p>
+       </details>`,
     submitLabel: "Subir",
+    onMount() {
+      $("#plano-archivo").addEventListener("change", (e) => {
+        const f = e.target.files[0];
+        $("#plano-aviso-pdf").style.display = f && f.type === "application/pdf" ? "" : "none";
+      });
+    },
     async onSubmit(fd) {
       const file = fd.get("archivo");
-      if (!file || !file.size) throw new Error("Elige una imagen");
-      if (file.size > 20 * 1024 * 1024) throw new Error("La imagen pasa de 20 MB");
+      if (!file || !file.size) throw new Error("Elige un archivo");
+      if (file.size > 40 * 1024 * 1024) throw new Error("El archivo pasa de 40 MB");
 
-      await post(`/sitios/${sitioId}/planos/subir`, {
+      const geo = {};
+      for (const k of ["geo_norte", "geo_sur", "geo_este", "geo_oeste"]) {
+        const v = String(fd.get(k) || "").trim();
+        if (v) geo[k] = Number(v);
+      }
+      const puestos = Object.keys(geo).length;
+      if (puestos && puestos < 4) throw new Error("Escribe las cuatro coordenadas, o ninguna");
+
+      const r = await post(`/sitios/${sitioId}/planos/subir`, {
         nombre: (fd.get("nombre") || "").trim(),
         area_id: fd.get("area_id") || null,
         tipo_mime: file.type || "image/png",
         archivo_base64: await leerBase64(file),
+        ...geo,
       });
       closeModal();
-      toast("Plano subido");
+      toast(r.aviso_georreferencia ? "Plano subido (sin coordenadas)" : "Plano subido");
+      if (r.aviso_georreferencia) alert(r.aviso_georreferencia);
+      onSaved?.();
+    },
+  });
+}
+
+// Editar el recuadro de coordenadas de un plano ya subido. Es la segunda
+// oportunidad: se sube el PDF, se ve que el GPS no ubica, y se le ponen las
+// coordenadas sin tener que volver a subir el archivo.
+function modalCoordenadasPlano(plano, onSaved) {
+  const v = (k) => (plano[k] === null || plano[k] === undefined ? "" : plano[k]);
+  openModal({
+    title: `Coordenadas de "${plano.nombre}"`,
+    bodyHTML: `
+      <p class="text-muted">
+        Con estos cuatro números la app del técnico convierte su posición del GPS
+        en un punto encima del plano. Son los bordes del área que abarca el mapa,
+        tal como los muestra QGIS.
+        ${plano.geo_fuente === "pdf" ? `<br><strong>Estas las leyó el sistema del propio PDF.</strong>` : ""}
+      </p>
+      <div class="form-grid">
+        <div class="form-group"><label>Norte</label><input name="geo_norte" type="number" step="any" value="${esc(v("geo_norte"))}" placeholder="18.7031" /></div>
+        <div class="form-group"><label>Sur</label><input name="geo_sur" type="number" step="any" value="${esc(v("geo_sur"))}" placeholder="18.6974" /></div>
+        <div class="form-group"><label>Este</label><input name="geo_este" type="number" step="any" value="${esc(v("geo_este"))}" placeholder="-68.4412" /></div>
+        <div class="form-group"><label>Oeste</label><input name="geo_oeste" type="number" step="any" value="${esc(v("geo_oeste"))}" placeholder="-68.4498" /></div>
+      </div>
+      <p class="text-muted">Bórralos todos para quitar la georreferencia.</p>`,
+    async onSubmit(fd) {
+      const cuerpo = {};
+      for (const k of ["geo_norte", "geo_sur", "geo_este", "geo_oeste"]) {
+        const val = String(fd.get(k) || "").trim();
+        cuerpo[k] = val === "" ? null : Number(val);
+      }
+      const llenos = Object.values(cuerpo).filter((x) => x !== null).length;
+      if (llenos && llenos < 4) throw new Error("Escribe las cuatro, o bórralas todas");
+      await patch(`/sitios/planos/${plano.id}`, cuerpo);
+      closeModal();
+      toast(llenos ? "Coordenadas guardadas" : "Georreferencia quitada");
       onSaved?.();
     },
   });
@@ -1493,6 +1684,31 @@ async function viewAccesosHotel(content) {
   await cargar();
 }
 
+// Cambio de contrasena reutilizable: lo usan las cuentas de personal interno
+// (Usuarios) y las de acceso del hotel, que pegan a rutas distintas.
+function modalCambiarClave({ titulo, ruta, onDone }) {
+  openModal({
+    title: titulo,
+    bodyHTML:
+      campo("Contrasena nueva", `<input name="password" type="password" required minlength="8" autocomplete="new-password" />`,
+        "Minimo 8 caracteres.") +
+      campo("Repetir", `<input name="password2" type="password" required minlength="8" autocomplete="new-password" />`) +
+      `<p class="text-muted" style="margin:8px 0 0">
+         El sistema guarda solo un hash: nadie, ni tu, puede volver a leer esta
+         clave despues de guardarla. Entregala por un canal seguro.
+       </p>`,
+    submitLabel: "Cambiar contrasena",
+    async onSubmit(fd) {
+      const a = fd.get("password"), b = fd.get("password2");
+      if (a !== b) throw new Error("Las dos contrasenas no coinciden");
+      await post(ruta, { password: a });
+      closeModal();
+      toast("Contrasena cambiada");
+      onDone?.();
+    },
+  });
+}
+
 function modalAcceso(cuenta, plantas, onSaved) {
   const esNueva = !cuenta;
   const asignadas = new Set((cuenta?.asa_usuario_sitios || []).map((s) => s.sitio_id));
@@ -1511,36 +1727,68 @@ function modalAcceso(cuenta, plantas, onSaved) {
     title: esNueva ? "Nueva cuenta de hotel" : `Editar acceso de ${cuenta.nombre_completo || cuenta.email}`,
     large: true,
     bodyHTML:
+      campo("Nombre de la persona",
+        `<input name="nombre_completo" required placeholder="Leticia Alvarez" value="${esc(cuenta?.nombre_completo || "")}" />`) +
+      campo("Correo",
+        `<input name="email" type="email" required placeholder="calidad.comunes@iberostar.com" value="${esc(cuenta?.email || "")}" />`,
+        esNueva ? "Con este correo entra al portal del hotel." : "Si lo cambias, la persona entra con el correo nuevo.") +
       (esNueva
-        ? campo("Nombre de la persona", `<input name="nombre_completo" required placeholder="Leticia Álvarez" />`) +
-          campo("Correo", `<input name="email" type="email" required placeholder="calidad.comunes@iberostar.com" />`) +
-          campo("Contraseña", `<input name="password" type="password" required minlength="8" />`,
-            "Mínimo 8 caracteres. Entrégasela a la persona por un canal seguro; el sistema guarda solo un hash.")
-        : `<div class="campo"><span>Correo</span>
-             <code class="qr-fijo">${esc(cuenta.email)}</code>
-             <small class="ayuda">El correo no se cambia. Si hace falta otro, desactiva esta cuenta y crea una nueva.</small>
-           </div>`) +
+        ? campo("Contrasena", `<input name="password" type="password" required minlength="8" />`,
+            "Minimo 8 caracteres. Entregasela por un canal seguro; el sistema guarda solo un hash.")
+        : "") +
       `<div class="campo">
          <span>Plantas que puede ver</span>
          <div class="lista-plantas">${listaPlantas}</div>
          <small class="ayuda">
-           Solo verá estas. Es el mismo filtro que aplica el servidor en cada
+           Solo vera estas. Es el mismo filtro que aplica el servidor en cada
            consulta, no un escondite de la pantalla.
          </small>
        </div>` +
       (esNueva
         ? ""
-        : `<button type="button" class="btn btn-danger" id="acceso-estado" style="margin-top:6px">
-             ${cuenta.activo ? "Desactivar esta cuenta" : "Reactivar esta cuenta"}
-           </button>`),
+        : `<div class="actions" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+             <button type="button" class="btn" id="acceso-clave">Cambiar contrasena</button>
+             <button type="button" class="btn" id="acceso-estado">
+               ${cuenta.activo ? "Desactivar cuenta" : "Reactivar cuenta"}
+             </button>
+             <button type="button" class="btn btn-danger" id="acceso-borrar">Eliminar cuenta</button>
+           </div>
+           <p class="text-muted" style="margin:8px 0 0">
+             <strong>Desactivar</strong> le quita la entrada pero la cuenta queda y se
+             reactiva cuando quieras. <strong>Eliminar</strong> la borra de verdad, junto
+             con las plantas que tenia asignadas.
+           </p>`),
     onMount() {
-      const b = $("#acceso-estado");
-      if (!b) return;
-      b.addEventListener("click", async () => {
+      $("#acceso-clave")?.addEventListener("click", () =>
+        modalCambiarClave({
+          titulo: `Contrasena de ${cuenta.email}`,
+          ruta: `/usuarios/portal/${cuenta.id}/password`,
+          onDone: onSaved,
+        })
+      );
+
+      $("#acceso-estado")?.addEventListener("click", async () => {
         try {
           await patch(`/usuarios/${cuenta.id}/activo`, { activo: !cuenta.activo });
           closeModal();
           toast(cuenta.activo ? "Cuenta desactivada" : "Cuenta reactivada");
+          onSaved?.();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      });
+
+      $("#acceso-borrar")?.addEventListener("click", async () => {
+        if (!confirm(
+          `Se va a borrar la cuenta de ${cuenta.email}.\n\n` +
+          `Pierde el acceso al portal y se quitan las plantas que tenia asignadas. ` +
+          `Lo que consulto queda en la bitacora de auditoria.\n\n` +
+          `Si solo quieres quitarle la entrada por un tiempo, usa Desactivar.\n\n¿Borrar?`
+        )) return;
+        try {
+          await del(`/usuarios/portal/${cuenta.id}`);
+          closeModal();
+          toast("Cuenta eliminada");
           onSaved?.();
         } catch (e) {
           toast(e.message, true);
@@ -1559,10 +1807,16 @@ function modalAcceso(cuenta, plantas, onSaved) {
           sitios,
         });
       } else {
+        // Dos escrituras distintas: los datos de la cuenta y la lista de
+        // plantas viven en tablas separadas (asa_usuarios y asa_usuario_sitios).
+        await patch(`/usuarios/portal/${cuenta.id}`, {
+          nombre_completo: (fd.get("nombre_completo") || "").trim(),
+          email: (fd.get("email") || "").trim().toLowerCase(),
+        });
         await put(`/usuarios/portal/${cuenta.id}/sitios`, { sitios });
       }
       closeModal();
-      toast(esNueva ? "Cuenta creada" : "Plantas actualizadas");
+      toast(esNueva ? "Cuenta creada" : "Cuenta actualizada");
       onSaved?.();
     },
   });

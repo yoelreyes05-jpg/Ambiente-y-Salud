@@ -67,6 +67,9 @@ import nominaRouter from "./routes/nomina.js";
 import usuariosRouter from "./routes/usuarios.js";
 import rncRouter from "./routes/rnc.js";
 import notificacionesRouter from "./routes/notificaciones.js";
+import configuracionRouter from "./routes/configuracion.js";
+import auditoriaRouter from "./routes/auditoria.js";
+import flotaRouter, { publico as flotaPublico } from "./routes/flota.js";
 
 // ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
@@ -81,6 +84,12 @@ app.get("/salud", (req, res) => res.json({ ok: true, hora: new Date().toISOStrin
 
 // El login y el alta de cliente son necesariamente públicos.
 app.use("/usuarios", usuariosRouter);
+
+// La pantalla del chequeo vehicular del conductor también: es pública a
+// propósito. Darle cuenta del sistema a cada conductor sería abrirle plantas,
+// clientes y reportes para que avise de una goma baja. Estas rutas solo leen
+// catálogos y escriben el parte del día de su propio vehículo.
+app.use("/flota", flotaPublico);
 
 // ── A PARTIR DE AQUÍ, TODO EXIGE TOKEN ──────────────────────────────────────
 //
@@ -105,6 +114,15 @@ app.use("/ipm", ipmRouter);
 app.use("/inventario", inventarioRouter);
 app.use("/notificaciones", notificacionesRouter);
 app.use("/rnc", rncRouter);
+
+// Administracion del propio sistema: datos de la empresa, permisos por rol y
+// la bitacora de quien hizo que. La bitacora ya se llenaba sola desde el
+// principio (lib/auditoria.js); lo que faltaba era poder verla.
+app.use("/config", configuracionRouter);
+app.use("/auditoria", auditoriaRouter);
+
+// Flota y transportación (el resto del módulo, ya con token)
+app.use("/flota", flotaRouter);
 
 // Módulos congelados (veterinaria, estética, tienda, administración).
 // Siguen funcionando pero están ocultos del panel; se reactivan cuando ASA

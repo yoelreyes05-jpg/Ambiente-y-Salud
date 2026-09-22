@@ -3,7 +3,8 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { supabase } from "../lib/supabaseClient.js";
-import { requireAuth, requireRol } from "../middleware/auth.js";
+import { requireAuth, requireRol, ROLES_INTERNOS } from "../middleware/auth.js";
+import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 
@@ -159,5 +160,148 @@ router.post("/:id/password", requireAuth, requireRol("admin"), async (req, res) 
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
   res.json({ ok: true });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edicion y borrado de cuentas
+//
+// ORDEN: todo lo de /portal/... queda ARRIBA de /:id. Express resuelve por
+// orden de declaracion y un PATCH /usuarios/portal caeria en /:id con
+// id="portal".
+//
+// Dos borrados distintos, como en el CRM:
+//   · PATCH /:id/activo { activo:false } — dar de baja. La cuenta no puede
+//     entrar, pero sigue ahi y se reactiva cuando haga falta.
+//   · DELETE /:id — borrar de verdad. Se lleva sus hoteles asignados
+//     (asa_usuario_sitios va con on delete cascade). Lo que hizo NO se pierde:
+//     asa_log_auditoria guarda el nombre congelado y su usuario_id pasa a null.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// PATCH /usuarios/portal/:id — datos de una cuenta de hotel (nombre, correo)
+router.patch("/portal/:id", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const cambios = {};
+  if (req.body.nombre_completo !== undefined) cambios.nombre_completo = String(req.body.nombre_completo).trim();
+  if (req.body.email !== undefined) cambios.email = String(req.body.email).trim().toLowerCase();
+  if (req.body.activo !== undefined) cambios.activo = !!req.body.activo;
+  if (!Object.keys(cambios).length) return res.status(400).json({ error: true, mensaje: "Nada que cambiar" });
+  cambios.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("asa_usuarios")
+    .update(cambios)
+    .eq("id", req.params.id)
+    .eq("rol", "cliente_calidad")   // esta ruta solo toca cuentas de hotel
+    .select("id, email, nombre_completo, rol, activo");
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!data?.length) return res.status(404).json({ error: true, mensaje: "Cuenta de hotel no encontrada" });
+
+  logAccion(req, { accion: "actualizar", modulo: "accesos_hotel", registroId: req.params.id, descripcion: data[0].email });
+  res.json(data[0]);
+});
+
+// POST /usuarios/portal/:id/password — cambiar la clave de una cuenta de hotel.
+// Existe aparte de /usuarios/:id/password (que es solo de admin) para que
+// comercial pueda resolverle la clave al encargado de calidad del hotel sin
+// tener que darle permisos de administrador a comercial.
+router.post("/portal/:id/password", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: true, mensaje: "La contrasena debe tener al menos 8 caracteres" });
+  }
+  const password_hash = await bcrypt.hash(password, 10);
+  const { data, error } = await supabase
+    .from("asa_usuarios")
+    .update({ password_hash, updated_at: new Date().toISOString() })
+    .eq("id", req.params.id)
+    .eq("rol", "cliente_calidad")
+    .select("id, email");
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!data?.length) return res.status(404).json({ error: true, mensaje: "Cuenta de hotel no encontrada" });
+  logAccion(req, { accion: "actualizar", modulo: "accesos_hotel", registroId: req.params.id, descripcion: `Clave cambiada a ${data[0].email}` });
+  res.json({ ok: true });
+});
+
+// DELETE /usuarios/portal/:id — borra la cuenta de hotel y sus asignaciones
+router.delete("/portal/:id", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const { data: cuenta } = await supabase
+    .from("asa_usuarios")
+    .select("id, email, nombre_completo, rol")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (!cuenta) return res.status(404).json({ error: true, mensaje: "Cuenta no encontrada" });
+  if (cuenta.rol !== "cliente_calidad") {
+    return res.status(400).json({ error: true, mensaje: "Esa cuenta no es de acceso al hotel. Bórrala desde Usuarios." });
+  }
+
+  const { error } = await supabase.from("asa_usuarios").delete().eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  logAccion(req, { accion: "eliminar", modulo: "accesos_hotel", registroId: req.params.id, descripcion: cuenta.email });
+  res.json({ ok: true });
+});
+
+// PATCH /usuarios/:id — nombre, correo, rol y empleado del personal interno
+router.patch("/:id", requireAuth, requireRol("admin"), async (req, res) => {
+  const cambios = {};
+  if (req.body.nombre_completo !== undefined) cambios.nombre_completo = String(req.body.nombre_completo).trim();
+  if (req.body.email !== undefined) cambios.email = String(req.body.email).trim().toLowerCase();
+  if (req.body.empleado_id !== undefined) cambios.empleado_id = req.body.empleado_id || null;
+  if (req.body.activo !== undefined) cambios.activo = !!req.body.activo;
+  if (req.body.rol !== undefined) {
+    if (!ROLES_INTERNOS.includes(req.body.rol)) {
+      return res.status(400).json({ error: true, mensaje: `Rol no valido. Validos: ${ROLES_INTERNOS.join(", ")}` });
+    }
+    cambios.rol = req.body.rol;
+  }
+  if (!Object.keys(cambios).length) return res.status(400).json({ error: true, mensaje: "Nada que cambiar" });
+  cambios.updated_at = new Date().toISOString();
+
+  // Quedarse sin ningun admin activo deja el sistema sin quien administre, y no
+  // hay forma de arreglarlo desde la interfaz: se bloquea antes de escribir.
+  if (cambios.rol && cambios.rol !== "admin") {
+    if (await esElUltimoAdmin(req.params.id)) {
+      return res.status(409).json({ error: true, mensaje: "Es el unico administrador activo. Crea otro admin antes de cambiarle el rol." });
+    }
+  }
+  if (cambios.activo === false && (await esElUltimoAdmin(req.params.id))) {
+    return res.status(409).json({ error: true, mensaje: "Es el unico administrador activo: no se puede dar de baja." });
+  }
+
+  const { data, error } = await supabase
+    .from("asa_usuarios")
+    .update(cambios)
+    .eq("id", req.params.id)
+    .select("id, email, nombre_completo, rol, activo, ultimo_acceso");
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!data?.length) return res.status(404).json({ error: true, mensaje: "Usuario no encontrado" });
+
+  logAccion(req, { accion: "actualizar", modulo: "usuarios", registroId: req.params.id, descripcion: data[0].email, detalle: { campos: Object.keys(cambios) } });
+  res.json(data[0]);
+});
+
+// DELETE /usuarios/:id — borrado real de una cuenta de personal interno
+router.delete("/:id", requireAuth, requireRol("admin"), async (req, res) => {
+  if (req.params.id === req.usuario?.id) {
+    return res.status(400).json({ error: true, mensaje: "No puedes borrar tu propia cuenta mientras la estas usando." });
+  }
+  const { data: cuenta } = await supabase
+    .from("asa_usuarios")
+    .select("id, email, nombre_completo, rol")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (!cuenta) return res.status(404).json({ error: true, mensaje: "Usuario no encontrado" });
+  if (await esElUltimoAdmin(req.params.id)) {
+    return res.status(409).json({ error: true, mensaje: "Es el unico administrador activo: crea otro antes de borrarlo." });
+  }
+
+  const { error } = await supabase.from("asa_usuarios").delete().eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  logAccion(req, { accion: "eliminar", modulo: "usuarios", registroId: req.params.id, descripcion: `${cuenta.nombre_completo} <${cuenta.email}>` });
+  res.json({ ok: true });
+});
+
+async function esElUltimoAdmin(id) {
+  const { data } = await supabase.from("asa_usuarios").select("id").eq("rol", "admin").eq("activo", true);
+  const admins = (data || []).map((u) => u.id);
+  return admins.length <= 1 && admins.includes(id);
+}
 
 export default router;

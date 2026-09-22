@@ -106,30 +106,104 @@ router.get("/", async (req, res) => {
 });
 
 // GET /puntos/buscar?q=&sitio_id= — respaldo cuando el QR está dañado o ilegible
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /puntos/buscar?q=&sitio_id=
+//
+// El tecnico busca como habla, no como esta guardada la base. Escribe "cocina"
+// y espera los puntos DE las cocinas; escribe "aerosol" y espera los
+// dispensadores; escribe "4312" y espera esa habitacion. Antes solo se miraba
+// el codigo, el nombre y el numero de habitacion, asi que buscar por area o por
+// tipo no devolvia nada y parecia que el punto no existia.
+//
+// Como esta resuelto: area y tipo viven en OTRAS tablas, y PostgREST no filtra
+// comodo por columnas de una tabla unida dentro de un `or`. Asi que primero se
+// resuelven las areas y los tipos que coinciden con el texto, y despues se
+// piden los puntos que sean de esas areas o de esos tipos, o cuyo propio texto
+// coincida. Son dos viajes en vez de uno, y a cambio la busqueda encuentra lo
+// que el tecnico tiene en la cabeza.
+//
+// Con UNA letra se buscan los que EMPIEZAN con ella ("c" no puede devolver
+// medio hotel); desde dos letras, los que la contienen.
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/buscar", async (req, res) => {
   const termino = (req.query.q || "").trim();
-  if (termino.length < 2) return res.json([]);
+  if (!termino) return res.json([]);
+
+  // Los comodines de ilike y los separadores del `or` de PostgREST rompen la
+  // consulta si llegan tal cual desde el buscador.
+  const limpio = termino.replace(/[%_,().*]/g, " ").trim();
+  if (!limpio) return res.json([]);
+
+  const patron = limpio.length === 1 ? `${limpio}%` : `%${limpio}%`;
+  const sitio = req.query.sitio_id || null;
+
+  // 1) Areas y tipos que coinciden con lo escrito
+  let qAreas = supabase.from("asa_areas").select("id, nombre").eq("activo", true).ilike("nombre", patron);
+  if (sitio) qAreas = qAreas.eq("sitio_id", sitio);
+
+  const [areas, tipos] = await Promise.all([
+    qAreas,
+    supabase.from("asa_tipos_punto").select("id, nombre, codigo").eq("activo", true)
+      .or(`nombre.ilike.${patron},codigo.ilike.${patron}`),
+  ]);
+
+  const idsArea = (areas.data || []).map((a) => a.id);
+  const idsTipo = (tipos.data || []).map((t) => t.id);
+
+  // 2) Puntos: por su propio texto, o por pertenecer a esas areas o tipos
+  const condiciones = [
+    `codigo_visible.ilike.${patron}`,
+    `nombre.ilike.${patron}`,
+    `numero_habitacion.ilike.${patron}`,
+    `ubicacion_descripcion.ilike.${patron}`,
+  ];
+  if (idsArea.length) condiciones.push(`area_id.in.(${idsArea.join(",")})`);
+  if (idsTipo.length) condiciones.push(`tipo_punto_id.in.(${idsTipo.join(",")})`);
 
   let q = supabase
     .from("asa_puntos_control")
-    .select("id, qr_token, codigo_visible, nombre, numero_habitacion, ubicacion_descripcion, sitio_id, asa_areas(nombre), asa_tipos_punto(nombre, icono), asa_sitios(nombre)")
+    .select("id, qr_token, codigo_visible, nombre, numero_habitacion, ubicacion_descripcion, sitio_id, area_id, tipo_punto_id, asa_areas(nombre, nivel), asa_tipos_punto(nombre, icono, codigo), asa_sitios(nombre)")
     .eq("activo", true)
-    .or(
-      [
-        `codigo_visible.ilike.%${termino}%`,
-        `nombre.ilike.%${termino}%`,
-        `numero_habitacion.ilike.%${termino}%`,
-        `ubicacion_descripcion.ilike.%${termino}%`,
-      ].join(",")
-    )
-    .limit(40);
+    .or(condiciones.join(","))
+    .limit(120);
 
-  if (req.query.sitio_id) q = q.eq("sitio_id", req.query.sitio_id);
+  if (sitio) q = q.eq("sitio_id", sitio);
   q = filtrarPorSitio(q, req);
 
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.json(data);
+
+  // 3) Orden: primero lo que empieza con lo escrito, despues lo que lo contiene,
+  //    y al final lo que coincidio por area o por tipo. Buscar "410" tiene que
+  //    poner la habitacion 410 arriba, no la de un area que se llame parecido.
+  const t = limpio.toLowerCase();
+  const empieza = (v) => String(v || "").toLowerCase().startsWith(t);
+  const contiene = (v) => String(v || "").toLowerCase().includes(t);
+
+  const puntuar = (p) => {
+    if (empieza(p.codigo_visible) || empieza(p.numero_habitacion)) return 0;
+    if (empieza(p.nombre)) return 1;
+    if (contiene(p.codigo_visible) || contiene(p.numero_habitacion) || contiene(p.nombre)) return 2;
+    if (contiene(p.ubicacion_descripcion)) return 3;
+    if (contiene(p.asa_tipos_punto?.nombre)) return 4;
+    return 5;   // coincidio por area
+  };
+
+  const conMotivo = (data || []).map((p) => ({
+    ...p,
+    // Por que salio: la app lo muestra para que el tecnico entienda el
+    // resultado en vez de dudar de el.
+    coincidio_por: puntuar(p) <= 3 ? "punto" : puntuar(p) === 4 ? "tipo" : "area",
+    _orden: puntuar(p),
+  }));
+
+  conMotivo.sort((a, b) =>
+    a._orden - b._orden ||
+    String(a.asa_areas?.nombre || "").localeCompare(String(b.asa_areas?.nombre || "")) ||
+    String(a.numero_habitacion || a.codigo_visible).localeCompare(String(b.numero_habitacion || b.codigo_visible), "es", { numeric: true })
+  );
+
+  res.json(conMotivo.map(({ _orden, ...p }) => p));
 });
 
 // GET /puntos/qr/:token — lo que ve el técnico al escanear

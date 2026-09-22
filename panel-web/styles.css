@@ -429,3 +429,89 @@ table.data tbody tr.clickable{cursor:pointer}
   font-size:12.5px;color:var(--text-muted);background:#fff;
 }
 .previa-nota{font-size:11px;color:var(--warning);margin-top:7px}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SERVICIOS DEL DÍA, DESGLOSE Y NO REALIZADOS   (servicios.js)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Pestaña en rojo: la de "no realizados" tiene que verse distinta desde la
+   barra, porque es la que nadie quiere abrir y es la que hay que abrir. */
+.tab.tab-rojo { color: #b91c1c; }
+.tab.tab-rojo.active { color: #b91c1c; border-bottom-color: #b91c1c; }
+
+.card-rojo { border-left: 4px solid #b91c1c; }
+.card-rojo .card-head h2 { color: #b91c1c; }
+
+/* Tarjetas de servicio: se leen de un golpe y se tocan bien en una tableta */
+.grid-servicios {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.serv-card {
+  border: 1px solid var(--linea, #e2e8f0);
+  border-left: 4px solid #4A7D4D;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: #fff;
+  transition: transform .08s ease, box-shadow .12s ease;
+}
+.serv-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15,23,42,.10); }
+.serv-card.fuera { border-left-color: #d97706; }
+.serv-card.pendiente { border-left-color: #dc2626; }
+.serv-cod  { font-weight: 700; font-size: 14px; }
+.serv-area { font-size: 12px; color: #64748b; margin-top: 2px;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serv-pie  { display: flex; gap: 6px; align-items: center; margin-top: 8px;
+             font-size: 11.5px; color: #94a3b8; }
+
+/* Ficha del servicio — la misma en pantalla y al imprimir */
+.ficha-servicio h4 { margin: 18px 0 8px; font-size: 14px; color: #32539C; }
+.fs-cabecera {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+  padding: 12px 14px; border-radius: 10px; background: #EAF0F8;
+  border-left: 4px solid #4A7D4D;
+}
+.fs-cabecera.no-hecho { background: #fee2e2; border-left-color: #b91c1c; }
+.fs-titulo { font-size: 17px; font-weight: 700; }
+.fs-sub    { font-size: 12.5px; color: #475569; margin-top: 2px; }
+.fs-estado { text-align: right; font-weight: 700; color: #4A7D4D; font-size: 13px; white-space: nowrap; }
+.fs-estado.rojo { color: #b91c1c; }
+.fs-estado small { display: block; font-weight: 400; color: #475569; font-size: 11.5px; margin-top: 2px; }
+
+.fs-datos {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px 18px; margin-top: 14px;
+}
+.fs-datos > div { display: flex; flex-direction: column; }
+.fs-datos span   { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #94a3b8; }
+.fs-datos strong { font-size: 13.5px; }
+
+.fs-alerta {
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+  background: #fee2e2; color: #7f1d1d; font-size: 13.5px; line-height: 1.5;
+}
+.fs-tabla { width: 100%; }
+.fs-hallazgos { margin: 0; padding-left: 18px; font-size: 13.5px; }
+.fs-hallazgos li { margin-bottom: 8px; }
+
+/* Fotos: tamaño parejo y con pie. Un reporte de auditoría con fotos sin decir
+   de qué punto son no prueba nada, por eso el figcaption no es opcional. */
+.fs-fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.fs-fotos figure { margin: 0; }
+.fs-fotos img {
+  width: 100%; height: 150px; object-fit: cover;
+  border-radius: 8px; border: 1px solid #e2e8f0; display: block; background: #f1f5f9;
+}
+.fs-fotos figcaption { font-size: 11px; color: #94a3b8; margin-top: 4px; text-align: center; }
+
+/* Vista previa de un plano en PDF dentro del panel. Alto fijo y generoso: un
+   plano de hotel en un recuadro pequeño no se revisa, se adivina. */
+.plano-pdf { border: 1px solid var(--linea, #e2e8f0); border-radius: 10px; overflow: hidden; background: #f8fafc; }
+.plano-pdf iframe { width: 100%; height: 66vh; min-height: 460px; border: 0; display: block; }
+
+/* Bloque plegable de coordenadas al subir un plano */
+.bloque-geo { border: 1px solid var(--linea, #e2e8f0); border-radius: 10px; padding: 10px 12px; margin-top: 4px; }
+.bloque-geo summary { cursor: pointer; font-weight: 600; font-size: 14px; }

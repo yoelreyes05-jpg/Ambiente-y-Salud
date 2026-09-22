@@ -35,6 +35,67 @@ router.get("/", async (req, res) => {
   res.json((data || []).map((e) => ({ ...e, preguntas_total: conteo[e.id] || 0 })));
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDEN DE LAS RUTAS — no reordenar
+//
+// Todo lo de /preguntas/... va ARRIBA de /:id. Express resuelve por orden de
+// declaracion, asi que con /:id declarado primero, un
+// PUT /estrategias/preguntas/<uuid> entraba por /:id con id="preguntas": la
+// consulta buscaba una estrategia llamada "preguntas", no encontraba nada y la
+// edicion de la pregunta se perdia sin dar error visible. Ese era el bug de
+// "modifico la estrategia y no guarda".
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preguntas
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /estrategias/:id/preguntas — una, o varias de golpe
+router.post("/:id/preguntas", requireRol("operaciones", "comercial"), async (req, res) => {
+  const entrada = Array.isArray(req.body.preguntas) ? req.body.preguntas : [req.body];
+  const filas = entrada
+    .filter((p) => p && p.texto)
+    .map((p, i) => ({ ...p, estrategia_id: req.params.id, orden: p.orden ?? i }));
+
+  if (!filas.length) return res.status(400).json({ error: true, mensaje: "Se requiere al menos una pregunta con texto" });
+
+  const { data, error } = await supabase.from("asa_preguntas").insert(filas).select();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.status(201).json(data);
+});
+
+router.put("/preguntas/:preguntaId", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { id: _a, estrategia_id: _b, ...cambios } = req.body;
+  const { data, error } = await supabase
+    .from("asa_preguntas")
+    .update(cambios)
+    .eq("id", req.params.preguntaId)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json(data);
+});
+
+// Baja lógica: las inspecciones viejas guardan copia del texto de la pregunta,
+// así que un reporte antiguo sigue mostrando lo que realmente se preguntó.
+router.patch("/preguntas/:preguntaId", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { id: _a, estrategia_id: _b, ...cambios } = req.body;
+  const { data, error } = await supabase
+    .from("asa_preguntas")
+    .update(cambios)
+    .eq("id", req.params.preguntaId)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json(data);
+});
+
+router.delete("/preguntas/:preguntaId", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { error } = await supabase.from("asa_preguntas").update({ activa: false }).eq("id", req.params.preguntaId);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json({ ok: true });
+});
+
 // GET /estrategias/:id — con sus preguntas agrupadas por tipo de punto
 router.get("/:id", async (req, res) => {
   const [estrategia, preguntas, tipos] = await Promise.all([
@@ -89,49 +150,76 @@ router.post("/", requireRol("operaciones", "comercial"), async (req, res) => {
   res.status(201).json({ ...data, preguntas_creadas: aInsertar.length });
 });
 
-router.put("/:id", requireRol("operaciones", "comercial"), async (req, res) => {
-  const { id: _omit, ...cambios } = req.body;
-  const { data, error } = await supabase.from("asa_estrategias").update(cambios).eq("id", req.params.id).select().single();
-  if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.json(data);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Preguntas
-// ─────────────────────────────────────────────────────────────────────────────
-
-// POST /estrategias/:id/preguntas — una, o varias de golpe
-router.post("/:id/preguntas", requireRol("operaciones", "comercial"), async (req, res) => {
-  const entrada = Array.isArray(req.body.preguntas) ? req.body.preguntas : [req.body];
-  const filas = entrada
-    .filter((p) => p && p.texto)
-    .map((p, i) => ({ ...p, estrategia_id: req.params.id, orden: p.orden ?? i }));
-
-  if (!filas.length) return res.status(400).json({ error: true, mensaje: "Se requiere al menos una pregunta con texto" });
-
-  const { data, error } = await supabase.from("asa_preguntas").insert(filas).select();
-  if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.status(201).json(data);
-});
-
-router.put("/preguntas/:preguntaId", requireRol("operaciones", "comercial"), async (req, res) => {
-  const { id: _a, estrategia_id: _b, ...cambios } = req.body;
+async function actualizarEstrategia(req, res) {
+  const { id: _omit, preguntas: _p, preguntas_total: _pt, asa_clientes: _c, asa_sitios: _s, ...cambios } = req.body;
   const { data, error } = await supabase
-    .from("asa_preguntas")
-    .update(cambios)
-    .eq("id", req.params.preguntaId)
+    .from("asa_estrategias")
+    .update({ ...cambios, updated_at: new Date().toISOString() })
+    .eq("id", req.params.id)
+    .select();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  // .select() sin .single(): asi un id que no existe da 404 con mensaje, en vez
+  // del error crudo de PostgREST "0 rows" que no le dice nada al usuario.
+  if (!data || !data.length) {
+    return res.status(404).json({ error: true, mensaje: "La estrategia no existe o ya fue dada de baja" });
+  }
+  logAccion(req, { accion: "actualizar", modulo: "estrategias", registroId: req.params.id, descripcion: data[0].nombre });
+  res.json(data[0]);
+}
+
+router.put("/:id", requireRol("operaciones", "comercial"), actualizarEstrategia);
+router.patch("/:id", requireRol("operaciones", "comercial"), actualizarEstrategia);
+
+// DELETE /estrategias/:id — baja logica. Los puntos que la tenian asignada
+// quedan sin estrategia, y las inspecciones viejas no se tocan: guardan copia
+// del texto de cada pregunta, asi que un reporte de auditoria del ano pasado
+// sigue mostrando lo que realmente se pregunto.
+router.delete("/:id", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { data: enUso } = await supabase
+    .from("asa_puntos_control")
+    .select("id", { count: "exact", head: true })
+    .eq("estrategia_id", req.params.id)
+    .eq("activo", true);
+
+  const { error } = await supabase
+    .from("asa_estrategias")
+    .update({ activo: false })
+    .eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+
+  await supabase.from("asa_puntos_control").update({ estrategia_id: null }).eq("estrategia_id", req.params.id);
+  logAccion(req, { accion: "eliminar", modulo: "estrategias", registroId: req.params.id });
+  res.json({ ok: true, puntos_liberados: enUso ?? null });
+});
+
+// POST /estrategias/:id/duplicar — copia la estrategia con todas sus preguntas.
+// Es la salida limpia cuando una estrategia ya se uso en inspecciones y quieres
+// cambiarla sin tocar el historial: duplicas, ajustas la copia y reasignas.
+router.post("/:id/duplicar", requireRol("operaciones", "comercial"), async (req, res) => {
+  const { data: origen } = await supabase.from("asa_estrategias").select("*").eq("id", req.params.id).maybeSingle();
+  if (!origen) return res.status(404).json({ error: true, mensaje: "Estrategia no encontrada" });
+
+  const { id: _i, created_at: _c, updated_at: _u, ...base } = origen;
+  const { data: copia, error } = await supabase
+    .from("asa_estrategias")
+    .insert([{ ...base, nombre: req.body.nombre || `${origen.nombre} (copia)` }])
     .select()
     .single();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.json(data);
-});
 
-// Baja lógica: las inspecciones viejas guardan copia del texto de la pregunta,
-// así que un reporte antiguo sigue mostrando lo que realmente se preguntó.
-router.delete("/preguntas/:preguntaId", requireRol("operaciones", "comercial"), async (req, res) => {
-  const { error } = await supabase.from("asa_preguntas").update({ activa: false }).eq("id", req.params.preguntaId);
-  if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.json({ ok: true });
+  const { data: preguntas } = await supabase
+    .from("asa_preguntas")
+    .select("*")
+    .eq("estrategia_id", req.params.id)
+    .eq("activa", true);
+
+  if (preguntas?.length) {
+    await supabase.from("asa_preguntas").insert(
+      preguntas.map(({ id, estrategia_id, created_at, ...p }) => ({ ...p, estrategia_id: copia.id }))
+    );
+  }
+  logAccion(req, { accion: "crear", modulo: "estrategias", registroId: copia.id, descripcion: `Copia de ${origen.nombre}` });
+  res.status(201).json({ ...copia, preguntas_copiadas: preguntas?.length || 0 });
 });
 
 // POST /estrategias/plantilla-base — crea la estrategia estándar de ASA

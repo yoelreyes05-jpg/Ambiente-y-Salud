@@ -168,3 +168,12 @@ img{max-width:100%}
   .barra img{height:28px}
   .contenido{padding:14px 12px 36px}
 }
+
+/* Nota bajo los botones de reporte: explica qué trae el PDF antes de que el
+   encargado de calidad espere un minuto sin saber qué está pidiendo. */
+.nota-reporte {
+  margin: 8px 0 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--suave, #475569);
+}

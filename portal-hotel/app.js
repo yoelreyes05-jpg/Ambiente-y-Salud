@@ -245,11 +245,18 @@ async function vistaHistorial(cuerpo) {
         <option value="30">Últimos 30 días</option>
         <option value="90">Últimos 90 días</option>
       </select>
-      <button class="btn principal" id="btn-excel">Descargar en Excel</button>
+      <button class="btn principal" id="btn-pdf">Generar reporte (PDF)</button>
+      <button class="btn" id="btn-excel">Excel</button>
     </div>
+    <p class="nota-reporte">
+      El PDF trae el gráfico de barras del período, todas las revisiones con las
+      preguntas que el técnico verificó, las plagas contadas y sus fotos — y lo
+      que no se pudo hacer, con el motivo. Es el documento para auditoría.
+    </p>
     <div class="tarjeta" id="lista"><div class="cargando">Cargando…</div></div>`;
 
   $("#btn-excel").addEventListener("click", descargarExcel);
+  $("#btn-pdf").addEventListener("click", descargarReportePdf);
   $("#dias").addEventListener("change", cargar);
 
   async function cargar() {
@@ -315,6 +322,50 @@ async function vistaHistorial(cuerpo) {
     );
   }
   await cargar();
+}
+
+// El mismo reporte que genera ASA desde su panel, con la diferencia de que el
+// servidor limita la consulta a las plantas asignadas a esta cuenta: el hotel
+// solo puede sacar el suyo. Se arma en el servidor y no aquí para que sea
+// exactamente el mismo documento — un PDF del hotel que no cuadre con el de ASA
+// es una discusión asegurada.
+async function descargarReportePdf() {
+  const boton = $("#btn-pdf");
+  const original = boton.textContent;
+  const dias = Number($("#dias").value) || 30;
+  const desde = new Date(Date.now() - (dias - 1) * 86400000)
+    .toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+
+  boton.disabled = true;
+  boton.textContent = "Generando… puede tardar";
+  try {
+    const qs = new URLSearchParams({
+      sitio_id: PLANTA.id,
+      desde,
+      hasta: hoyLocal(),
+      agrupar: dias > 60 ? "semana" : "dia",
+    });
+    const res = await fetch(`${CONFIG.API_BASE}/reportes/pdf?${qs}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    if (!res.ok) {
+      let mensaje = `El servidor respondió ${res.status}`;
+      try { mensaje = (await res.json()).mensaje || mensaje; } catch {}
+      throw new Error(mensaje);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reporte-${PLANTA.nombre.replace(/\s+/g, "-").toLowerCase()}-${desde}-a-${hoyLocal()}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(`No se pudo generar el reporte: ${e.message}`);
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
 }
 
 async function descargarExcel() {

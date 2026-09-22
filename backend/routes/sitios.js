@@ -311,23 +311,88 @@ router.post("/areas/:areaId/fusionar", requireRol("operaciones"), async (req, re
 // ─────────────────────────────────────────────────────────────────────────────
 const BUCKET_PLANOS = "asa-planos";
 
+const TIPOS_PLANO = ["image/png", "image/jpeg", "image/webp", "image/svg+xml", "application/pdf"];
+
 async function asegurarBucket() {
   const { data } = await supabase.storage.getBucket(BUCKET_PLANOS);
-  if (data) return;
-  await supabase.storage.createBucket(BUCKET_PLANOS, {
-    public: true,
-    fileSizeLimit: 20 * 1024 * 1024,
-    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
-  });
+  if (!data) {
+    await supabase.storage.createBucket(BUCKET_PLANOS, {
+      public: true,
+      fileSizeLimit: 40 * 1024 * 1024,
+      allowedMimeTypes: TIPOS_PLANO,
+    });
+    return;
+  }
+  // El bucket ya existia de antes de que se aceptaran PDF. Si no los permite,
+  // se actualiza: sin esto, subir el mapa exportado de QGIS falla con un
+  // "mime type not supported" que no dice donde arreglarlo.
+  const permitidos = data.allowed_mime_types || data.allowedMimeTypes || null;
+  if (permitidos && !permitidos.includes("application/pdf")) {
+    await supabase.storage.updateBucket(BUCKET_PLANOS, {
+      public: true,
+      fileSizeLimit: 40 * 1024 * 1024,
+      allowedMimeTypes: TIPOS_PLANO,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Georreferencia de un PDF exportado de QGIS
+//
+// QGIS, al exportar con "Crear GeoPDF", mete en el documento un diccionario
+// /Measure con /GPTS: los cuatro vertices del mapa en grados (lat, lon), y
+// /BBox con el rectangulo que ocupan dentro de la pagina. Con eso se saca el
+// recuadro sin pedirle nada al usuario.
+//
+// Se lee con una expresion regular sobre el PDF en crudo y no con una libreria:
+// es un unico dato, siempre en el mismo formato, y meter un parser de PDF al
+// servidor por esto costaria mas de lo que resuelve. Si no aparece, no pasa
+// nada: el panel pide las cuatro coordenadas a mano.
+// ─────────────────────────────────────────────────────────────────────────────
+function leerGeoDePdf(binario) {
+  try {
+    const texto = binario.toString("latin1");
+    const m = /\/GPTS\s*\[([^\]]+)\]/.exec(texto);
+    if (!m) return null;
+
+    const nums = m[1].trim().split(/\s+/).map(Number).filter((n) => Number.isFinite(n));
+    // Vienen en pares lat lon, normalmente cuatro pares (las esquinas).
+    if (nums.length < 4 || nums.length % 2 !== 0) return null;
+
+    const lats = nums.filter((_, i) => i % 2 === 0);
+    const lons = nums.filter((_, i) => i % 2 === 1);
+    const geo = {
+      geo_norte: Math.max(...lats),
+      geo_sur: Math.min(...lats),
+      geo_este: Math.max(...lons),
+      geo_oeste: Math.min(...lons),
+      geo_fuente: "pdf",
+    };
+
+    // Coordenadas fuera de rango o un recuadro de area cero significan que se
+    // leyo otra cosa. Mejor no georreferenciar que poner al tecnico en el mar.
+    if (Math.abs(geo.geo_norte) > 90 || Math.abs(geo.geo_sur) > 90) return null;
+    if (Math.abs(geo.geo_este) > 180 || Math.abs(geo.geo_oeste) > 180) return null;
+    if (geo.geo_norte <= geo.geo_sur || geo.geo_este <= geo.geo_oeste) return null;
+    return geo;
+  } catch {
+    return null;
+  }
 }
 
 router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => {
   const sitio_id = req.params.id;
   if (!exigirSitioPermitido(req, res, sitio_id)) return;
 
-  const { nombre, archivo_base64, tipo_mime = "image/png", area_id, ancho_px, alto_px } = req.body;
+  const {
+    nombre, archivo_base64, tipo_mime = "image/png", area_id, ancho_px, alto_px,
+    geo_norte, geo_sur, geo_este, geo_oeste,
+  } = req.body;
   if (!nombre || !archivo_base64) {
     return res.status(400).json({ error: true, mensaje: "nombre y archivo_base64 son requeridos" });
+  }
+  if (!TIPOS_PLANO.includes(tipo_mime)) {
+    return res.status(400).json({ error: true, mensaje: `Tipo de archivo no aceptado (${tipo_mime}). Sube PNG, JPG, WEBP, SVG o PDF.` });
   }
 
   let binario;
@@ -337,8 +402,8 @@ router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => 
     return res.status(400).json({ error: true, mensaje: "El archivo no es base64 válido" });
   }
   if (!binario.length) return res.status(400).json({ error: true, mensaje: "El archivo llegó vacío" });
-  if (binario.length > 20 * 1024 * 1024) {
-    return res.status(400).json({ error: true, mensaje: "El plano no puede pasar de 20 MB" });
+  if (binario.length > 40 * 1024 * 1024) {
+    return res.status(400).json({ error: true, mensaje: "El plano no puede pasar de 40 MB" });
   }
 
   try {
@@ -347,7 +412,25 @@ router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => 
     return res.status(500).json({ error: true, mensaje: `No se pudo preparar el almacenamiento: ${e.message}` });
   }
 
-  const ext = (tipo_mime.split("/")[1] || "png").replace("svg+xml", "svg");
+  const esPdf = tipo_mime === "application/pdf";
+  const ext = esPdf ? "pdf" : (tipo_mime.split("/")[1] || "png").replace("svg+xml", "svg");
+
+  // Recuadro de coordenadas: primero lo que traiga el propio PDF, y si no, lo
+  // que haya escrito el usuario a mano. Los cuatro o ninguno (lo exige la base):
+  // un recuadro a medias pondria al tecnico en el lugar equivocado con toda
+  // confianza, que es peor que no ubicarlo.
+  let geo = esPdf ? leerGeoDePdf(binario) : null;
+  const manual = [geo_norte, geo_sur, geo_este, geo_oeste].map((v) => (v === "" || v === undefined || v === null ? null : Number(v)));
+  if (!geo && manual.every((v) => v !== null && Number.isFinite(v))) {
+    const [n, sur, e2, o] = manual;
+    if (n <= sur || e2 <= o) {
+      return res.status(400).json({
+        error: true,
+        mensaje: "El recuadro esta al reves: norte tiene que ser mayor que sur, y este mayor que oeste (en el pais las longitudes son negativas, -68.4 es mayor que -68.5).",
+      });
+    }
+    geo = { geo_norte: n, geo_sur: sur, geo_este: e2, geo_oeste: o, geo_fuente: "manual" };
+  }
   const ruta = `${sitio_id}/${Date.now()}-${String(nombre).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}.${ext}`;
 
   const { error: errSubida } = await supabase.storage
@@ -366,8 +449,11 @@ router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => 
       area_id: area_id || null,
       nombre,
       imagen_url: pub.publicUrl,
+      tipo_archivo: esPdf ? "pdf" : "imagen",
+      tipo_mime,
       ancho_px: ancho_px || null,
       alto_px: alto_px || null,
+      ...(geo || {}),
     }])
     .select()
     .single();
@@ -377,7 +463,53 @@ router.post("/:id/planos/subir", requireRol("operaciones"), async (req, res) => 
     return res.status(500).json({ error: true, mensaje: error.message });
   }
 
-  res.status(201).json(data);
+  res.status(201).json({
+    ...data,
+    aviso_georreferencia: esPdf && !geo
+      ? "El PDF no trae la georreferencia de QGIS (exportalo marcando 'Crear GeoPDF') y no se escribieron las coordenadas a mano. El plano funciona, pero la app del tecnico no podra ubicarlo con el GPS hasta que le pongas el recuadro."
+      : null,
+  });
+});
+
+// PATCH /sitios/planos/:planoId — nombre, area y el recuadro de coordenadas
+//
+// Es la segunda oportunidad: si el PDF se subio sin georreferencia, aqui se le
+// escriben las cuatro coordenadas sin tener que volver a subir el archivo.
+router.patch("/planos/:planoId", requireRol("operaciones"), async (req, res) => {
+  const cambios = {};
+  if (req.body.nombre !== undefined) cambios.nombre = String(req.body.nombre).trim();
+  if (req.body.area_id !== undefined) cambios.area_id = req.body.area_id || null;
+  if (req.body.orden !== undefined) cambios.orden = Number(req.body.orden) || 0;
+  if (req.body.rotacion_grados !== undefined) cambios.rotacion_grados = Number(req.body.rotacion_grados) || 0;
+
+  const geo = ["geo_norte", "geo_sur", "geo_este", "geo_oeste"];
+  if (geo.some((k) => req.body[k] !== undefined)) {
+    const vals = geo.map((k) => (req.body[k] === "" || req.body[k] === null ? null : Number(req.body[k])));
+    if (vals.every((v) => v === null)) {
+      geo.forEach((k) => (cambios[k] = null));
+      cambios.geo_fuente = null;
+    } else if (vals.every((v) => v !== null && Number.isFinite(v))) {
+      const [n, sur, e2, o] = vals;
+      if (n <= sur || e2 <= o) {
+        return res.status(400).json({
+          error: true,
+          mensaje: "El recuadro esta al reves: norte mayor que sur, y este mayor que oeste.",
+        });
+      }
+      geo.forEach((k, i) => (cambios[k] = vals[i]));
+      cambios.geo_fuente = "manual";
+    } else {
+      return res.status(400).json({ error: true, mensaje: "Hacen falta las cuatro coordenadas, o ninguna." });
+    }
+  }
+
+  if (!Object.keys(cambios).length) return res.status(400).json({ error: true, mensaje: "Nada que cambiar" });
+
+  const { data, error } = await supabase.from("asa_planos").update(cambios).eq("id", req.params.planoId).select();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!data?.length) return res.status(404).json({ error: true, mensaje: "Plano no encontrado" });
+  logAccion(req, { accion: "actualizar", modulo: "planos", registroId: req.params.planoId, descripcion: data[0].nombre });
+  res.json(data[0]);
 });
 
 // DELETE /sitios/planos/:planoId — baja lógica

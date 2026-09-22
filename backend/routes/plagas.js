@@ -3,12 +3,47 @@
 // sistema genera automáticamente una Orden de Trabajo (OT).
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
+import { requireRol } from "../middleware/auth.js";
 import { logAccion } from "../lib/auditoria.js";
 import { filtrarPorSitio, exigirSitioPermitido } from "../middleware/auth.js";
 
 const router = express.Router();
 
 // ── Contratos recurrentes ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /plagas/catalogo — el catalogo de plagas (asa_plagas)
+//
+// Lo necesita la app del tecnico para que pueda decir QUE encontro y CUANTAS,
+// no solo "nivel de actividad: alto". Sin esto, asa_capturas se queda vacia y
+// el reporte del hotel no puede mostrar tendencia por plaga, que es lo primero
+// que piden en auditoria.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/catalogo", async (req, res) => {
+  let q = supabase.from("asa_plagas").select("*").order("orden").order("nombre");
+  if (req.query.todas !== "true") q = q.eq("activo", true);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.json(data || []);
+});
+
+// POST /plagas/catalogo — agregar una plaga que no estaba en la lista
+router.post("/catalogo", requireRol("operaciones"), async (req, res) => {
+  const { codigo, nombre } = req.body;
+  if (!codigo || !nombre) return res.status(400).json({ error: true, mensaje: "codigo y nombre son requeridos" });
+  const { data, error } = await supabase.from("asa_plagas").insert([req.body]).select().single();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  res.status(201).json(data);
+});
+
+// PATCH /plagas/catalogo/:id — umbral, color, nombre, o darla de baja
+router.patch("/catalogo/:id", requireRol("operaciones"), async (req, res) => {
+  const { id: _o, ...cambios } = req.body;
+  const { data, error } = await supabase.from("asa_plagas").update(cambios).eq("id", req.params.id).select();
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!data?.length) return res.status(404).json({ error: true, mensaje: "Plaga no encontrada" });
+  res.json(data[0]);
+});
+
 router.get("/contratos", async (req, res) => {
   let q = supabase.from("asa_contratos_plagas").select("*, asa_sitios(nombre, direccion)").eq("activo", true);
   if (req.query.cliente_id) q = q.eq("cliente_id", req.query.cliente_id);

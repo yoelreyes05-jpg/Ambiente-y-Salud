@@ -183,8 +183,9 @@ function pantallaLogin(mensaje) {
   app().innerHTML = `
     <div class="contenido" style="padding-top:56px;max-width:420px">
       <div style="text-align:center;margin-bottom:36px">
-        <div style="font-size:60px;line-height:1">🌿</div>
-        <h1 style="margin:10px 0 2px;font-size:24px">${esc(CONFIG.NOMBRE)}</h1>
+        <img src="logo-asa.png" alt="${esc(CONFIG.EMPRESA)}"
+             style="width:min(230px,70vw);height:auto;display:block;margin:0 auto" />
+        <h1 style="margin:14px 0 2px;font-size:24px">${esc(CONFIG.NOMBRE)}</h1>
         <p style="margin:0;color:var(--gris-600);font-size:14px">${esc(CONFIG.EMPRESA)}</p>
       </div>
       ${mensaje ? `<div class="tarjeta" style="background:var(--rojo-claro);color:var(--rojo)">${esc(mensaje)}</div>` : ""}
@@ -302,6 +303,7 @@ function pintarEstadoConexion() {
 function abrirMenu() {
   const opciones = [
     ["🗺️ Mapa del hotel", () => { location.hash = "#/plano"; }],
+    ["🚐 Chequeo del vehículo", () => { location.hash = "#/chequeo"; }],
     ["🏨 Cambiar de hotel", () => { location.hash = ""; elegirHotel(); }],
     ["↻ Sincronizar ahora", () => sincronizar(false)],
     ["🚪 Cerrar sesión", () => cerrarSesion()],
@@ -544,7 +546,12 @@ function pantallaBuscar() {
   cuerpo.className = "contenido";
   cuerpo.innerHTML = `
     <div class="campo">
-      <input type="search" id="q" placeholder="Código, nombre o número de habitación" autocomplete="off" autofocus />
+      <input type="search" id="q" placeholder="Área, tipo, código o habitación" autocomplete="off" autofocus />
+      <small class="ayuda">
+        Busca como hablas: escribe <strong>cocina</strong> y salen los puntos de las
+        cocinas, <strong>aerosol</strong> y salen los dispensadores, <strong>4312</strong>
+        y sale esa habitación.
+      </small>
     </div>
     <div id="resultados"></div>`;
   app().appendChild(cuerpo);
@@ -553,8 +560,10 @@ function pantallaBuscar() {
   $("#q").addEventListener("input", (e) => {
     clearTimeout(temporizador);
     const termino = e.target.value.trim();
-    if (termino.length < 2) return ($("#resultados").innerHTML = "");
-    temporizador = setTimeout(() => buscar(termino), 280);
+    // Desde UNA letra: el servidor devuelve los que EMPIEZAN con ella, así que
+    // no hay riesgo de que una sola letra traiga medio hotel.
+    if (!termino) return ($("#resultados").innerHTML = "");
+    temporizador = setTimeout(() => buscar(termino), termino.length === 1 ? 420 : 260);
   });
 
   async function buscar(termino) {
@@ -564,51 +573,111 @@ function pantallaBuscar() {
     try {
       lista = await GET(`/puntos/buscar?q=${encodeURIComponent(termino)}&sitio_id=${SITIO?.id || ""}`);
     } catch {
-      // Sin señal: se busca dentro de la ruta guardada en el teléfono
-      const ruta = await leerCache(`ruta:${SITIO?.id}:${hoy()}`);
-      const todos = [...(ruta?.realizados || []), ...(ruta?.pendientes || [])];
-      const t = termino.toLowerCase();
-      lista = todos
-        .filter((p) =>
-          [p.codigo_visible, p.punto_nombre, p.numero_habitacion].some((v) => String(v || "").toLowerCase().includes(t))
-        )
-        .map((p) => ({
-          qr_token: p.qr_token,
-          codigo_visible: p.codigo_visible,
-          nombre: p.punto_nombre,
-          numero_habitacion: p.numero_habitacion,
-          asa_areas: { nombre: p.area_nombre },
-          asa_tipos_punto: { nombre: p.tipo_nombre, icono: p.tipo_icono },
-        }));
+      lista = await buscarEnCache(termino);
     }
 
     if (!lista.length) {
-      caja.innerHTML = `<div class="vacio"><span class="emoji">🔍</span>Nada con "${esc(termino)}".</div>`;
+      caja.innerHTML = `<div class="vacio"><span class="emoji">🔍</span>
+        Nada con "${esc(termino)}".<br><small>Prueba con el área ("cocina", "lobby"),
+        con el tipo ("cebadero", "lámpara") o con el número de la habitación.</small></div>`;
       return;
     }
 
-    caja.innerHTML = lista
-      .map(
-        (p) => `
-        <div class="punto" data-token="${esc(p.qr_token)}">
-          <span class="icono">${p.asa_tipos_punto?.icono || "📍"}</span>
-          <div class="texto">
-            <div class="codigo">${esc(p.codigo_visible)}</div>
-            <div class="detalle">${esc([p.numero_habitacion ? `Hab. ${p.numero_habitacion}` : p.nombre, p.asa_areas?.nombre].filter(Boolean).join(" · "))}</div>
-          </div>
-          <span class="marca">›</span>
-        </div>`
-      )
-      .join("");
+    // Agrupado por área: cuando la búsqueda devuelve 40 cebaderos, verlos en un
+    // chorro plano no dice nada; por área sí se sabe dónde hay que caminar.
+    const porArea = {};
+    for (const p of lista) {
+      const area = p.asa_areas?.nombre || "Sin área";
+      (porArea[area] = porArea[area] || []).push(p);
+    }
+
+    caja.innerHTML = `
+      <p class="resumen-busqueda">
+        ${lista.length} punto${lista.length === 1 ? "" : "s"}
+        en ${Object.keys(porArea).length} área${Object.keys(porArea).length === 1 ? "" : "s"}
+      </p>
+      ${Object.entries(porArea).map(([area, puntos]) => `
+        <div class="grupo-area">${esc(area)} · ${puntos.length}</div>
+        ${puntos.map((p) => `
+          <div class="punto" data-token="${esc(p.qr_token)}">
+            <span class="icono">${p.asa_tipos_punto?.icono || "📍"}</span>
+            <div class="texto">
+              <div class="codigo">${esc(p.numero_habitacion ? `Hab. ${p.numero_habitacion}` : p.codigo_visible)}</div>
+              <div class="detalle">${esc([
+                p.numero_habitacion ? p.codigo_visible : p.nombre,
+                p.asa_tipos_punto?.nombre,
+                p.ubicacion_descripcion,
+              ].filter(Boolean).join(" · "))}</div>
+            </div>
+            <span class="marca">›</span>
+          </div>`).join("")}
+      `).join("")}`;
 
     caja.querySelectorAll("[data-token]").forEach((el) =>
       el.addEventListener("click", () => (location.hash = `#/p/${el.dataset.token}`))
     );
   }
+
+  // Sin señal se busca dentro de la ruta guardada en el teléfono, con las
+  // mismas reglas: área, tipo, código, habitación y ubicación.
+  async function buscarEnCache(termino) {
+    const ruta = await leerCache(`ruta:${SITIO?.id}:${hoy()}`);
+    const todos = [...(ruta?.realizados || []), ...(ruta?.pendientes || [])];
+    const t = termino.toLowerCase();
+    const coincide = (v) => String(v || "").toLowerCase()[termino.length === 1 ? "startsWith" : "includes"](t);
+
+    return todos
+      .filter((p) => [p.codigo_visible, p.punto_nombre, p.numero_habitacion, p.area_nombre, p.tipo_nombre, p.ubicacion_descripcion].some(coincide))
+      .map((p) => ({
+        qr_token: p.qr_token,
+        codigo_visible: p.codigo_visible,
+        nombre: p.punto_nombre,
+        numero_habitacion: p.numero_habitacion,
+        ubicacion_descripcion: p.ubicacion_descripcion,
+        asa_areas: { nombre: p.area_nombre },
+        asa_tipos_punto: { nombre: p.tipo_nombre, icono: p.tipo_icono },
+      }));
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Ficha del punto + checklist
+// ─────────────────────────────────────────────────────────────────────────
+// Catalogo de plagas
+//
+// El tecnico tiene que poder decir QUE encontro y CUANTAS, no solo "actividad
+// alta". Sin eso, el reporte del hotel no puede mostrar tendencia por plaga,
+// que es lo primero que piden en auditoria.
+//
+// Se guarda en cache: en un sotano sin senal el catalogo tiene que estar ahi
+// igual, porque si no el tecnico no puede reportar lo que vio.
+// ─────────────────────────────────────────────────────────────────────────
+let PLAGAS = null;
+
+async function catalogoPlagas() {
+  if (PLAGAS) return PLAGAS;
+  try {
+    PLAGAS = await GET("/plagas/catalogo");
+    await guardarCache("plagas", PLAGAS);
+  } catch {
+    PLAGAS = (await leerCache("plagas")) || [];
+  }
+  return PLAGAS;
+}
+
+// Los motivos por los que un servicio no se pudo hacer, en el idioma del
+// tecnico. El backend guarda la clave; aqui se lee lo de la derecha.
+const MOTIVOS = [
+  ["huesped_en_habitacion", "El huesped estaba dentro"],
+  ["permiso_denegado", "El hotel no autorizo"],
+  ["sin_llave", "No aparecio quien abriera"],
+  ["area_ocupada", "El area estaba ocupada"],
+  ["evento_en_curso", "Habia un evento"],
+  ["en_mantenimiento", "En obra o mantenimiento"],
+  ["punto_inaccesible", "Bloqueado, no se llega"],
+  ["otro", "Otro motivo"],
+];
+
 // ─────────────────────────────────────────────────────────────────────────
 async function pantallaPunto(token) {
   encabezado("Punto de control", SITIO?.nombre);
@@ -661,10 +730,10 @@ async function pantallaPunto(token) {
     <form id="form-inspeccion"></form>`;
 
   $("#ver-plano")?.addEventListener("click", () => (location.hash = `#/plano/${punto.id}`));
-  pintarFormulario($("#form-inspeccion"), punto);
+  pintarFormulario($("#form-inspeccion"), punto, await catalogoPlagas());
 }
 
-function pintarFormulario(form, punto) {
+function pintarFormulario(form, punto, plagas = []) {
   const preguntas = punto.preguntas || [];
 
   form.innerHTML = `
@@ -680,7 +749,16 @@ function pintarFormulario(form, punto) {
       ], "ok", "dos")}
     </div>
 
-    <div class="campo">
+    <!-- Solo aparece si marco "No pude entrar". El motivo es obligatorio:
+         "no se hizo" sin decir por que es justo lo que el hotel discute. -->
+    <div class="campo" id="caja-motivo" style="display:none">
+      <label>¿Por qué no se pudo hacer? <span class="obligatorio">*</span></label>
+      ${botonera("motivo_no_realizado", MOTIVOS, null, "dos")}
+      <input type="text" id="impedido_por" placeholder="¿Con quién hablaste? (nombre y puesto)"
+             style="margin-top:10px" />
+    </div>
+
+    <div class="campo" id="caja-actividad">
       <label>Nivel de actividad</label>
       ${botonera("nivel_actividad", [
         ["ninguna", "Ninguna"],
@@ -689,6 +767,22 @@ function pintarFormulario(form, punto) {
         ["alto", "Alta"],
       ], "ninguna", "dos")}
     </div>
+
+    ${plagas.length ? `
+    <div class="campo" id="caja-plagas">
+      <label>¿Qué encontraste y cuántas?</label>
+      <div class="plagas">
+        ${plagas.map((pl) => `
+          <div class="plaga" data-plaga="${esc(pl.id)}" data-cant="0">
+            <span class="pl-ic">${esc(pl.icono || "•")}</span>
+            <span class="pl-nom">${esc(pl.nombre)}</span>
+            <button type="button" class="pl-btn" data-paso="-1">−</button>
+            <span class="pl-cant">0</span>
+            <button type="button" class="pl-btn" data-paso="1">+</button>
+          </div>`).join("")}
+      </div>
+      <small class="ayuda">Deja en cero lo que no encontraste. Solo se guarda lo que pasó de cero.</small>
+    </div>` : ""}
 
     ${preguntas.length ? `<div class="grupo-area">Checklist${punto.estrategia_id ? "" : ""}</div>` : ""}
     ${preguntas.map(campoPregunta).join("")}
@@ -721,6 +815,38 @@ function pintarFormulario(form, punto) {
     });
   });
 
+  // Al marcar "No pude entrar" el formulario cambia de cara: pide el motivo y
+  // esconde lo que ya no aplica (nivel de actividad y conteo de plagas de un
+  // punto al que no se entro). Asi no quedan filas contradictorias.
+  const grupoEstado = form.querySelector('[data-grupo="estado_punto"]');
+  const sincronizarCaras = () => {
+    const noEntro = grupoEstado.dataset.valor === "no_accesible";
+    form.querySelector("#caja-motivo").style.display = noEntro ? "" : "none";
+    form.querySelector("#caja-actividad").style.display = noEntro ? "none" : "";
+    const cajaPlagas = form.querySelector("#caja-plagas");
+    if (cajaPlagas) cajaPlagas.style.display = noEntro ? "none" : "";
+  };
+  grupoEstado.addEventListener("click", () => setTimeout(sincronizarCaras, 0));
+  sincronizarCaras();
+
+  // Contadores de plagas: a toques, sin teclado. Un toque largo no hace falta;
+  // para cantidades grandes (una lampara cargada de moscas) el paso sube solo.
+  form.querySelectorAll(".plaga").forEach((fila) => {
+    const salida = fila.querySelector(".pl-cant");
+    fila.querySelectorAll(".pl-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        const actual = Number(fila.dataset.cant) || 0;
+        // Paso creciente: 1 en 1 hasta 10, de 5 en 5 hasta 50, de 10 en 10 despues.
+        const paso = Number(b.dataset.paso) * (actual >= 50 ? 10 : actual >= 10 ? 5 : 1);
+        const nuevo = Math.max(0, actual + paso);
+        fila.dataset.cant = String(nuevo);
+        salida.textContent = String(nuevo);
+        fila.classList.toggle("con-algo", nuevo > 0);
+        vibrar(10);
+      })
+    );
+  });
+
   // Fotos: se guardan como data URL para que sobrevivan sin señal en la cola
   const fotos = [];
   form.querySelector("#fotos").addEventListener("change", async (e) => {
@@ -739,9 +865,19 @@ function pintarFormulario(form, punto) {
     e.preventDefault();
     const boton = form.querySelector("#guardar");
 
+    const estado = grupoEstado.dataset.valor || "ok";
+    const noEntro = estado === "no_accesible";
+    const motivo = form.querySelector('[data-grupo="motivo_no_realizado"]').dataset.valor || null;
+    if (noEntro && !motivo) return aviso("Dime por qué no se pudo hacer", "error");
+
+    const capturas = [...form.querySelectorAll(".plaga")]
+      .map((f) => ({ plaga_id: f.dataset.plaga, cantidad: Number(f.dataset.cant) || 0 }))
+      .filter((c) => c.cantidad > 0);
+
     const respuestas = [];
     let falta = null;
     for (const p of preguntas) {
+      if (noEntro) break;   // no se entro: no hay checklist que responder
       const valor = leerRespuesta(form, p);
       if (p.obligatoria && (valor === null || valor === "")) {
         falta ||= p.texto;
@@ -762,12 +898,17 @@ function pintarFormulario(form, punto) {
 
     const inspeccion = {
       punto_id: punto.id,
-      estado_punto: form.querySelector('[data-grupo="estado_punto"]').dataset.valor || "ok",
-      nivel_actividad: form.querySelector('[data-grupo="nivel_actividad"]').dataset.valor || "ninguna",
+      estado_punto: estado,
+      nivel_actividad: noEntro
+        ? "ninguna"
+        : form.querySelector('[data-grupo="nivel_actividad"]').dataset.valor || "ninguna",
+      motivo_no_realizado: noEntro ? motivo : null,
+      impedido_por: noEntro ? (form.querySelector("#impedido_por").value.trim() || null) : null,
       notas: form.querySelector("#notas").value.trim() || null,
       fotos,
       metodo_acceso: sessionStorage.getItem("asa_via") || "qr",
       respuestas,
+      capturas: noEntro ? [] : capturas,
     };
 
     boton.disabled = true;
@@ -776,7 +917,7 @@ function pintarFormulario(form, punto) {
     try {
       if (navigator.onLine) {
         await POST("/inspecciones", inspeccion);
-        aviso("Inspección registrada ✓", "exito");
+        aviso(noEntro ? "Reportado como no realizado ✓" : "Inspección registrada ✓", "exito");
       } else {
         await encolar(inspeccion);
         aviso("Guardada en el teléfono — se enviará al haber señal", "exito");
@@ -858,100 +999,8 @@ function reducirImagen(archivo, maxLado = 1280, calidad = 0.7) {
 // ─────────────────────────────────────────────────────────────────────────
 // Plano: dónde queda el punto que el técnico no conoce
 // ─────────────────────────────────────────────────────────────────────────
-async function pantallaPlano(puntoId) {
-  encabezado("Ubicación", SITIO?.nombre);
-  const cuerpo = document.createElement("div");
-  cuerpo.className = "contenido";
-  cuerpo.innerHTML = `<div class="cargando">Cargando plano…</div>`;
-  app().appendChild(cuerpo);
-
-  let planos;
-  try {
-    planos = await GET(`/sitios/${SITIO.id}/planos`);
-    await guardarCache(`planos:${SITIO.id}`, planos);
-  } catch {
-    planos = (await leerCache(`planos:${SITIO.id}`)) || [];
-  }
-
-  // Sin puntoId el técnico entró por el menú ("no sé dónde queda esto"):
-  // se abre el primer plano y puede cambiar entre ellos.
-  let plano = puntoId
-    ? planos.find((pl) => pl.puntos?.some((p) => p.id === puntoId)) || planos[0]
-    : planos[0];
-  if (!plano) {
-    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">🗺️</span>Este hotel todavía no tiene planos cargados.</div>`;
-    return;
-  }
-
-  const selector =
-    planos.length > 1
-      ? `<select id="sel-plano" class="sel-plano">
-           ${planos
-             .map((pl) => `<option value="${pl.id}"${pl.id === plano.id ? " selected" : ""}>${esc(pl.nombre)}</option>`)
-             .join("")}
-         </select>`
-      : "";
-
-  cuerpo.innerHTML = `
-    <div class="tarjeta">
-      <h2>${esc(plano.nombre)}</h2>
-      <p>${puntoId ? "El punto que buscas está resaltado. Toca un pin para abrirlo." : "Toca un pin para abrir ese punto."}</p>
-      ${selector}
-    </div>
-    <div class="plano" id="plano">
-      <img src="${esc(plano.imagen_url)}" alt="${esc(plano.nombre)}" />
-      ${(plano.puntos || [])
-        .filter((p) => p.plano_x != null && p.plano_y != null)
-        .map(
-          (p) => `
-          <div class="pin ${p.id === puntoId ? "destacado" : ""}"
-               style="left:${p.plano_x}%;top:${p.plano_y}%;background:${esc(p.asa_tipos_punto?.color || "#475569")}"
-               data-token="${esc(p.qr_token)}" title="${esc(p.codigo_visible)}">
-            ${p.asa_tipos_punto?.icono || ""}
-          </div>`
-        )
-        .join("")}
-    </div>`;
-
-  cuerpo.querySelectorAll(".pin").forEach((pin) =>
-    pin.addEventListener("click", () => (location.hash = `#/p/${pin.dataset.token}`))
-  );
-
-  const sel = cuerpo.querySelector("#sel-plano");
-  if (sel) {
-    sel.addEventListener("change", () => {
-      // Se vuelve a pintar entero: son pocos pines y así no hay estado a medias
-      plano = planos.find((pl) => pl.id === sel.value) || plano;
-      pantallaPlanoPintar(cuerpo, plano, puntoId, planos);
-    });
-  }
-}
-
-// Repinta el lienzo del plano sin volver a pedir nada al servidor
-function pantallaPlanoPintar(cuerpo, plano, puntoId, planos) {
-  const lienzo = cuerpo.querySelector("#plano");
-  const titulo = cuerpo.querySelector(".tarjeta h2");
-  if (titulo) titulo.textContent = plano.nombre;
-  if (!lienzo) return;
-
-  lienzo.innerHTML = `
-    <img src="${esc(plano.imagen_url)}" alt="${esc(plano.nombre)}" />
-    ${(plano.puntos || [])
-      .filter((p) => p.plano_x != null && p.plano_y != null)
-      .map(
-        (p) => `
-        <div class="pin ${p.id === puntoId ? "destacado" : ""}"
-             style="left:${p.plano_x}%;top:${p.plano_y}%;background:${esc(p.asa_tipos_punto?.color || "#475569")}"
-             data-token="${esc(p.qr_token)}" title="${esc(p.codigo_visible)}">
-          ${p.asa_tipos_punto?.icono || ""}
-        </div>`
-      )
-      .join("")}`;
-
-  lienzo.querySelectorAll(".pin").forEach((pin) =>
-    pin.addEventListener("click", () => (location.hash = `#/p/${pin.dataset.token}`))
-  );
-}
+// La pantalla del mapa vive en mapa.js: renderiza PDF con zoom y ubica al
+// tecnico con el GPS encima del plano.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Enrutador
@@ -977,6 +1026,9 @@ function enrutar() {
     return pantallaPunto(ruta.slice(2));
   }
   if (ruta === "plano") return pantallaPlano(null);
+  // El chequeo vehicular no depende del hotel elegido: es del vehículo, no de
+  // la planta, así que va antes de la comprobación de SITIO de más abajo.
+  if (ruta === "chequeo") return pantallaChequeo();
   if (ruta.startsWith("plano/")) return pantallaPlano(ruta.slice(6));
   if (ruta === "escanear") return pantallaEscanear();
   if (ruta === "buscar") {

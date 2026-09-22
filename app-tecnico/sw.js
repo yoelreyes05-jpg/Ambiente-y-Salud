@@ -11,15 +11,23 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v1";
+const VERSION = "asa-tecnico-v4";
 const CAPARAZON = [
   "./",
   "./index.html",
   "./estilos.css",
   "./app.js",
+  "./mapa.js",
+  "./chequeo.js",
   "./config.js",
   "./manifest.json",
+  "./logo-asa.png",
   "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js",
+  // Visor de PDF para los mapas. Se guarda con el caparazón porque el plano se
+  // consulta justo donde no hay señal: sótanos, cuartos de máquinas, áreas
+  // verdes. Sin esto, el mapa solo abriría con cobertura.
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
 ];
 
 self.addEventListener("install", (e) => {
@@ -54,7 +62,8 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   const esAPI = url.pathname.startsWith("/puntos") || url.pathname.startsWith("/inspecciones") ||
                 url.pathname.startsWith("/sitios") || url.pathname.startsWith("/usuarios") ||
-                url.pathname.startsWith("/hallazgos");
+                url.pathname.startsWith("/hallazgos") || url.pathname.startsWith("/flota") ||
+                url.pathname.startsWith("/plagas");
   if (esAPI) return; // la API va directo a la red; de lo offline se encarga app.js
 
   // Red primero para el caparazón: si hay señal, el técnico tiene la versión

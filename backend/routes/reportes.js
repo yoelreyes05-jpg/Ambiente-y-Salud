@@ -6,6 +6,8 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { exigirSitioPermitido, filtrarPorSitio } from "../middleware/auth.js";
+import { construirReporte } from "../lib/reportePdf.js";
+import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 
@@ -361,6 +363,260 @@ router.get("/habitaciones", async (req, res) => {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([fecha, lista]) => ({ fecha, cantidad: lista.length, habitaciones: lista })),
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EVIDENCIA PARA AUDITORIA
+//
+// GET /reportes/evidencia?sitio_id=&desde=&hasta=&agrupar=&detalle=
+// GET /reportes/pdf?...   (lo mismo, ya armado en PDF)
+//
+// Es el reporte que el hotel pide cuando llega una auditoria: que se hizo, quien
+// lo hizo, que se encontro, con que evidencia, y que NO se pudo hacer y por que.
+//
+// Las dos rutas usan la MISMA consulta (`juntarEvidencia`). Asi el PDF nunca
+// dice algo distinto de lo que muestra la pantalla, que es como se pierde la
+// confianza en un reporte.
+// ═════════════════════════════════════════════════════════════════════════════
+async function juntarEvidencia(req) {
+  const { sitio_id } = req.query;
+  const desde = req.query.desde || haceDias(30);
+  const hasta = req.query.hasta || hoyRD();
+  const agrupar = req.query.agrupar || "dia";
+  const conDetalle = req.query.detalle !== "no";
+
+  // Tope de servicios con detalle completo. Sin tope, pedir un ano de una planta
+  // de 600 puntos arma un PDF de miles de paginas que nadie abre y que tumba el
+  // servidor mientras lo genera.
+  const tope = Math.min(Number(req.query.maximo) || 400, 1200);
+
+  let qEmpresa = supabase.from("asa_config_sistema").select("valor").eq("clave", "empresa").maybeSingle();
+  let qSitio = sitio_id
+    ? supabase.from("asa_sitios").select("nombre, direccion, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  let qServicios = supabase
+    .from("asa_v_servicios_dia")
+    .select("*")
+    .gte("fecha_local", desde)
+    .lte("fecha_local", hasta)
+    .order("fecha", { ascending: true })
+    .limit(tope);
+  let qPuntos = supabase.from("asa_v_puntos_estado").select("vencido, frecuencia, sitio_id");
+  let qHallazgos = supabase
+    .from("asa_hallazgos")
+    .select("id, titulo, descripcion, severidad, responsable, estado, fecha_reporte, fecha_limite, sitio_id, asa_areas(nombre)")
+    .gte("fecha_reporte", desde)
+    .order("fecha_reporte", { ascending: false });
+
+  if (sitio_id) {
+    qServicios = qServicios.eq("sitio_id", sitio_id);
+    qPuntos = qPuntos.eq("sitio_id", sitio_id);
+    qHallazgos = qHallazgos.eq("sitio_id", sitio_id);
+  } else {
+    qServicios = filtrarPorSitio(qServicios, req);
+    qPuntos = filtrarPorSitio(qPuntos, req);
+    qHallazgos = filtrarPorSitio(qHallazgos, req);
+  }
+
+  const [empresa, sitio, servicios, puntos, hallazgos] = await Promise.all([
+    qEmpresa, qSitio, qServicios, qPuntos, qHallazgos,
+  ]);
+  if (servicios.error) throw new Error(servicios.error.message);
+
+  const S = servicios.data || [];
+  const realizados = S.filter((x) => !x.no_realizado);
+  const noRealizados = S.filter((x) => x.no_realizado);
+  const ids = S.map((x) => x.inspeccion_id);
+
+  // ── Respuestas, capturas y fotos de esos servicios ────────────────────────
+  // En bloques de 200 ids: un `in` con 400 uuid pasa del largo maximo de URL
+  // que acepta PostgREST y la consulta vuelve con un 414 que no dice nada.
+  const respuestasPorInsp = new Map();
+  const capturasPorInsp = new Map();
+  const fotosPorInsp = new Map();
+
+  if (conDetalle && ids.length) {
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const [resp, caps, insp] = await Promise.all([
+        supabase.from("asa_inspeccion_respuestas").select("*").in("inspeccion_id", lote),
+        supabase.from("asa_capturas").select("*, asa_plagas(nombre, grupo, icono, color, umbral_alerta)").in("inspeccion_id", lote),
+        supabase.from("asa_inspecciones").select("id, fotos").in("id", lote),
+      ]);
+      for (const r of resp.data || []) {
+        if (!respuestasPorInsp.has(r.inspeccion_id)) respuestasPorInsp.set(r.inspeccion_id, []);
+        respuestasPorInsp.get(r.inspeccion_id).push(r);
+      }
+      for (const c of caps.data || []) {
+        if (!capturasPorInsp.has(c.inspeccion_id)) capturasPorInsp.set(c.inspeccion_id, []);
+        capturasPorInsp.get(c.inspeccion_id).push({
+          ...c,
+          plaga: c.asa_plagas?.nombre || "Sin clasificar",
+          grupo: c.asa_plagas?.grupo || null,
+          color: c.asa_plagas?.color || null,
+          sobre_umbral: c.asa_plagas?.umbral_alerta != null ? c.cantidad > c.asa_plagas.umbral_alerta : null,
+        });
+      }
+      for (const x of insp.data || []) fotosPorInsp.set(x.id, Array.isArray(x.fotos) ? x.fotos : []);
+    }
+  }
+
+  const serviciosCompletos = realizados.map((x) => ({
+    ...x,
+    respuestas: respuestasPorInsp.get(x.inspeccion_id) || [],
+    capturas: capturasPorInsp.get(x.inspeccion_id) || [],
+    fotos: fotosPorInsp.get(x.inspeccion_id) || [],
+  }));
+
+  // ── Histograma por periodo y nivel de actividad ───────────────────────────
+  const cubeta = (fecha) => {
+    if (agrupar === "mes") return String(fecha).slice(0, 7);
+    if (agrupar === "semana") {
+      const d = new Date(fecha + "T12:00:00");
+      d.setDate(d.getDate() - d.getDay());
+      return d.toISOString().slice(0, 10);
+    }
+    return fecha;
+  };
+  const series = ["ninguna", "bajo", "medio", "alto"];
+  const mapa = new Map();
+  for (const x of realizados) {
+    const c = cubeta(x.fecha_local);
+    if (!mapa.has(c)) mapa.set(c, Object.fromEntries(series.map((s) => [s, 0])));
+    const nivel = series.includes(x.nivel_actividad) ? x.nivel_actividad : "ninguna";
+    mapa.get(c)[nivel]++;
+  }
+  const histograma = {
+    agrupar,
+    series,
+    datos: [...mapa.keys()].sort().map((k) => ({ periodo: k, ...mapa.get(k), total: Object.values(mapa.get(k)).reduce((a, b) => a + b, 0) })),
+  };
+
+  // ── Plagas con tendencia ──────────────────────────────────────────────────
+  const corte = mitadPeriodo(desde, hasta);
+  const porPlaga = new Map();
+  for (const s2 of serviciosCompletos) {
+    for (const c of s2.capturas) {
+      if (!porPlaga.has(c.plaga)) {
+        porPlaga.set(c.plaga, { plaga: c.plaga, grupo: c.grupo, color: c.color, total: 0, registros: 0, maximo: 0, reciente: 0, previo: 0 });
+      }
+      const p = porPlaga.get(c.plaga);
+      p.total += c.cantidad || 0;
+      p.registros++;
+      p.maximo = Math.max(p.maximo, c.cantidad || 0);
+      if (s2.fecha_local >= corte) p.reciente += c.cantidad || 0;
+      else p.previo += c.cantidad || 0;
+    }
+  }
+  const plagas = [...porPlaga.values()]
+    .map((p) => ({
+      ...p,
+      variacion_pct: p.previo > 0 ? Number((((p.reciente - p.previo) / p.previo) * 100).toFixed(0)) : null,
+      tendencia: p.previo === 0 ? (p.reciente > 0 ? "nueva" : "estable")
+        : p.reciente > p.previo * 1.15 ? "sube"
+        : p.reciente < p.previo * 0.85 ? "baja" : "estable",
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  // ── Por area ──────────────────────────────────────────────────────────────
+  const porArea = new Map();
+  for (const x of S) {
+    const k = x.area || "Sin area";
+    if (!porArea.has(k)) porArea.set(k, { area: k, nivel: x.nivel, servicios: 0, con_actividad: 0, no_realizados: 0, plagas: 0 });
+    const a = porArea.get(k);
+    if (x.no_realizado) a.no_realizados++;
+    else {
+      a.servicios++;
+      if (x.nivel_actividad && x.nivel_actividad !== "ninguna") a.con_actividad++;
+    }
+    a.plagas += x.plagas_total || 0;
+  }
+
+  const programables = (puntos.data || []).filter((p) => p.frecuencia !== "por_orden");
+  const vencidos = programables.filter((p) => p.vencido).length;
+
+  return {
+    empresa: empresa.data?.valor || {},
+    sitio: sitio.data
+      ? {
+          nombre: sitio.data.nombre,
+          direccion: sitio.data.direccion,
+          cliente: sitio.data.asa_clientes?.razon_social || sitio.data.asa_clientes?.nombre_contacto || null,
+        }
+      : null,
+    periodo: { desde, hasta },
+    resumen: {
+      servicios_realizados: realizados.length,
+      no_realizados: noRealizados.length,
+      con_actividad: realizados.filter((x) => x.nivel_actividad && x.nivel_actividad !== "ninguna").length,
+      plagas_contadas: S.reduce((a, b) => a + (b.plagas_total || 0), 0),
+      fotos: S.reduce((a, b) => a + (b.fotos_total || 0), 0),
+      puntos_total: (puntos.data || []).length,
+      puntos_vencidos: vencidos,
+      cumplimiento_pct: programables.length
+        ? Number((((programables.length - vencidos) / programables.length) * 100).toFixed(1))
+        : 100,
+      hallazgos_abiertos: (hallazgos.data || []).filter((h) => h.estado === "abierto" || h.estado === "en_proceso").length,
+      tecnicos: [...new Set(S.map((x) => x.tecnico).filter(Boolean))],
+      truncado: S.length >= tope,
+    },
+    histograma,
+    plagas,
+    por_area: [...porArea.values()].sort((a, b) => b.servicios - a.servicios),
+    servicios: serviciosCompletos,
+    no_realizados: noRealizados,
+    hallazgos: (hallazgos.data || []).map((h) => ({ ...h, area: h.asa_areas?.nombre || null })),
+  };
+}
+
+function mitadPeriodo(desde, hasta) {
+  const a = new Date(desde + "T12:00:00").getTime();
+  const b = new Date(hasta + "T12:00:00").getTime();
+  return new Date(a + (b - a) / 2).toISOString().slice(0, 10);
+}
+
+// GET /reportes/evidencia — los mismos datos en JSON, para la pantalla
+router.get("/evidencia", async (req, res) => {
+  if (req.query.sitio_id && !exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+  try {
+    res.json(await juntarEvidencia(req));
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
+});
+
+// GET /reportes/pdf — el PDF descargable
+//
+// Lo puede pedir tanto el panel de ASA como el portal del hotel: el filtro de
+// alcance (`filtrarPorSitio`) ya limita lo que cada cuenta puede ver, asi que un
+// encargado de calidad solo puede sacar el de SUS plantas.
+router.get("/pdf", async (req, res) => {
+  if (req.query.sitio_id && !exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+
+  try {
+    const datos = await juntarEvidencia(req);
+    const pdf = await construirReporte(datos, {
+      fotos: req.query.fotos !== "no",
+      detalle: req.query.detalle !== "no",
+    });
+
+    const nombre = `ASA-reporte-${(datos.sitio?.nombre || "general").replace(/[^\w]+/g, "-").toLowerCase()}-${datos.periodo.desde}-a-${datos.periodo.hasta}.pdf`;
+
+    logAccion(req, {
+      accion: "crear",
+      modulo: "reportes",
+      descripcion: `Reporte PDF de ${datos.sitio?.nombre || "todas las plantas"} (${datos.periodo.desde} a ${datos.periodo.hasta})`,
+      detalle: { servicios: datos.servicios.length, no_realizados: datos.no_realizados.length },
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error("[ASA][reportes/pdf]", e);
+    res.status(500).json({ error: true, mensaje: `No se pudo generar el PDF: ${e.message}` });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

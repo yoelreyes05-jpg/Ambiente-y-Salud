@@ -159,6 +159,7 @@ async function handleLogin(e) {
     }
     localStorage.setItem("asa_token", TOKEN);
     localStorage.setItem("asa_usuario", JSON.stringify(USUARIO));
+    await cargarConfiguracion();
     renderShell();
   } catch (e2) {
     err.textContent = e2.message || "No se pudo iniciar sesión";
@@ -187,6 +188,22 @@ function renderLogin(msg) {
   $("#login-form").addEventListener("submit", handleLogin);
 }
 
+// Configuración del sistema, cargada una vez al entrar: los datos de la empresa
+// y la matriz de permisos por rol. Si la carga falla, el panel sigue andando con
+// los roles fijos de abajo — nunca deja a alguien fuera por un problema de red.
+let PERMISOS = null;
+let CONFIG_EMPRESA = null;
+
+async function cargarConfiguracion() {
+  try {
+    const c = await get("/config");
+    PERMISOS = c.permisos && Object.keys(c.permisos).length ? c.permisos : null;
+    CONFIG_EMPRESA = c.empresa || null;
+  } catch {
+    PERMISOS = null;
+  }
+}
+
 // ── Módulos / navegación ─────────────────────────────────────────────────
 // Secciones del menú. El orden de este array es el orden en pantalla.
 const SECCIONES = [
@@ -210,6 +227,10 @@ const MODULES = [
 // admin.js (cargado antes que este archivo) aporta Estrategias y Tipos de
 // punto. Si por lo que sea no cargó, el panel sigue funcionando sin ellos.
 if (typeof MODULOS_EXTRA !== "undefined") MODULES.push(...MODULOS_EXTRA);
+// configuracion.js aporta Configuración y Auditoría.
+if (typeof MODULOS_EXTRA_2 !== "undefined") MODULES.push(...MODULOS_EXTRA_2);
+// flota.js aporta Flota y transportación (vehículos de ASA, traído del CRM).
+if (typeof MODULOS_EXTRA_3 !== "undefined") MODULES.push(...MODULOS_EXTRA_3);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:
@@ -220,8 +241,26 @@ const MODULOS_CONGELADOS = [
   "inventario", "pos", "facturacion", "contabilidad", "nomina",
 ];
 function modulosPermitidos() {
+  // Manda la matriz de permisos guardada en Configuración. Si no hay matriz (o
+  // no cargó), se cae a los roles fijos escritos en cada módulo, que es como
+  // funcionaba antes. El admin siempre lo ve todo: dejarlo depender de una
+  // tabla editable es cómo alguien se deja fuera de su propio sistema.
+  if (USUARIO.rol === "admin") return MODULES;
+  if (PERMISOS && PERMISOS[USUARIO.rol]) {
+    const mios = PERMISOS[USUARIO.rol];
+    return MODULES.filter((m) => (mios[m.key] || "ninguno") !== "ninguno");
+  }
   return MODULES.filter((m) => !m.roles || m.roles.includes(USUARIO.rol));
 }
+
+// Nivel de permiso sobre un módulo: "ninguno" | "ver" | "operar" | "todo".
+// Los módulos lo consultan para esconder botones de escritura.
+function permisoDe(modulo) {
+  if (USUARIO.rol === "admin") return "todo";
+  if (PERMISOS && PERMISOS[USUARIO.rol]) return PERMISOS[USUARIO.rol][modulo] || "ninguno";
+  return "todo";
+}
+const puedeEditar = (modulo) => permisoDe(modulo) === "todo";
 
 function renderShell() {
   document.body.innerHTML = `
@@ -396,13 +435,35 @@ async function viewClientes(content) {
         { key: "tipo_cliente", label: "Tipo", fmt: (r) => badge(r.tipo_cliente) },
         { key: "telefono", label: "Teléfono" },
         { key: "email", label: "Correo" },
+        { key: "hoteles", label: "Plantas", fmt: (r) => (r.hoteles ?? 0) },
+        {
+          key: "_acciones",
+          label: "",
+          fmt: (r) =>
+            `<button class="btn btn-sm" data-editar="${r.id}">Editar</button>
+             <button class="btn btn-sm btn-danger" data-borrar="${r.id}">Eliminar</button>`,
+        },
       ],
       data,
       "No hay clientes registrados todavía."
     );
+    // La fila abre la ficha; los botones no deben arrastrar ese clic, por eso
+    // cada uno detiene la propagacion.
     $("#clientes-tabla").querySelectorAll("tr[data-id]").forEach((tr) => {
       tr.addEventListener("click", () => abrirDetalleCliente(tr.dataset.id));
     });
+    $$("#clientes-tabla [data-editar]").forEach((b) =>
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        modalEditarCliente(data.find((c) => c.id === b.dataset.editar), () => cargar($("#buscar-cliente").value.trim()));
+      })
+    );
+    $$("#clientes-tabla [data-borrar]").forEach((b) =>
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        eliminarCliente(data.find((c) => c.id === b.dataset.borrar), () => cargar($("#buscar-cliente").value.trim()));
+      })
+    );
   }
   await cargar();
 
@@ -468,6 +529,34 @@ function modalNuevoCliente(onSaved) {
   });
 }
 
+// Eliminar un cliente es baja logica (activo = false): desaparece de las
+// pantallas y su historial queda entero. Antes de preguntar se dice cuantas
+// plantas y puntos arrastra, porque un "estas seguro?" a secas no frena a nadie
+// y un conteo si.
+async function eliminarCliente(cliente, onDone) {
+  if (!cliente) return;
+  const nombre = cliente.razon_social || cliente.nombre_contacto;
+  const arrastra = [];
+  if (cliente.hoteles) arrastra.push(`${cliente.hoteles} planta${cliente.hoteles === 1 ? "" : "s"}`);
+  if (cliente.puntos) arrastra.push(`${cliente.puntos} punto${cliente.puntos === 1 ? "" : "s"} de control`);
+
+  const aviso =
+    `Se va a dar de baja el cliente "${nombre}".` +
+    (arrastra.length
+      ? `\n\nTiene ${arrastra.join(" y ")}. Quedan guardados y vuelven si lo reactivas, pero el cliente sale de las listas.`
+      : "") +
+    `\n\nEl historial de inspecciones no se borra.\n\n¿Continuar?`;
+  if (!confirm(aviso)) return;
+
+  try {
+    await api(`/clientes/${cliente.id}`, { method: "DELETE" });
+    toast("Cliente dado de baja");
+    onDone?.();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 async function abrirDetalleCliente(id) {
   const c = await get(`/clientes/${id}`);
   openModal({
@@ -479,9 +568,15 @@ async function abrirDetalleCliente(id) {
       ${tableHTML([{ key: "nombre", label: "Nombre" }, { key: "direccion", label: "Dirección" }, { key: "tipo_sitio", label: "Tipo", fmt: (r) => badge(r.tipo_sitio) }], c.sitios, "Sin sitios registrados.")}
       <h4 style="margin-top:16px">Mascotas</h4>
       ${tableHTML([{ key: "nombre", label: "Nombre" }, { key: "especie", label: "Especie" }, { key: "raza", label: "Raza" }], c.mascotas, "Sin mascotas registradas.")}
+      <div class="actions" style="margin-top:18px">
+        <button class="btn" id="ficha-editar-cliente">Editar datos del cliente</button>
+      </div>
     `,
   });
   $(".modal-foot")?.remove();
+  $("#ficha-editar-cliente")?.addEventListener("click", () =>
+    modalEditarCliente(c, () => navigate("clientes"))
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1194,41 +1289,157 @@ async function viewNomina(content) {
 // ═══════════════════════════════════════════════════════════════════════
 // USUARIOS (solo admin)
 // ═══════════════════════════════════════════════════════════════════════
+const ROLES_PANEL = [
+  ["admin", "Administrador"],
+  ["comercial", "Comercial"],
+  ["operaciones", "Operaciones"],
+  ["tecnico_plagas", "Tecnico de plagas"],
+  ["contabilidad", "Contabilidad"],
+  ["nomina", "Nomina"],
+  ["veterinario", "Veterinario"],
+  ["groomer", "Groomer"],
+  ["cajero", "Cajero"],
+];
+const etiquetaRol = (r) => (ROLES_PANEL.find((x) => x[0] === r) || [r, r])[1];
+
 async function viewUsuarios(content) {
   content.innerHTML = `
     <div class="card">
-      <div class="card-head"><h2>Usuarios del sistema</h2><div class="actions"><button class="btn btn-primary" id="btn-nuevo-usuario">+ Nuevo usuario</button></div></div>
-      <div id="usr-tabla"></div>
+      <div class="card-head">
+        <h2>Usuarios del sistema</h2>
+        <div class="actions"><button class="btn btn-primary" id="btn-nuevo-usuario">+ Nuevo usuario</button></div>
+      </div>
+      <p class="text-muted">
+        Personal interno de ASA. Las cuentas del personal de calidad de los
+        hoteles se manejan en <strong>Accesos del hotel</strong>.
+      </p>
+      <div id="usr-tabla"><div class="center-msg">Cargando…</div></div>
     </div>`;
+
   async function cargar() {
     const data = await get("/usuarios");
     $("#usr-tabla").innerHTML = tableHTML(
-      [{ key: "nombre_completo", label: "Nombre" }, { key: "email", label: "Correo" }, { key: "rol", label: "Rol", fmt: (r) => badge(r.rol) }, { key: "activo", label: "Activo", fmt: (r) => (r.activo ? "Sí" : "No") }, { key: "ultimo_acceso", label: "Último acceso", fmt: (r) => fmtDateTime(r.ultimo_acceso) }],
-      data, "No hay usuarios de personal interno creados todavía."
+      [
+        { key: "nombre_completo", label: "Nombre" },
+        { key: "email", label: "Correo" },
+        { key: "rol", label: "Rol", fmt: (r) => badge(etiquetaRol(r.rol)) },
+        {
+          key: "activo", label: "Estado",
+          fmt: (r) => r.activo
+            ? `<span class="estado-chip hecho">Activo</span>`
+            : `<span class="estado-chip fuera">Dado de baja</span>`,
+        },
+        { key: "ultimo_acceso", label: "Ultimo acceso", fmt: (r) => (r.ultimo_acceso ? fmtDateTime(r.ultimo_acceso) : "Nunca entro") },
+        {
+          key: "_acciones", label: "",
+          fmt: (r) => `
+            <button class="btn btn-sm" data-editar="${r.id}">Editar</button>
+            <button class="btn btn-sm" data-clave="${r.id}">Contrasena</button>
+            <button class="btn btn-sm" data-activo="${r.id}">${r.activo ? "Dar de baja" : "Reactivar"}</button>
+            <button class="btn btn-sm btn-danger" data-borrar="${r.id}">Eliminar</button>`,
+        },
+      ],
+      data.map((u) => ({ ...u, _clickable: false })),
+      "No hay usuarios de personal interno creados todavia."
+    );
+
+    const buscar = (id) => data.find((u) => u.id === id);
+
+    $$("#usr-tabla [data-editar]").forEach((b) =>
+      b.addEventListener("click", () => modalEditarUsuario(buscar(b.dataset.editar), cargar))
+    );
+    $$("#usr-tabla [data-clave]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const u = buscar(b.dataset.clave);
+        modalCambiarClave({
+          titulo: `Contrasena de ${u.nombre_completo}`,
+          ruta: `/usuarios/${u.id}/password`,
+          onDone: cargar,
+        });
+      })
+    );
+    $$("#usr-tabla [data-activo]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const u = buscar(b.dataset.activo);
+        if (u.activo && !confirm(`${u.nombre_completo} no podra entrar hasta que lo reactives. ¿Darlo de baja?`)) return;
+        try {
+          await patch(`/usuarios/${u.id}/activo`, { activo: !u.activo });
+          toast(u.activo ? "Usuario dado de baja" : "Usuario reactivado");
+          cargar();
+        } catch (e) { toast(e.message, true); }
+      })
+    );
+    $$("#usr-tabla [data-borrar]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const u = buscar(b.dataset.borrar);
+        if (!confirm(
+          `Se va a borrar la cuenta de ${u.nombre_completo} <${u.email}>.\n\n` +
+          `Lo que hizo NO se pierde: la bitacora de auditoria guarda su nombre. ` +
+          `Si es un tecnico, sus inspecciones tambien quedan.\n\n` +
+          `Si solo quieres que no entre, usa "Dar de baja".\n\n¿Borrar la cuenta?`
+        )) return;
+        try {
+          await api(`/usuarios/${u.id}`, { method: "DELETE" });
+          toast("Usuario eliminado");
+          cargar();
+        } catch (e) { toast(e.message, true); }
+      })
     );
   }
   await cargar();
-  $("#btn-nuevo-usuario").addEventListener("click", () => {
-    openModal({
-      title: "Nuevo usuario",
-      bodyHTML: `
-        <div class="form-grid">
-          <div class="form-group full"><label>Nombre completo *</label><input name="nombre_completo" required /></div>
-          <div class="form-group"><label>Correo *</label><input type="email" name="email" required /></div>
-          <div class="form-group"><label>Contraseña *</label><input type="password" name="password" required minlength="6" /></div>
-          <div class="form-group full"><label>Rol *</label>
-            <select name="rol" required>
-              <option value="admin">Administrador</option><option value="comercial">Comercial</option><option value="operaciones">Operaciones</option>
-              <option value="tecnico_plagas">Técnico de plagas</option><option value="veterinario">Veterinario</option><option value="groomer">Groomer</option>
-              <option value="cajero">Cajero</option><option value="contabilidad">Contabilidad</option><option value="nomina">Nómina</option>
-            </select>
-          </div>
-        </div>`,
-      onSubmit: async (fd) => {
-        await post("/usuarios", Object.fromEntries(fd.entries()));
-        closeModal(); toast("Usuario creado"); cargar();
-      },
-    });
+
+  $("#btn-nuevo-usuario").addEventListener("click", () => modalNuevoUsuario(cargar));
+}
+
+function camposUsuario(u) {
+  return `
+    <div class="form-grid">
+      <div class="form-group full"><label>Nombre completo *</label>
+        <input name="nombre_completo" required value="${esc(u?.nombre_completo || "")}" /></div>
+      <div class="form-group"><label>Correo *</label>
+        <input type="email" name="email" required value="${esc(u?.email || "")}" /></div>
+      <div class="form-group"><label>Rol *</label>
+        <select name="rol" required>
+          ${ROLES_PANEL.map(([v, t]) => `<option value="${v}"${u?.rol === v ? " selected" : ""}>${t}</option>`).join("")}
+        </select>
+      </div>
+    </div>`;
+}
+
+function modalNuevoUsuario(onSaved) {
+  openModal({
+    title: "Nuevo usuario",
+    bodyHTML: camposUsuario(null) + `
+      <div class="form-grid">
+        <div class="form-group full"><label>Contrasena *</label>
+          <input type="password" name="password" required minlength="8" />
+          <div class="form-hint">Minimo 8 caracteres, igual que al restablecerla.</div>
+        </div>
+      </div>`,
+    onSubmit: async (fd) => {
+      await post("/usuarios", Object.fromEntries(fd.entries()));
+      closeModal(); toast("Usuario creado"); onSaved();
+    },
+  });
+}
+
+function modalEditarUsuario(u, onSaved) {
+  if (!u) return;
+  openModal({
+    title: `Editar ${u.nombre_completo}`,
+    bodyHTML: camposUsuario(u) + `
+      <p class="text-muted" style="margin:6px 0 0">
+        La contrasena se cambia con el boton <strong>Contrasena</strong> del listado:
+        no se puede leer la actual, solo reemplazarla.
+      </p>`,
+    onSubmit: async (fd) => {
+      await patch(`/usuarios/${u.id}`, {
+        nombre_completo: (fd.get("nombre_completo") || "").trim(),
+        email: (fd.get("email") || "").trim().toLowerCase(),
+        rol: fd.get("rol"),
+      });
+      closeModal(); toast("Usuario actualizado"); onSaved();
+    },
   });
 }
 
@@ -1371,13 +1582,16 @@ async function abrirPlanta(sitioId) {
         </div>
         <div class="actions">
           <button class="btn" id="btn-editar-planta">Editar planta</button>
-          <button class="btn" id="btn-excel">Descargar historial (Excel)</button>
+          <button class="btn btn-primary" id="btn-reporte">Generar reporte</button>
+          <button class="btn" id="btn-excel">Excel</button>
         </div>
       </div>
       <div class="tabs" id="tabs-planta">
-        <button class="tab active" data-tab="puntos">Puntos de control</button>
-        <button class="tab" data-tab="hoy">Habitaciones — hoy</button>
-        <button class="tab" data-tab="pasadas">Habitaciones — pasadas</button>
+        <button class="tab active" data-tab="servicios">Servicios de hoy</button>
+        <button class="tab" data-tab="hoy">Inspecciones de hoy</button>
+        <button class="tab tab-rojo" data-tab="norealizados">No realizados</button>
+        <button class="tab" data-tab="puntos">Puntos de control</button>
+        <button class="tab" data-tab="pasadas">Días anteriores</button>
         <button class="tab" data-tab="mapa">Mapa</button>
         <button class="tab" data-tab="areas">Áreas (${areas.length})</button>
       </div>
@@ -1386,6 +1600,7 @@ async function abrirPlanta(sitioId) {
 
   $("#volver-plantas").addEventListener("click", () => navigate("plantas"));
   $("#btn-excel").addEventListener("click", () => descargarExcel(sitioId, sitio.nombre));
+  $("#btn-reporte").addEventListener("click", () => modalReporte(sitioId));
   $("#btn-editar-planta").addEventListener("click", async () => {
     const clientes = await get("/clientes");
     modalPlanta(clientes, sitio, () => abrirPlanta(sitioId));
@@ -1393,8 +1608,15 @@ async function abrirPlanta(sitioId) {
 
   const cuerpo = $("#tab-cuerpo");
   const pintores = {
-    puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
+    // "Servicios" y "Inspecciones" no son lo mismo y por eso van aparte:
+    // servicios es TODO lo que el tecnico subio hoy (recorridos de area,
+    // cebaderos, lamparas, aplicaciones), e inspecciones es la rejilla punto a
+    // punto de lo hecho contra lo pendiente. Antes solo existia la rejilla y
+    // solo de habitaciones, asi que el grueso del trabajo del dia no se veia.
+    servicios: () => tabServiciosHoy(cuerpo, sitioId),
     hoy: () => tabHabitacionesHoy(cuerpo, sitioId),
+    norealizados: () => tabNoRealizados(cuerpo, sitioId),
+    puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
     pasadas: () => tabHabitacionesPasadas(cuerpo, sitioId),
     mapa: () => tabMapa(cuerpo, sitioId, areas),
     areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
@@ -1409,7 +1631,7 @@ async function abrirPlanta(sitioId) {
       });
     })
   );
-  await pintores.puntos();
+  await pintores.servicios();
 }
 
 // ── Pestaña: puntos de control ───────────────────────────────────────────
@@ -1522,7 +1744,7 @@ async function tabHabitacionesHoy(cuerpo, sitioId) {
 
   const pct = Math.round((hechas.length / total) * 100);
   const celda = (p, clase) =>
-    `<div class="hab ${clase}" title="${esc(p.area_nombre || "")}">
+    `<div class="hab ${clase}" title="${esc(p.area_nombre || "")}" data-punto="${esc(p.id || "")}">
        ${esc(p.numero_habitacion || p.codigo_visible)}
      </div>`;
 
@@ -1646,7 +1868,13 @@ function boot() {
     USUARIO = { id: null, nombre: "Vista previa (sin login)", rol: "admin" };
   }
   if ((TOKEN && USUARIO) || DEMO_SKIP_LOGIN) {
+    // Se dibuja el armazón primero y se ajusta el menú cuando llega la
+    // configuración: esperar a la red para pintar la primera pantalla hace que
+    // el panel parezca trabado en una conexión lenta de hotel.
     renderShell();
+    cargarConfiguracion().then(() => {
+      if (PERMISOS) renderShell();
+    });
   } else {
     renderLogin();
   }
