@@ -177,3 +177,111 @@ img{max-width:100%}
   line-height: 1.5;
   color: var(--suave, #475569);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FICHA DE UN SERVICIO, HOJA A PANTALLA COMPLETA E IMPRESIÓN
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Una revisión de la lista se puede tocar */
+.registro.clicable{cursor:pointer;border-radius:10px;padding:12px 10px;margin:0 -10px;transition:background .12s}
+.registro.clicable:hover{background:var(--azul-pastel,#EAF0F8)}
+.registro.clicable:active{background:var(--borde)}
+
+.tarjeta.borde-rojo{border-left:4px solid var(--rojo)}
+.tarjeta.borde-rojo h2{color:var(--rojo)}
+
+/* Cabecera de día en el historial */
+.dia-cabecera{
+  font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--suave);background:var(--azul-pastel,#EAF0F8);
+  padding:7px 10px;border-radius:8px;margin:16px -10px 6px;
+}
+.dia-cabecera:first-child{margin-top:0}
+
+/* La hoja: cubre la pantalla completa. En el celular, un modal a medias
+   obliga a hacer zoom para leer la tabla del checklist. */
+.hoja{
+  position:fixed;inset:0;z-index:60;background:var(--fondo,#f8fafc);
+  display:flex;flex-direction:column;
+}
+.hoja-barra{
+  display:flex;gap:10px;align-items:center;
+  padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
+  background:var(--blanco);border-bottom:1px solid var(--borde);
+}
+.hoja-barra .principal{margin-left:auto}
+.hoja-cuerpo{
+  flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:16px 14px calc(28px + env(safe-area-inset-bottom));
+  max-width:900px;width:100%;margin:0 auto;
+}
+
+.ficha h3{font-size:14px;margin:20px 0 8px;color:var(--azul)}
+.ficha p{font-size:13.5px;line-height:1.55;margin:0}
+
+.fs-cabecera{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:14px;
+  padding:13px 14px;border-radius:12px;background:var(--verde-claro);
+  border-left:4px solid var(--verde-borde);
+}
+.fs-cabecera.no-hecho{background:var(--rojo-claro);border-left-color:var(--rojo)}
+.fs-titulo{font-size:17px;font-weight:700}
+.fs-sub{font-size:12.5px;color:var(--suave);margin-top:2px}
+.fs-estado{text-align:right;font-weight:700;font-size:13px;color:var(--verde);white-space:nowrap}
+.fs-estado.rojo{color:var(--rojo)}
+.fs-estado small{display:block;font-weight:400;color:var(--suave);font-size:11.5px;margin-top:2px}
+
+.fs-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px 18px;margin-top:14px}
+.fs-datos>div{display:flex;flex-direction:column}
+.fs-datos span{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--suave)}
+.fs-datos strong{font-size:13.5px}
+
+.fs-alerta{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--rojo-claro);color:#7f1d1d;font-size:13.5px;line-height:1.5}
+
+.fs-tabla{width:100%;border-collapse:collapse;font-size:13px}
+.fs-tabla th{
+  text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;
+  letter-spacing:.03em;color:var(--suave);background:var(--azul-pastel,#EAF0F8);
+}
+.fs-tabla td{padding:9px 10px;border-bottom:1px solid var(--borde);vertical-align:top}
+.fs-tabla tr.sobre-umbral td{background:var(--rojo-claro);color:#7f1d1d}
+
+.fs-hallazgos{margin:0;padding-left:18px;font-size:13.5px}
+.fs-hallazgos li{margin-bottom:9px}
+
+.fs-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px}
+.fs-fotos figure{margin:0}
+.fs-fotos img{
+  width:100%;height:130px;object-fit:cover;display:block;cursor:pointer;
+  border-radius:9px;border:1px solid var(--borde);background:var(--borde);
+}
+.fs-fotos figcaption{font-size:10.5px;color:var(--suave);margin-top:4px;text-align:center}
+
+/* Impresión: la capa solo existe mientras dura, y se esconde todo lo demás.
+   Así no hay que duplicar la ficha en otra ventana — que con fotos en base64
+   es lo que traba el navegador. */
+#area-impresion{display:none}
+.imp-encabezado{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:18px;
+  border-bottom:3px solid var(--azul);padding-bottom:12px;margin-bottom:18px;
+}
+.imp-encabezado h1{font-size:19px;margin:0;color:var(--azul)}
+.imp-encabezado p{margin:2px 0 0;color:var(--suave);font-size:12.5px}
+
+@media print{
+  @page{margin:14mm}
+  body>*:not(#area-impresion){display:none !important}
+  #area-impresion{
+    display:block !important;background:#fff;color:#0f172a;
+    font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  #area-impresion .fs-fotos figure,
+  #area-impresion .fs-cabecera,
+  #area-impresion tr{break-inside:avoid;page-break-inside:avoid}
+  #area-impresion h3{break-after:avoid;page-break-after:avoid}
+  #area-impresion .fs-fotos{grid-template-columns:repeat(3,1fr)}
+  #area-impresion .fs-fotos img{height:110px;cursor:default}
+  /* Los fondos de color se imprimen: el rojo del "no realizado" es
+     información, no decoración. */
+  #area-impresion *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}

@@ -26,6 +26,7 @@ router.get("/", async (req, res) => {
     .select(`
       id, fecha, fecha_local, estado_punto, nivel_actividad, requiere_accion,
       notas, fotos, metodo_acceso, sitio_id, area_id,
+      motivo_no_realizado, impedido_por,
       asa_puntos_control(id, codigo_visible, nombre, numero_habitacion, asa_tipos_punto(nombre, icono, color)),
       asa_areas(nombre),
       asa_empleados(nombre_completo)
