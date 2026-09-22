@@ -21,7 +21,29 @@ rechaza, un motivo inventado se rechaza).
 
 ### Traer los datos de la flota que ya están en el CRM
 
+Hay **dos caminos**, y hacen exactamente lo mismo. Elige uno:
+
+#### A. Por Excel (recomendado si no quieres mover claves)
+
+1. En el CRM del taller: **ASA → Configuración → Exportar → Descargar la flota
+   en Excel**. Sale un `.xlsx` con una hoja por tabla.
+2. En Ambiente y Salud: **Flota → Configuración → Traer la flota desde el CRM**.
+   Subes el archivo y le das primero a **Probar sin escribir**: no toca nada y
+   te dice cuántas filas entrarían en cada hoja. Si cuadra, **Importar de verdad**.
+
+Ventaja: el archivo queda como respaldo legible y no hay que poner la clave del
+Supabase del CRM dentro de este backend. Se puede repetir: subir el mismo
+archivo dos veces actualiza, no duplica.
+
+> No cambies los nombres de las hojas ni la primera fila del archivo: el
+> importador busca por esos nombres.
+
+#### B. Directo de base a base (script)
+
 La flota vive hoy en el Supabase del CRM del taller. Para copiarla:
+
+Más rápido para volúmenes grandes, pero exige tener a mano la clave de
+servidor del Supabase del CRM.
 
 ```bash
 # 1. En backend/.env agrega las credenciales del proyecto DE ORIGEN:
@@ -67,7 +89,17 @@ PATCH /sitios/planos/:id                          coordenadas de un plano
 PATCH|DELETE /usuarios/:id  ·  /usuarios/portal/:id
 POST /usuarios/portal/:id/password
 PUT|PATCH|DELETE /estrategias/:id  ·  POST /estrategias/:id/duplicar
+POST /flota/importar-excel                        carga el .xlsx del CRM
 ```
+
+Y en el **CRM del taller** (`crm-backend`), una sola ruta nueva:
+
+```
+GET /asa/exportar-excel     baja la flota completa en un .xlsx
+```
+
+> Ese backend necesita `npm install exceljs` y un redespliegue en Railway: es la
+> única dependencia nueva del lado del CRM.
 
 > **Ojo con el orden de las rutas.** El bug de "modifico la estrategia y no
 > guarda" era eso: `PUT /estrategias/preguntas/<id>` entraba por

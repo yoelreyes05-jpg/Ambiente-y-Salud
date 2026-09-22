@@ -35,6 +35,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import express from "express";
+import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 
@@ -721,6 +722,255 @@ router.get("/reportes/conductores", ruta(async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // CRUD — VEHÍCULOS, EMPLEADOS, GASTOS, DOCUMENTOS, MANTENIMIENTOS
 // ═════════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════
+// POST /flota/importar-excel — carga el .xlsx que exporta el CRM del taller
+//
+// Body: { archivo_base64, simular? }
+//
+// Es la otra mitad de "CRM Sólido → ASA → Configuración → Exportar". Existe
+// para no tener que poner la clave del Supabase del CRM dentro de este
+// backend: el archivo se baja allá y se sube aquí.
+//
+// Tres cosas que vale la pena saber:
+//
+// · **Los `id` del archivo no se reutilizan.** Estas tablas son BIGSERIAL:
+//   insertar con ids ajenos dejaría la secuencia atrás y el primer vehículo que
+//   alguien agregue a mano chocaría con un id repetido. Se inserta sin id y se
+//   guarda un mapa viejo→nuevo para reescribir `vehiculo_id`, `conductor_id` y
+//   `chequeo_id`.
+//
+// · **El orden importa.** Conductores antes que vehículos, vehículos antes que
+//   partes: una llave foránea a algo que todavía no existe falla.
+//
+// · **Es repetible.** Cada hoja se reconcilia por su clave natural (el código
+//   del vehículo, la cédula del conductor, vehículo+fecha+turno del parte), así
+//   que subir el mismo archivo dos veces actualiza en vez de duplicar. Es lo
+//   que permite hacer una prueba, seguir trabajando en el CRM unos días, y
+//   volver a subir para ponerse al día.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Hoja → tabla, con la clave por la que se reconcilia y qué columnas son
+// referencias a otras hojas. Este mapa es el contrato con el exportador del
+// CRM: los nombres de hoja y de columna son los mismos en los dos lados a
+// propósito, para que no haya traducción que mantener.
+const HOJAS_IMPORTAR = [
+  { hoja: "Checklist",        tabla: "asa_flota_checklist_items",   clave: ["codigo"] },
+  { hoja: "CatalogoFallas",   tabla: "asa_flota_fallas_catalogo",   clave: ["codigo"] },
+  { hoja: "Conductores",      tabla: "asa_flota_conductores",       clave: ["cedula"], claveAlterna: ["nombre"], mapa: "conductores" },
+  { hoja: "Vehiculos",        tabla: "asa_flota_vehiculos",         clave: ["codigo"], mapa: "vehiculos",
+    refs: { conductor_id: "conductores" } },
+  { hoja: "Asignaciones",     tabla: "asa_flota_asignaciones",      clave: ["vehiculo_id", "conductor_id", "desde"],
+    refs: { vehiculo_id: "vehiculos", conductor_id: "conductores" },
+    obligatorias: ["vehiculo_id", "conductor_id"] },
+  { hoja: "Chequeos",         tabla: "asa_flota_chequeos",          clave: ["vehiculo_id", "fecha", "turno"], mapa: "chequeos",
+    refs: { vehiculo_id: "vehiculos", conductor_id: "conductores" },
+    json: ["respuestas"],
+    obligatorias: ["vehiculo_id"] },
+  { hoja: "ChequeoItems",     tabla: "asa_flota_chequeo_items",     clave: ["chequeo_id", "item_codigo"],
+    refs: { vehiculo_id: "vehiculos", chequeo_id: "chequeos" },
+    obligatorias: ["vehiculo_id", "chequeo_id"] },
+  { hoja: "FallasReportadas", tabla: "asa_flota_fallas_reportadas", clave: ["vehiculo_id", "falla_codigo", "primera_vez"],
+    refs: { vehiculo_id: "vehiculos", chequeo_id: "chequeos", conductor_id: "conductores" },
+    obligatorias: ["vehiculo_id"] },
+  { hoja: "Fotos",            tabla: "asa_flota_fotos",             clave: ["vehiculo_id", "fecha", "angulo", "url"],
+    refs: { vehiculo_id: "vehiculos", chequeo_id: "chequeos", conductor_id: "conductores" },
+    obligatorias: ["vehiculo_id"] },
+  { hoja: "Gastos",           tabla: "asa_flota_gastos",            clave: ["vehiculo_id", "fecha", "tipo", "monto"],
+    refs: { vehiculo_id: "vehiculos", conductor_id: "conductores" },
+    obligatorias: ["vehiculo_id"] },
+  { hoja: "Documentos",       tabla: "asa_flota_documentos",        clave: ["vehiculo_id", "tipo", "vence"],
+    refs: { vehiculo_id: "vehiculos" },
+    obligatorias: ["vehiculo_id"] },
+  { hoja: "Mantenimientos",   tabla: "asa_flota_mantenimientos",    clave: ["vehiculo_id", "tipo"],
+    refs: { vehiculo_id: "vehiculos" },
+    obligatorias: ["vehiculo_id"] },
+];
+
+/** Una celda de Excel puede venir de seis formas distintas. Aquí se aplanan a
+ *  un valor de JavaScript, y el vacío siempre termina en null — no en "". */
+export function valorCelda(v) {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "object") {
+    if (Array.isArray(v.richText)) return v.richText.map((t) => t.text).join("");
+    if (v.result !== undefined) return valorCelda(v.result);      // celda con fórmula
+    if (v.text !== undefined) return valorCelda(v.text);          // enlace
+    return JSON.stringify(v);
+  }
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t === "" || t === "null" || t === "undefined") return null;
+    if (t === "true") return true;
+    if (t === "false") return false;
+    return t;
+  }
+  return v;
+}
+
+/** Lee una hoja como lista de objetos usando la primera fila de encabezados. */
+export function leerHoja(wb, nombre) {
+  const ws = wb.getWorksheet(nombre);
+  if (!ws) return null;   // hoja ausente: el archivo puede ser de una versión anterior
+
+  const encabezados = [];
+  ws.getRow(1).eachCell({ includeEmpty: true }, (celda, col) => {
+    encabezados[col] = String(celda.value ?? "").trim();
+  });
+
+  const filas = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const fila = {};
+    let algo = false;
+    ws.getRow(r).eachCell({ includeEmpty: false }, (celda, col) => {
+      const clave = encabezados[col];
+      if (!clave) return;
+      const v = valorCelda(celda.value);
+      if (v !== null) algo = true;
+      fila[clave] = v;
+    });
+    if (algo) filas.push(fila);
+  }
+  return filas;
+}
+
+router.post("/importar-excel", ruta(async (req, res) => {
+  const { archivo_base64, simular = false } = req.body || {};
+  if (!archivo_base64) return fallo(res, 400, "Falta el archivo.");
+
+  let wb;
+  try {
+    const binario = Buffer.from(String(archivo_base64).replace(/^data:[^,]+,/, ""), "base64");
+    wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(binario);
+  } catch (e) {
+    return fallo(res, 400, `No se pudo leer el archivo: ${e.message}. ¿Seguro que es el .xlsx que exporta el CRM?`);
+  }
+
+  // Un archivo equivocado (un reporte de costos, por ejemplo) no trae estas
+  // hojas. Mejor decirlo de una que escribir a medias.
+  if (!wb.getWorksheet("Vehiculos") && !wb.getWorksheet("Conductores")) {
+    return fallo(res, 400,
+      "Ese archivo no tiene las hojas de la flota. Debe ser el que sale de " +
+      "CRM Sólido → ASA → Configuración → Exportar.");
+  }
+
+  const mapas = { conductores: new Map(), vehiculos: new Map(), chequeos: new Map() };
+  const resumen = [];
+  const avisos = [];
+
+  for (const def of HOJAS_IMPORTAR) {
+    const filas = leerHoja(wb, def.hoja);
+    if (filas === null) {
+      avisos.push(`La hoja "${def.hoja}" no está en el archivo; se saltó.`);
+      continue;
+    }
+
+    let nuevos = 0, actualizados = 0, saltados = 0;
+
+    for (const cruda of filas) {
+      const { id: idViejo, created_at: _c, updated_at: _u, ...fila } = cruda;
+
+      // Reescribir las referencias a otras hojas con los ids de aquí
+      let referenciaRota = false;
+      for (const [columna, mapa] of Object.entries(def.refs || {})) {
+        const viejo = fila[columna];
+        if (viejo === null || viejo === undefined) { fila[columna] = null; continue; }
+        const nuevo = mapas[mapa].get(Number(viejo));
+        if (nuevo === undefined || nuevo === -1) {
+          // El registro al que apunta no vino en el archivo (o no existe aquí).
+          // Si esa referencia es obligatoria — un parte sin vehículo, un gasto
+          // sin unidad — la fila se salta entera en vez de dejarla huérfana o
+          // hacer reventar la llave foránea a mitad de la carga.
+          if ((def.obligatorias || []).includes(columna)) referenciaRota = true;
+          fila[columna] = null;
+        } else {
+          fila[columna] = nuevo;
+        }
+      }
+      if (referenciaRota) { saltados++; continue; }
+
+      // Las columnas jsonb vienen como texto en la celda
+      for (const columna of def.json || []) {
+        if (typeof fila[columna] === "string") {
+          try { fila[columna] = JSON.parse(fila[columna]); } catch { fila[columna] = {}; }
+        }
+      }
+
+      // Clave natural: con qué se decide si esta fila ya existe aquí
+      let clave = def.clave;
+      if (def.claveAlterna && (fila[clave[0]] === null || fila[clave[0]] === undefined)) clave = def.claveAlterna;
+      if (clave.some((k) => fila[k] === null || fila[k] === undefined)) { saltados++; continue; }
+
+      if (simular) { nuevos++; continue; }
+
+      let q = supabase.from(def.tabla).select("id");
+      for (const k of clave) q = q.eq(k, fila[k]);
+      const { data: ya } = await q.maybeSingle();
+
+      if (ya) {
+        const { error } = await supabase.from(def.tabla).update(fila).eq("id", ya.id);
+        if (error) return fallo(res, 500, `${def.hoja}: ${error.message}`);
+        if (def.mapa && idViejo != null) mapas[def.mapa].set(Number(idViejo), ya.id);
+        actualizados++;
+      } else {
+        const { data, error } = await supabase.from(def.tabla).insert([fila]).select("id").single();
+        if (error) return fallo(res, 500, `${def.hoja} (fila con ${clave.map((k) => `${k}=${fila[k]}`).join(", ")}): ${error.message}`);
+        if (def.mapa && idViejo != null) mapas[def.mapa].set(Number(idViejo), data.id);
+        nuevos++;
+      }
+    }
+
+    // En modo prueba no se escribe nada, así que no hay ids nuevos que mapear.
+    // Se llena el mapa con los que YA existen aquí para que las hojas que
+    // dependen de ellos no reporten todo como saltado.
+    if (simular && def.mapa) {
+      const columnaClave = def.clave[0];
+      const { data: existentes } = await supabase.from(def.tabla).select(`id, ${columnaClave}`);
+      const porClave = new Map((existentes || []).map((x) => [String(x[columnaClave]), x.id]));
+      for (const f of filas) {
+        const suyo = porClave.get(String(f[columnaClave]));
+        if (f.id != null) mapas[def.mapa].set(Number(f.id), suyo ?? -1);
+      }
+    }
+
+    resumen.push({ hoja: def.hoja, leidas: filas.length, nuevos, actualizados, saltados });
+  }
+
+  // Ajustes del módulo
+  const cfg = leerHoja(wb, "Configuracion");
+  if (cfg?.length && !simular) {
+    for (const fila of cfg) {
+      if (fila.clave !== "asa_flota_config" || !fila.valor) continue;
+      let valor = fila.valor;
+      if (typeof valor === "string") { try { valor = JSON.parse(valor); } catch { continue; } }
+      await supabase.from("asa_config_sistema")
+        .upsert([{ clave: "asa_flota_config", valor, updated_at: new Date().toISOString() }], { onConflict: "clave" });
+    }
+  }
+
+  if (!simular) {
+    logAccion(req, {
+      accion: "crear",
+      modulo: "flota_importacion",
+      descripcion: `Importación de la flota desde Excel: ${resumen.map((r) => `${r.hoja} ${r.nuevos}+${r.actualizados}`).join(", ")}`,
+      detalle: { resumen },
+    });
+  }
+
+  res.json({
+    error: false,
+    simulado: !!simular,
+    resumen,
+    avisos,
+    totales: {
+      nuevos: resumen.reduce((a, r) => a + r.nuevos, 0),
+      actualizados: resumen.reduce((a, r) => a + r.actualizados, 0),
+      saltados: resumen.reduce((a, r) => a + r.saltados, 0),
+    },
+    nota: "Las fotos no vienen en el archivo: sus enlaces siguen apuntando al almacenamiento del CRM del taller.",
+  });
+}));
 
 /**
  * Fábrica de CRUD: todas estas tablas se comportan igual.

@@ -515,3 +515,51 @@ table.data tbody tr.clickable{cursor:pointer}
 /* Bloque plegable de coordenadas al subir un plano */
 .bloque-geo { border: 1px solid var(--linea, #e2e8f0); border-radius: 10px; padding: 10px 12px; margin-top: 4px; }
 .bloque-geo summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   IMPRESIÓN DEL COMPROBANTE DE SERVICIO
+   
+   La capa #area-impresion solo existe mientras dura la impresión. En
+   pantalla está escondida; al imprimir, se esconde todo lo demás y queda
+   ella sola. Así no hay que duplicar la ficha en otra ventana — que era
+   justo lo que tumbaba el navegador cuando el servicio traía fotos en
+   base64.
+   ═══════════════════════════════════════════════════════════════════════ */
+#area-impresion { display: none; }
+
+.imp-encabezado {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;
+  border-bottom: 3px solid #32539C; padding-bottom: 12px; margin-bottom: 18px;
+}
+.imp-encabezado h1 { font-size: 19px; margin: 0; color: #32539C; }
+.imp-encabezado p  { margin: 2px 0 0; color: #475569; font-size: 12.5px; }
+
+@media print {
+  @page { margin: 14mm; }
+
+  /* Fuera el armazón del panel: barra lateral, topbar, modales y avisos */
+  body > *:not(#area-impresion) { display: none !important; }
+
+  #area-impresion {
+    display: block !important;
+    position: static;
+    padding: 0;
+    background: #fff;
+    color: #0f172a;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* Que una foto o una fila de tabla no se parta entre dos hojas */
+  #area-impresion .fs-fotos figure,
+  #area-impresion .fs-cabecera,
+  #area-impresion tr { break-inside: avoid; page-break-inside: avoid; }
+  #area-impresion h4 { break-after: avoid; page-break-after: avoid; }
+
+  /* Tres fotos por fila al imprimir: a dos salen enormes y gastan páginas */
+  #area-impresion .fs-fotos { grid-template-columns: repeat(3, 1fr); }
+  #area-impresion .fs-fotos img { height: 120px; }
+
+  /* Los fondos de color se imprimen: el rojo del "no realizado" es
+     información, no decoración. */
+  #area-impresion * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

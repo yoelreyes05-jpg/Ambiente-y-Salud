@@ -363,25 +363,34 @@ function valorRespuestaTexto(r) {
   return r.valor_texto || "—";
 }
 
-// Imprimir: se abre una ventana con la misma ficha y la hoja de estilos de
-// impresion. No se usa la ventana del panel porque el modal vive dentro de un
-// layout con barra lateral, y al imprimirlo salia la mitad de la pantalla.
-function imprimirServicio(d) {
-  const v = window.open("", "_blank", "width=900,height=1000");
-  if (!v) return toast("El navegador bloqueó la ventana de impresión", true);
+// Imprimir el comprobante del servicio.
+//
+// Se imprime EN LA MISMA PÁGINA, con una capa que solo existe mientras dura la
+// impresión. La versión anterior abría una ventana nueva y le escribía el HTML
+// con document.write, y eso tumbaba el navegador por tres razones:
+//
+//   1. Volvía a serializar la ficha COMPLETA, y las fotos de las inspecciones
+//      viejas están guardadas en base64 dentro del propio registro. Una foto de
+//      celular en base64 son cientos de miles de caracteres; cinco fotos son
+//      varios megabytes de texto metidos de un golpe con document.write. Ahí es
+//      donde la pestaña se traba o se cae.
+//   2. `ventana.onload` se enganchaba DESPUÉS de document.close(), cuando el
+//      evento load ya había pasado, así que el diálogo de impresión muchas
+//      veces no salía nunca.
+//   3. Con el panel abierto como archivo local, `location.origin` vale "null" y
+//      la hoja de estilos quedaba apuntando a "nullstyles.css": salía sin
+//      formato.
+//
+// Imprimiendo en la misma página no se copia nada: las fotos ya están en el DOM
+// y el navegador las reusa. Tampoco hay ventana emergente que un bloqueador
+// pueda frenar.
+async function imprimirServicio(d) {
+  document.getElementById("area-impresion")?.remove();
 
-  v.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8" />
-    <title>${esc(d.punto.codigo)} — ${esc(d.planta || "")}</title>
-    <link rel="stylesheet" href="${location.origin}${location.pathname.replace(/[^/]*$/, "")}styles.css" />
-    <style>
-      body { background:#fff; padding:28px; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:#0f172a }
-      .encabezado { display:flex; justify-content:space-between; align-items:flex-start;
-                    border-bottom:3px solid #32539C; padding-bottom:12px; margin-bottom:18px }
-      .encabezado h1 { font-size:19px; margin:0; color:#32539C }
-      .encabezado p { margin:2px 0 0; color:#475569; font-size:12.5px }
-      @media print { @page { margin:14mm } .fs-fotos img { break-inside:avoid } }
-    </style></head><body>
-    <div class="encabezado">
+  const capa = document.createElement("div");
+  capa.id = "area-impresion";
+  capa.innerHTML = `
+    <div class="imp-encabezado">
       <div>
         <h1>${esc(CONFIG.NOMBRE_SISTEMA)}</h1>
         <p>Comprobante de servicio · Control integrado de plagas</p>
@@ -389,12 +398,30 @@ function imprimirServicio(d) {
       </div>
       <p>Impreso el ${esc(new Date().toLocaleString("es-DO"))}</p>
     </div>
-    ${fichaServicioHTML(d)}
-    </body></html>`);
-  v.document.close();
-  // Se espera a que carguen las fotos: sin esto, Chrome imprime los recuadros
-  // vacios porque dispara el dialogo antes de que lleguen las imagenes.
-  v.onload = () => setTimeout(() => v.print(), 350);
+    ${fichaServicioHTML(d)}`;
+  document.body.appendChild(capa);
+
+  // Esperar a que las fotos estén listas: si no, Chrome dispara el diálogo
+  // antes y salen los recuadros vacíos. Con tope de 8 segundos, porque una foto
+  // que no carga no puede dejar al usuario sin imprimir el resto.
+  const fotos = [...capa.querySelectorAll("img")];
+  await Promise.race([
+    Promise.all(fotos.map((img) => img.complete
+      ? Promise.resolve()
+      : new Promise((ok) => { img.onload = ok; img.onerror = ok; }))),
+    new Promise((ok) => setTimeout(ok, 8000)),
+  ]);
+
+  const limpiar = () => {
+    capa.remove();
+    window.removeEventListener("afterprint", limpiar);
+  };
+  window.addEventListener("afterprint", limpiar);
+  // Safari en iOS no dispara afterprint: una red de seguridad para que la capa
+  // no se quede pegada encima del panel.
+  setTimeout(limpiar, 60000);
+
+  window.print();
 }
 
 // ═════════════════════════════════════════════════════════════════════════

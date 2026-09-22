@@ -872,6 +872,28 @@ async function flotaConfig(cuerpo) {
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>Traer la flota desde el CRM del taller</h2></div>
+      <p class="text-muted">
+        En <strong>CRM Sólido → ASA → Configuración → Exportar</strong> descargas el
+        Excel con toda la flota. Aquí lo subes. Primero hazlo en
+        <strong>modo prueba</strong>: no escribe nada y te dice exactamente qué
+        entraría.
+      </p>
+      <div class="toolbar">
+        <input type="file" id="fc-archivo" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+        <button class="btn btn-sm" id="fc-probar">Probar sin escribir</button>
+        <button class="btn btn-sm btn-primary" id="fc-importar">Importar de verdad</button>
+      </div>
+      <div id="fc-resultado"></div>
+      <p class="text-muted" style="margin-top:10px">
+        Subir el mismo archivo dos veces <strong>actualiza, no duplica</strong>: cada hoja
+        se reconcilia por su clave (código del vehículo, cédula del conductor,
+        vehículo + fecha + turno del parte). Las fotos no vienen en el archivo,
+        solo sus enlaces, que siguen apuntando al almacenamiento del CRM.
+      </p>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>Enlace del chequeo para los conductores</h2></div>
       <p class="text-muted">Mándalo por WhatsApp y que lo guarden en la pantalla de inicio del celular.</p>
       <div class="toolbar">
@@ -935,6 +957,8 @@ async function flotaConfig(cuerpo) {
     (catFallas["catalogo-fallas"] || []).map((x) => ({ ...x, _clickable: false })), ""
   );
 
+  $("#fc-probar").addEventListener("click", () => importarFlota(true, cuerpo));
+  $("#fc-importar").addEventListener("click", () => importarFlota(false, cuerpo));
   $("#fc-nuevo-cond").addEventListener("click", () => modalConductor(null, () => flotaConfig(cuerpo)));
   $("#fc-copiar").addEventListener("click", () => {
     $("#fc-enlace").select();
@@ -985,4 +1009,78 @@ function modalConductor(c, onSaved) {
       onSaved?.();
     },
   });
+}
+
+
+// ── Importar la flota desde el Excel del CRM ─────────────────────────────
+//
+// Dos botones y no uno: la prueba primero. Una importación que ya escribió no
+// se deshace con un botón, y ver el conteo antes es lo que evita descubrir a
+// mitad de camino que el archivo era el equivocado.
+async function importarFlota(simular, contenedor) {
+  const input = $("#fc-archivo");
+  const archivo = input?.files?.[0];
+  const salida = $("#fc-resultado");
+
+  if (!archivo) {
+    salida.innerHTML = `<div class="form-error" style="display:block">Elige primero el archivo .xlsx</div>`;
+    return;
+  }
+  if (!simular && !confirm(
+    `Se va a cargar "${archivo.name}" en la flota de Ambiente y Salud.\n\n` +
+    `Lo que ya exista se actualiza; lo que no, se crea. ¿Seguir?`
+  )) return;
+
+  salida.innerHTML = `<div class="center-msg">${simular ? "Revisando" : "Importando"} el archivo… puede tardar un minuto.</div>`;
+
+  try {
+    const base64 = await new Promise((ok, mal) => {
+      const fr = new FileReader();
+      fr.onload = () => ok(String(fr.result).split(",")[1]);
+      fr.onerror = () => mal(new Error("No se pudo leer el archivo"));
+      fr.readAsDataURL(archivo);
+    });
+
+    const r = await apiFlota.post("/importar-excel", { archivo_base64: base64, simular });
+
+    salida.innerHTML = `
+      <div class="card" style="margin-top:12px;border-left:4px solid ${simular ? "#32539C" : "#4A7D4D"}">
+        <div class="card-head">
+          <h2>${simular ? "Prueba — no se escribió nada" : "Importación terminada"}</h2>
+          <span class="text-muted">
+            ${r.totales.nuevos} nuevos · ${r.totales.actualizados} actualizados${r.totales.saltados ? ` · ${r.totales.saltados} saltados` : ""}
+          </span>
+        </div>
+        ${tableHTML(
+          [
+            { key: "hoja", label: "Hoja", fmt: (x) => `<strong>${esc(x.hoja)}</strong>` },
+            { key: "leidas", label: "Filas en el archivo" },
+            { key: "nuevos", label: simular ? "Entrarían" : "Nuevos" },
+            { key: "actualizados", label: "Actualizados" },
+            {
+              key: "saltados", label: "Saltados",
+              fmt: (x) => (x.saltados ? `<span class="estado-chip pendiente">${x.saltados}</span>` : "0"),
+            },
+          ],
+          r.resumen.map((x) => ({ ...x, _clickable: false })),
+          "El archivo no traía filas."
+        )}
+        ${r.totales.saltados ? `<p class="text-muted">
+          Las filas saltadas son las que apuntan a algo que no vino en el archivo
+          — un parte de un vehículo que ya no existe, por ejemplo. No es un error:
+          es lo que evita dejar registros huérfanos.
+        </p>` : ""}
+        ${r.avisos?.length ? `<p class="text-muted">${r.avisos.map(esc).join("<br>")}</p>` : ""}
+        <p class="text-muted">${esc(r.nota || "")}</p>
+      </div>`;
+
+    if (!simular) {
+      toast(`Flota importada: ${r.totales.nuevos} nuevos, ${r.totales.actualizados} actualizados`);
+      // Se recarga la pantalla para que los conductores nuevos aparezcan ya,
+      // pero después de que se haya podido leer el resumen.
+      setTimeout(() => flotaConfig(contenedor), 4000);
+    }
+  } catch (e) {
+    salida.innerHTML = `<div class="form-error" style="display:block">${esc(e.message)}</div>`;
+  }
 }
