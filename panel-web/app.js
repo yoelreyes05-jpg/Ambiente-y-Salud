@@ -235,6 +235,8 @@ if (typeof MODULOS_EXTRA_3 !== "undefined") MODULES.push(...MODULOS_EXTRA_3);
 if (typeof MODULOS_EXTRA_4 !== "undefined") MODULES.splice(3, 0, ...MODULOS_EXTRA_4);
 // documentos.js aporta Documentos (licencias, fichas técnicas y productos que ve el hotel).
 if (typeof MODULOS_EXTRA_5 !== "undefined") MODULES.push(...MODULOS_EXTRA_5);
+// limpieza.js aporta "Borrar datos de prueba" (solo admin).
+if (typeof MODULOS_EXTRA_6 !== "undefined") MODULES.push(...MODULOS_EXTRA_6);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:

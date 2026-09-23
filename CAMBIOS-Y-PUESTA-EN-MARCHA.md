@@ -498,3 +498,29 @@ de mandarla y que el servidor la rechace.
 3. Si usas **Permisos por rol**, dale "Documentos y productos" a operaciones/comercial.
 4. En el panel: cargar los productos y adjuntar licencias, manual, protocolo y fichas.
 5. En los celulares, cerrar y abrir la app del técnico para que tome la versión v9.
+
+---
+
+## Borrar datos de prueba — solo administrador (23-sep-2026)
+
+**Panel → Administración → 🧹 Borrar datos de prueba** (no aparece para otros roles
+y el servidor rechaza a quien no sea admin).
+
+1. Escoge qué revisar: inspecciones, hallazgos, solicitudes, chequeos de
+   vehículos, fallas, gastos de flota, QR sin asignar, documentos, productos,
+   bitácora; o datos base: clientes, plantas, puntos, vehículos, conductores,
+   usuarios. Al lado sale cuántos hay.
+2. Filtra por planta, fechas o texto.
+3. Marca uno por uno (o "Marcar todos los que se ven") → "Borrar marcados" →
+   escribe **BORRAR**.
+
+- Solo se borra lo marcado; se borra de verdad, con sus fotos/archivos en Storage.
+- Los datos base avisan en rojo lo que arrastran (borrar un cliente borra sus
+  plantas, puntos e inspecciones).
+- Al borrar chequeos, el kilometraje del vehículo se recalcula.
+- No te deja borrar tu propia cuenta ni quedarte sin administrador.
+- Queda anotado en la Auditoría quién borró cuántos.
+
+**Archivos:** `backend/routes/limpieza.js` (nuevo), `backend/server.mjs`,
+`panel-web/limpieza.js` (nuevo), `panel-web/index.html`, `panel-web/app.js`.
+No requiere SQL. Solo subir a GitHub.
