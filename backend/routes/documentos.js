@@ -21,6 +21,19 @@ import { logAccion } from "../lib/auditoria.js";
 import { requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
 
 const router = express.Router();
+
+// Express 4 no atrapa errores de funciones async: una excepción tumbaba el
+// servidor entero. Se envuelve cada handler para que responda 500 y siga vivo.
+for (const metodo of ["get", "post", "put", "patch", "delete"]) {
+  const original = router[metodo].bind(router);
+  router[metodo] = (ruta, ...handlers) =>
+    original(ruta, ...handlers.map((h) => (req, res, next) => {
+      try {
+        const r = h(req, res, next);
+        if (r && typeof r.catch === "function") r.catch(next);
+      } catch (e) { next(e); }
+    }));
+}
 const BUCKET = "asa-documentos";
 const MAX_BYTES = 15 * 1024 * 1024;
 const ESCRIBEN = requireRol("operaciones", "comercial");   // admin pasa siempre
@@ -157,6 +170,11 @@ function darForma(d, externo) {
 }
 
 // Consulta base de documentos con el alcance del usuario aplicado.
+//
+// OJO: devuelve { q } y no el constructor directo. El constructor de Supabase
+// es "thenable": si una función async lo devuelve tal cual, el `await` del que
+// llama lo EJECUTA y entrega { data, error } en vez del constructor, y luego
+// q.order / q.eq revientan con "is not a function".
 async function consultaDocumentos(req) {
   let q = supabase.from("asa_documentos").select(SELECT_DOC).eq("activo", true);
   if (esExterno(req)) {
@@ -166,7 +184,7 @@ async function consultaDocumentos(req) {
       ? q.or(`cliente_id.is.null,cliente_id.in.(${clientes.join(",")})`)
       : q.is("cliente_id", null);
   }
-  return q;
+  return { q };
 }
 
 // ── Catálogo de categorías (para los selects) ───────────────────────────────
@@ -186,7 +204,7 @@ router.get("/productos", async (req, res) => {
   const { data: productos, error } = await q;
   if (error) return fallo(res, 500, error.message);
 
-  let dq = await consultaDocumentos(req);
+  let { q: dq } = await consultaDocumentos(req);
   dq = dq.not("producto_id", "is", null);
   const { data: docs, error: e2 } = await dq;
   if (e2) return fallo(res, 500, e2.message);
@@ -233,7 +251,7 @@ function productoDesdeCuerpo(b) {
 // ── Documentos ──────────────────────────────────────────────────────────────
 // GET /documentos?categoria=&producto_id=
 router.get("/", async (req, res) => {
-  let q = await consultaDocumentos(req);
+  let { q } = await consultaDocumentos(req);
   if (req.query.categoria) q = q.eq("categoria", req.query.categoria);
   if (req.query.producto_id) q = q.eq("producto_id", req.query.producto_id);
   const { data, error } = await q.order("categoria").order("titulo");
@@ -243,7 +261,7 @@ router.get("/", async (req, res) => {
 
 // GET /documentos/:id/archivo — enlace firmado de 1 hora para ver o descargar.
 router.get("/:id/archivo", async (req, res) => {
-  let q = await consultaDocumentos(req);
+  let { q } = await consultaDocumentos(req);
   const { data: doc, error } = await q.eq("id", req.params.id).maybeSingle();
   if (error) return fallo(res, 500, error.message);
   if (!doc) return fallo(res, 404, "Documento no encontrado.");
