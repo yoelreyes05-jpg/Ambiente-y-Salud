@@ -218,16 +218,23 @@ async function formularioChequeo(vehiculoId, conductorId, datos) {
       <div class="campo">
         <div class="fotos-angulos">
           ${ANGULOS.map(([codigo, etiqueta]) => `
-            <label class="foto-angulo" data-angulo="${codigo}">
-              <!-- Sin el atributo capture: así el teléfono pregunta si se toma
-                   ahora o se escoge una del carrete. Con capture abría la cámara
-                   de una y no había forma de usar una foto ya tomada. -->
-              <input type="file" accept="image/*" hidden />
+            <div class="foto-angulo" data-angulo="${codigo}">
+              <!-- Dos entradas por ángulo. En Android 14+ el input sin
+                   "capture" abre el selector de fotos del sistema, que NO
+                   ofrece la cámara: por eso el técnico no podía tirar la foto.
+                   La de cámara lleva capture="environment" (abre la cámara
+                   trasera directo) y la otra deja escoger una ya tomada. -->
+              <input type="file" class="in-camara" accept="image/*" capture="environment" hidden />
+              <input type="file" class="in-galeria" accept="image/*" hidden />
               <span class="fa-txt">${esc(etiqueta)}</span>
-              <span class="fa-marca">+</span>
-            </label>`).join("")}
+              <span class="fa-marca">📷</span>
+              <div class="fa-botones">
+                <button type="button" class="fa-btn" data-origen="camara">📷 Cámara</button>
+                <button type="button" class="fa-btn" data-origen="galeria">🖼️ Fotos</button>
+              </div>
+            </div>`).join("")}
         </div>
-        <small class="ayuda">Cinco ángulos. Puedes tomarlas ahora o escogerlas de tus fotos; se achican en el teléfono antes de subirlas.</small>
+        <small class="ayuda">Cinco ángulos. Toca el recuadro o “Cámara” para tomarla ahora, o “Fotos” para escoger una ya tomada. Se achican en el teléfono antes de subirlas.</small>
       </div>
 
       <div class="campo">
@@ -292,16 +299,42 @@ async function formularioChequeo(vehiculoId, conductorId, datos) {
 
   // ── Fotos ──────────────────────────────────────────────────────────────
   const fotos = {};
-  cuerpo.querySelectorAll(".foto-angulo").forEach((label) => {
-    label.querySelector("input").addEventListener("change", async (e) => {
-      const archivo = e.target.files[0];
-      if (!archivo) return;
-      const dataUrl = await reducirImagen(archivo, 1280, 0.65);
-      fotos[label.dataset.angulo] = dataUrl;
-      label.classList.add("lista");
-      label.style.backgroundImage = `url(${dataUrl})`;
-      label.querySelector(".fa-marca").textContent = "✓";
+  cuerpo.querySelectorAll(".foto-angulo").forEach((caja) => {
+    const inCamara = caja.querySelector(".in-camara");
+    const inGaleria = caja.querySelector(".in-galeria");
+
+    // Tocar el recuadro abre la cámara; los botones eligen el origen.
+    caja.addEventListener("click", (e) => {
+      // El .click() de abajo también sube hasta aquí: sin este corte se
+      // volvería a disparar a sí mismo.
+      if (e.target.tagName === "INPUT") return;
+      const btn = e.target.closest(".fa-btn");
+      (btn?.dataset.origen === "galeria" ? inGaleria : inCamara).click();
     });
+
+    const alElegir = async (e) => {
+      const archivo = e.target.files && e.target.files[0];
+      e.target.value = "";           // así la misma foto se puede volver a escoger
+      if (!archivo) return;
+      const marca = caja.querySelector(".fa-marca");
+      marca.textContent = "…";
+      try {
+        const dataUrl = await reducirImagen(archivo, 1280, 0.65);
+        if (!/^data:image\/(jpeg|png|webp)/.test(dataUrl)) {
+          throw new Error("Formato de foto no compatible");
+        }
+        fotos[caja.dataset.angulo] = dataUrl;
+        caja.classList.add("lista");
+        caja.style.backgroundImage = `url(${dataUrl})`;
+        marca.textContent = "✓";
+        vibrar(15);
+      } catch (err) {
+        marca.textContent = "📷";
+        aviso("No se pudo usar esa foto. Tómala de nuevo con la cámara.", "error");
+      }
+    };
+    inCamara.addEventListener("change", alElegir);
+    inGaleria.addEventListener("change", alElegir);
   });
 
   function estadoActual() {

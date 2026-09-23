@@ -433,6 +433,12 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
 }
 .foto-angulo.lista { border-style: solid; border-color: var(--verde); }
+.foto-angulo { height: 118px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.foto-angulo .fa-botones { display: flex; gap: 4px; margin-top: 2px; }
+.foto-angulo .fa-btn {
+  font-size: 11px; font-weight: 600; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid var(--gris-400); background: rgba(255,255,255,.92); color: var(--gris-900);
+}
 .foto-angulo .fa-txt {
   font-size: 12px; font-weight: 600; color: var(--gris-900);
   background: rgba(255,255,255,.85); padding: 2px 6px; border-radius: 6px;

@@ -1157,23 +1157,39 @@ function leerRespuesta(form, p) {
 // Las fotos se reducen antes de guardarlas: una foto de teléfono pesa 4 MB y
 // en la cola offline eso llena el almacenamiento en pocas inspecciones.
 function reducirImagen(archivo, maxLado = 1280, calidad = 0.7) {
-  return new Promise((ok) => {
+  // Dibuja la foto achicada en un canvas y la devuelve como JPEG.
+  // Si el navegador no la puede leer (formato raro), devuelve el data URL
+  // original: quien llama decide si le sirve (el chequeo lo rechaza).
+  const dibujar = (fuente, ancho, alto) => {
+    const escala = Math.min(1, maxLado / Math.max(ancho, alto));
+    const lienzo = document.createElement("canvas");
+    lienzo.width = Math.max(1, Math.round(ancho * escala));
+    lienzo.height = Math.max(1, Math.round(alto * escala));
+    lienzo.getContext("2d").drawImage(fuente, 0, 0, lienzo.width, lienzo.height);
+    return lienzo.toDataURL("image/jpeg", calidad);
+  };
+  const porImagen = () => new Promise((ok) => {
     const lector = new FileReader();
     lector.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const escala = Math.min(1, maxLado / Math.max(img.width, img.height));
-        const lienzo = document.createElement("canvas");
-        lienzo.width = Math.round(img.width * escala);
-        lienzo.height = Math.round(img.height * escala);
-        lienzo.getContext("2d").drawImage(img, 0, 0, lienzo.width, lienzo.height);
-        ok(lienzo.toDataURL("image/jpeg", calidad));
+        try { ok(dibujar(img, img.naturalWidth || img.width, img.naturalHeight || img.height)); }
+        catch { ok(lector.result); }
       };
       img.onerror = () => ok(lector.result);
       img.src = lector.result;
     };
+    lector.onerror = () => ok("");
     lector.readAsDataURL(archivo);
   });
+  // createImageBitmap es más rápido, no revienta la memoria con fotos de 50MP
+  // y respeta la orientación de la cámara. Si no existe o falla, plan B.
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(archivo, { imageOrientation: "from-image" })
+      .then((bmp) => { const r = dibujar(bmp, bmp.width, bmp.height); bmp.close?.(); return r; })
+      .catch(porImagen);
+  }
+  return porImagen();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

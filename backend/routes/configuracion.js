@@ -126,6 +126,7 @@ export const MODULOS_PERMISOS = [
   ["clientes", "Clientes"],
   ["plantas", "Plantas"],
   ["solicitudes", "Solicitudes del hotel"],
+  ["documentos", "Documentos y productos"],
   ["puntos", "Puntos de control"],
   ["estrategias", "Estrategias"],
   ["tipos_punto", "Tipos de punto"],

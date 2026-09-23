@@ -344,3 +344,21 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .mapa-pin.rojo{background:#e53935}
 .mapa-pin.activo{width:24px;height:24px;z-index:2;outline:3px solid rgba(50,83,156,.45)}
 .mapa-info{margin:10px 0 16px;font-size:13.5px;color:var(--suave);text-align:center;min-height:20px}
+
+/* ── Documentos ──────────────────────────────────────────────────────────*/
+.doc-fila,.doc-prod{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--borde)}
+.tarjeta h2 + .doc-fila,.tarjeta h2 + .doc-buscar,#doc-productos .doc-prod:first-child{border-top:0}
+.doc-ic{font-size:22px;line-height:1}
+.doc-info{flex:1;min-width:0}
+.doc-tit{font-weight:700;font-size:14.5px}
+.doc-sub{font-size:12.5px;color:var(--suave);margin-top:3px}
+.doc-acc{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.doc-vig{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:4px;vertical-align:middle}
+.doc-vig.ok{background:var(--verde-claro);color:var(--verde)}
+.doc-vig.aviso{background:var(--ambar-claro);color:var(--ambar)}
+.doc-vig.mal{background:var(--rojo-claro);color:var(--rojo)}
+.doc-buscar{width:100%;border:1px solid var(--borde);border-radius:10px;padding:9px 12px;font:inherit;margin-bottom:6px}
+@media (max-width:560px){
+  .doc-fila,.doc-prod{flex-wrap:wrap}
+  .doc-acc{width:100%;justify-content:flex-start}
+}

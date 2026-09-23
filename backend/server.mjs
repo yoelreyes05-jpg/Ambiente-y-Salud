@@ -71,6 +71,7 @@ import notificacionesRouter from "./routes/notificaciones.js";
 import configuracionRouter from "./routes/configuracion.js";
 import auditoriaRouter from "./routes/auditoria.js";
 import flotaRouter, { publico as flotaPublico } from "./routes/flota.js";
+import documentosRouter from "./routes/documentos.js";
 
 // ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
@@ -115,6 +116,8 @@ app.use("/plagas", plagasRouter);
 app.use("/solicitudes", solicitudesRouter);
 app.use("/ipm", ipmRouter);
 app.use("/inventario", inventarioRouter);
+// Documentos regulatorios y fichas de productos (el hotel los ve en su portal)
+app.use("/documentos", documentosRouter);
 app.use("/notificaciones", notificacionesRouter);
 app.use("/rnc", rncRouter);
 

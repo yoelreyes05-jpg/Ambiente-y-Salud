@@ -138,6 +138,7 @@ function pintarMarco() {
     ["mapa", "Mapa"],
     ["hallazgos", "Hallazgos"],
     ["ordenes", "Solicitudes"],
+    ["documentos", "Documentos"],
   ];
 
   app().innerHTML = `
@@ -178,7 +179,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {
@@ -1356,3 +1357,125 @@ async function arrancar() {
 }
 
 arrancar();
+
+
+// ── Documentos ───────────────────────────────────────────────────────────
+//
+// La carpeta que el hotel pide en cada auditoría, siempre a mano: licencias y
+// permisos de ASA, manual de operaciones, protocolo de trabajo y el listado de
+// productos que se aplican, cada uno con su ficha técnica y hoja de seguridad.
+// ASA los sube desde el panel; aquí solo se ven y se descargan. Los enlaces
+// de los archivos son temporales (1 hora): se piden al tocar el botón.
+const DOC_GRUPOS = [
+  ["Permisos y licencias", ["licencia_ambiental", "licencia_sanitaria", "no_objecion_salud", "registro_agricultura", "regencia"]],
+  ["Manuales y protocolos", ["manual_operaciones", "protocolo_trabajo"]],
+  ["Listado de productos", ["listado_productos"]],
+  ["Otros documentos", ["otro", "ficha_tecnica", "hoja_seguridad"]],
+];
+const DOC_VIG = {
+  vigente: ["Vigente", "ok"], por_vencer: ["Por vencer", "aviso"],
+  vencido: ["Vencido", "mal"], sin_vencimiento: ["", ""],
+};
+
+async function abrirDocumento(id, descargar) {
+  // La ventana se abre antes del await para que el navegador no la bloquee.
+  const ventana = window.open("", "_blank");
+  try {
+    const r = await GET(`/documentos/${id}/archivo${descargar ? "?descargar=1" : ""}`);
+    if (ventana) ventana.location.href = r.url;
+    else location.href = r.url;
+  } catch (e) {
+    if (ventana) ventana.close();
+    alert(e.message);
+  }
+}
+
+function tarjetaDocumento(d) {
+  const [vt, vc] = DOC_VIG[d.vigencia] || ["", ""];
+  const detalle = [
+    d.numero ? `No. ${esc(d.numero)}` : "",
+    d.emitido_por ? esc(d.emitido_por) : "",
+    d.fecha_emision ? `Emitido ${fecha(d.fecha_emision + "T12:00:00")}` : "",
+    d.fecha_vencimiento ? `Vence ${fecha(d.fecha_vencimiento + "T12:00:00")}` : "",
+    d.version ? esc(d.version) : "",
+  ].filter(Boolean).join(" · ");
+  return `
+    <div class="doc-fila">
+      <div class="doc-ic">📄</div>
+      <div class="doc-info">
+        <div class="doc-tit">${esc(d.titulo)} ${vt ? `<span class="doc-vig ${vc}">${vt}</span>` : ""}</div>
+        <div class="doc-sub">${esc(d.categoria_texto)}${detalle ? " · " + detalle : ""}</div>
+        ${d.descripcion ? `<div class="doc-sub">${esc(d.descripcion)}</div>` : ""}
+      </div>
+      ${d.tiene_archivo ? `
+        <div class="doc-acc">
+          <button class="btn principal" data-doc-ver="${d.id}">Ver</button>
+          <button class="btn" data-doc-bajar="${d.id}">Descargar</button>
+        </div>` : ""}
+    </div>`;
+}
+
+async function vistaDocumentos(cuerpo) {
+  const [docs, productos] = await Promise.all([
+    GET("/documentos"),
+    GET("/documentos/productos").catch(() => []),
+  ]);
+  const sueltos = docs.filter((d) => !d.producto_id);
+
+  const grupos = DOC_GRUPOS.map(([titulo, cats]) => {
+    const deGrupo = sueltos.filter((d) => cats.includes(d.categoria));
+    return deGrupo.length ? `
+      <div class="tarjeta">
+        <h2>${titulo}</h2>
+        ${deGrupo.map(tarjetaDocumento).join("")}
+      </div>` : "";
+  }).join("");
+
+  const filaProducto = (p) => `
+    <div class="doc-prod" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
+      <div class="doc-info">
+        <div class="doc-tit">${esc(p.nombre_comercial)}</div>
+        <div class="doc-sub">
+          ${[p.principio_activo ? `Ingrediente activo: ${esc(p.principio_activo)}` : "",
+             p.presentacion ? esc(p.presentacion) : "",
+             p.categoria_toxicologica ? `Categoría toxicológica ${esc(p.categoria_toxicologica)}` : ""].filter(Boolean).join(" · ")}
+        </div>
+        ${p.registro_agricultura || p.registro_sanitario ? `<div class="doc-sub">
+          ${p.registro_agricultura ? `Reg. Agricultura: <strong>${esc(p.registro_agricultura)}</strong>` : ""}
+          ${p.registro_sanitario ? ` · Reg. sanitario: <strong>${esc(p.registro_sanitario)}</strong>` : ""}</div>` : ""}
+        ${p.uso ? `<div class="doc-sub">Uso: ${esc(p.uso)}</div>` : ""}
+      </div>
+      <div class="doc-acc">
+        ${p.documentos.filter((d) => d.tiene_archivo).map((d) =>
+          `<button class="btn" data-doc-ver="${d.id}" title="${esc(d.titulo)}">📄 ${esc(d.categoria_texto)}</button>`).join("")
+          || `<span class="doc-sub">Ficha en preparación</span>`}
+      </div>
+    </div>`;
+
+  if (!sueltos.length && !productos.length) {
+    cuerpo.innerHTML = `
+      <div class="vacio"><span class="emoji">📁</span>
+        ${esc(CONFIG.EMPRESA)} todavía no ha publicado documentos en el portal.
+      </div>`;
+    return;
+  }
+
+  cuerpo.innerHTML = `
+    ${grupos}
+    ${productos.length ? `
+      <div class="tarjeta">
+        <h2>Productos que utilizamos · ${productos.length}</h2>
+        ${productos.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto, ingrediente o plaga…" />` : ""}
+        <div id="doc-productos">${productos.map(filaProducto).join("")}</div>
+      </div>` : ""}
+    <p style="color:var(--suave);font-size:12.5px;text-align:center">
+      Documentos publicados por ${esc(CONFIG.EMPRESA)}. Si necesitas uno que no aparece, pídelo en Solicitudes.
+    </p>`;
+
+  $$("[data-doc-ver]", cuerpo).forEach((b) => b.addEventListener("click", () => abrirDocumento(b.dataset.docVer, false)));
+  $$("[data-doc-bajar]", cuerpo).forEach((b) => b.addEventListener("click", () => abrirDocumento(b.dataset.docBajar, true)));
+  $("#doc-buscar")?.addEventListener("input", (e) => {
+    const t = e.target.value.toLowerCase().trim();
+    $$("#doc-productos .doc-prod").forEach((f) => { f.style.display = !t || f.dataset.buscar.includes(t) ? "" : "none"; });
+  });
+}

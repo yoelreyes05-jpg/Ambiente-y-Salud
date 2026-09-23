@@ -449,3 +449,52 @@ mismo historial.
 descarga de cdnjs: va incluido en `panel-web/vendor/jsQR.js` y
 `app-tecnico/jsQR.js` (en el caché de la app, caché `asa-tecnico-v8`). Funciona
 sin internet y no depende de que el navegador pueda llegar al CDN.
+
+---
+
+## Documentos para el hotel y fotos del chequeo del vehículo (23-sep-2026)
+
+**Documentos (panel → Catálogos → Documentos · portal → pestaña "Documentos").**
+La carpeta que el hotel pide en cada auditoría, siempre disponible en su portal:
+
+- **Permisos y documentos:** licencia ambiental, licencia sanitaria, no objeción
+  de Salud Pública, registro de Agricultura, regencia, manual de operaciones,
+  protocolo de trabajo, listado de productos y "otro". Cada uno con número,
+  quién lo emite, fecha de emisión y **vencimiento** (el panel y el portal
+  marcan Vigente / Por vencer (≤30 días) / Vencido).
+- **Productos que utilizamos:** el listado (nombre, ingrediente activo,
+  presentación, registro de Agricultura y sanitario, categoría toxicológica,
+  uso) con su **ficha técnica** y **hoja de seguridad** colgadas. Botones
+  "+ Ficha técnica" / "+ Hoja de seguridad" en cada producto.
+- **Adjuntar:** "+ Adjuntar documento" → PDF, imagen, Word o Excel hasta 15 MB.
+  "Editar" permite reemplazar el archivo; "Retirar" lo quita del portal (el
+  archivo se conserva).
+- **Quién lo ve:** "Todos los clientes" o un cliente en particular, y la casilla
+  "Visible para el hotel" para dejar algo solo para ASA.
+- Arriba, **"Carpeta del hotel"** dice qué falta o está vencido.
+- Los archivos van a un bucket **privado** (`asa-documentos`); el portal recibe
+  un enlace que vence en 1 hora.
+
+**Chequeo del vehículo — la foto no abría la cámara.** En Android 14+ el campo
+de foto sin `capture` abre el selector de fotos del sistema, que no trae
+cámara. Ahora cada ángulo tiene **📷 Cámara** (abre la cámara trasera directo;
+tocar el recuadro hace lo mismo) y **🖼️ Fotos** (escoger una ya tomada). La
+reducción de la foto usa `createImageBitmap` (orientación correcta, fotos
+grandes sin colgar el teléfono) y si una foto no se puede leer se avisa en vez
+de mandarla y que el servidor la rechace.
+
+**Archivos**
+
+- `supabase/32_documentos_regulatorios.sql` (nuevo)
+- `backend/routes/documentos.js` (nuevo), `backend/server.mjs`, `backend/routes/configuracion.js`
+- `panel-web/documentos.js` (nuevo), `panel-web/index.html`, `panel-web/app.js`
+- `portal-hotel/app.js`, `portal-hotel/estilos.css`
+- `app-tecnico/chequeo.js`, `app-tecnico/app.js`, `app-tecnico/estilos.css`, `app-tecnico/sw.js` (caché `asa-tecnico-v9`)
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/32_documentos_regulatorios.sql` (muestra 1 · 1 · 1).
+2. Subir a GitHub: Railway redespliega el backend; Vercel el panel, el portal y la app.
+3. Si usas **Permisos por rol**, dale "Documentos y productos" a operaciones/comercial.
+4. En el panel: cargar los productos y adjuntar licencias, manual, protocolo y fichas.
+5. En los celulares, cerrar y abrir la app del técnico para que tome la versión v9.
