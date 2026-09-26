@@ -198,7 +198,7 @@ async function docVistaDocumentos(cuerpo) {
 }
 
 // ── Formulario de documento (nuevo / editar / reemplazar archivo) ───────
-async function formDocumento(doc, { productos = [], categoria = null, productoId = null } = {}) {
+async function formDocumento(doc, { productos = [], categoria = null, productoId = null, soloPdf = false } = {}) {
   const clientes = await getClientesCache().catch(() => []);
   const cat = doc?.categoria || categoria || "licencia_ambiental";
   const prodSel = doc?.producto_id || productoId || "";
@@ -242,8 +242,8 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
       <div class="form-group">
         <label>${doc ? "Reemplazar archivo (opcional)" : "Archivo *"}</label>
         <input type="file" name="archivo" id="fd-archivo"
-               accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,application/pdf,image/*" ${doc ? "" : "required"} />
-        <div class="form-hint">PDF, imagen, Word o Excel · hasta ${DOC_MAX_MB} MB.
+               accept="${soloPdf ? ".pdf,application/pdf" : ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,application/pdf,image/*"}" ${doc ? "" : "required"} />
+        <div class="form-hint">${soloPdf ? "Archivo PDF" : "PDF, imagen, Word o Excel"} · hasta ${DOC_MAX_MB} MB.
           ${doc?.archivo_nombre ? `Actual: <strong>${esc(doc.archivo_nombre)}</strong>.` : ""}</div>
       </div>
       <label class="campo-check"><input type="checkbox" name="visible_cliente" ${doc?.visible_cliente === false ? "" : "checked"} />
@@ -286,6 +286,7 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
       const archivo = $("#fd-archivo").files[0];
       if (archivo) {
         if (archivo.size > DOC_MAX_MB * 1024 * 1024) throw new Error(`El archivo pesa más de ${DOC_MAX_MB} MB.`);
+        if (soloPdf && !/\.pdf$/i.test(archivo.name) && archivo.type !== "application/pdf") throw new Error("Aquí solo se aceptan archivos PDF.");
         $("#asa-modal-submit").textContent = "Subiendo…";
         cuerpo.archivo = { nombre: archivo.name, dataUrl: await leerArchivoComoDataUrl(archivo) };
       } else if (!doc) {
@@ -303,13 +304,28 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
 // ── Productos que utilizamos ─────────────────────────────────────────────
 async function docVistaProductos(cuerpo) {
   const editar = puedeEditar("documentos");
-  const productos = await get("/documentos/productos");
+  const [productos, listados] = await Promise.all([
+    get("/documentos/productos"),
+    get("/documentos?categoria=listado_productos").catch(() => []),
+  ]);
 
   const chipsDocs = (p) => p.documentos.length
     ? p.documentos.map((d) => `<button class="btn btn-sm" data-ver="${d.id}" title="${esc(d.titulo)}">📄 ${esc(d.categoria_texto)}</button>`).join(" ")
     : `<span class="muted">Sin documentos</span>`;
 
   cuerpo.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <h2>Listado de productos en PDF</h2>
+        <div class="actions">${editar ? `<button class="btn btn-primary" id="prod-subir-pdf">📄 Cargar PDF</button>` : ""}</div>
+      </div>
+      <p class="text-muted" style="margin-top:0">
+        Si ya tienes el listado de productos (o cualquier documento con esa información) en PDF,
+        súbelo aquí. El hotel lo ve y lo descarga desde su portal, junto al catálogo de abajo.
+      </p>
+      <div id="prod-listados"></div>
+    </div>
+
     <div class="card">
       <div class="card-head">
         <h2>Productos que utilizamos</h2>
@@ -346,6 +362,41 @@ async function docVistaProductos(cuerpo) {
     "No hay productos cargados. Agrega los que ASA aplica en los hoteles."
   );
 
+  $("#prod-listados").innerHTML = tableHTML(
+    [
+      { key: "titulo", label: "Documento", fmt: (d) => `<strong>${esc(d.titulo)}</strong>` +
+          (d.archivo_nombre ? `<br><small class="muted">📎 ${esc(d.archivo_nombre)} · ${docPeso(d.archivo_bytes)}</small>` : "") },
+      { key: "version", label: "Versión", fmt: (d) => esc(d.version || "—") },
+      { key: "fecha_emision", label: "Fecha", fmt: (d) => (d.fecha_emision ? fmtDate(d.fecha_emision + "T12:00:00") : "—") },
+      { key: "visible_cliente", label: "Lo ve", fmt: (d) => !d.visible_cliente ? `<span class="badge badge-gray">Solo ASA</span>`
+          : d.cliente_nombre ? `<span class="badge badge-cyan">${esc(d.cliente_nombre)}</span>` : `<span class="badge badge-green">Todos los hoteles</span>` },
+      { key: "acc", label: "", fmt: (d) => `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-sm" data-ver="${d.id}">Ver</button>
+            <button class="btn btn-sm" data-bajar="${d.id}">Descargar</button>
+            ${editar ? `<button class="btn btn-sm" data-editar-listado="${d.id}">Reemplazar</button>
+                        <button class="btn btn-sm btn-danger" data-quitar-listado="${d.id}">Retirar</button>` : ""}
+          </div>` },
+    ],
+    listados.map((d) => ({ ...d, _clickable: false })),
+    "Todavía no hay un listado en PDF. Usa “📄 Cargar PDF” para subirlo."
+  );
+
+  $("#prod-subir-pdf")?.addEventListener("click", () =>
+    formDocumento(null, { productos, categoria: "listado_productos", soloPdf: true }));
+  $$("[data-bajar]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.bajar, true)));
+  $$("[data-editar-listado]").forEach((b) => b.addEventListener("click", () =>
+    formDocumento(listados.find((d) => d.id === b.dataset.editarListado), { productos, soloPdf: true })));
+  $$("[data-quitar-listado]").forEach((b) => b.addEventListener("click", async () => {
+    const d = listados.find((x) => x.id === b.dataset.quitarListado);
+    if (!confirm(`¿Retirar "${d.titulo}"? El hotel dejará de verlo en su portal.`)) return;
+    try {
+      await api(`/documentos/${d.id}`, { method: "DELETE" });
+      toast("Documento retirado");
+      pintarDocTab();
+    } catch (e) { toast(e.message, true); }
+  }));
+
   $("#prod-nuevo")?.addEventListener("click", () => formProducto(null));
   $$("[data-ver]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.ver)));
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () => formProducto(productos.find((p) => p.id === b.dataset.editar))));
@@ -373,6 +424,11 @@ function formProducto(p) {
         <div class="form-group"><label>Uso / plagas objetivo</label><input name="uso" value="${esc(p?.uso || "")}" placeholder="Ej. Cucarachas y hormigas en cocinas" /></div>
       </div>
       <div class="form-group"><label>Notas internas</label><textarea name="notas" rows="2">${esc(p?.notas || "")}</textarea></div>
+      ${p ? "" : `
+      <div class="form-group"><label>Ficha técnica en PDF (opcional)</label>
+        <input type="file" id="fp-ficha" accept=".pdf,application/pdf" />
+        <div class="form-hint">Si ya la tienes, súbela de una vez. También puedes agregarla después con “+ Ficha técnica”.</div>
+      </div>`}
       <label class="campo-check"><input type="checkbox" name="visible_cliente" ${p?.visible_cliente === false ? "" : "checked"} /> Mostrar en el portal del hotel</label>
       ${p ? `<label class="campo-check"><input type="checkbox" name="activo" checked /> Activo (desmarca para darlo de baja)</label>` : ""}`,
     onSubmit: async (fd) => {
@@ -385,7 +441,28 @@ function formProducto(p) {
         cuerpo.activo = fd.get("activo") === "on";
         await put(`/documentos/productos/${p.id}`, cuerpo);
       } else {
-        await post("/documentos/productos", cuerpo);
+        const ficha = $("#fp-ficha")?.files?.[0];
+        if (ficha) {
+          if (ficha.size > DOC_MAX_MB * 1024 * 1024) throw new Error(`La ficha técnica pesa más de ${DOC_MAX_MB} MB.`);
+          if (!/\.pdf$/i.test(ficha.name) && ficha.type !== "application/pdf") throw new Error("La ficha técnica debe ser un PDF.");
+        }
+        const creado = await post("/documentos/productos", cuerpo);
+        if (ficha && creado?.id) {
+          $("#asa-modal-submit").textContent = "Subiendo ficha…";
+          try {
+            await post("/documentos", {
+              categoria: "ficha_tecnica",
+              titulo: `Ficha técnica — ${creado.nombre_comercial}`,
+              producto_id: creado.id,
+              visible_cliente: cuerpo.visible_cliente,
+              archivo: { nombre: ficha.name, dataUrl: await leerArchivoComoDataUrl(ficha) },
+            });
+          } catch (e) {
+            closeModal();
+            toast(`Producto agregado, pero la ficha no se subió: ${e.message}`, true);
+            return pintarDocTab();
+          }
+        }
       }
       closeModal();
       toast(p ? "Producto actualizado" : "Producto agregado");

@@ -1505,6 +1505,7 @@ async function viewPlantas(content) {
         <h2>Plantas</h2>
         <div class="actions">
           <span class="text-muted" id="plantas-conteo"></span>
+          <button class="btn" id="btn-exportar-todos" title="Descarga en Excel los puntos de control de todas las plantas">⬇ Excel de todos los puntos</button>
           <button class="btn btn-primary" id="btn-nueva-planta">+ Nueva planta</button>
         </div>
       </div>
@@ -1555,6 +1556,7 @@ async function viewPlantas(content) {
   }
   pintar();
 
+  $("#btn-exportar-todos").addEventListener("click", (e) => exportarPuntosExcel({}, e.currentTarget));
   $("#btn-nueva-planta").addEventListener("click", async () => {
     const clientes = await get("/clientes");
     modalPlanta(clientes, null, () => navigate("plantas"));
@@ -1657,6 +1659,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <button class="btn btn-primary btn-sm" id="pt-nuevo">+ Punto</button>
       <button class="btn btn-sm" id="pt-masivo">Crear en masa</button>
       <button class="btn btn-sm" id="pt-importar">Importar Excel</button>
+      <button class="btn btn-sm" id="pt-exportar" title="Descarga los puntos de esta planta (respeta el filtro de tipo y área)">⬇ Exportar Excel</button>
       <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
       <button class="btn btn-sm" id="pt-estrategia">Estrategia en masa</button>
       <button class="btn btn-sm" id="pt-etiquetas">Imprimir QR</button>
@@ -1725,6 +1728,9 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
   $("#pt-nuevo").addEventListener("click", () => modalPunto(sitioId, null, areas, tipos, cargar));
   $("#pt-masivo").addEventListener("click", () => modalPuntosMasivo(sitioId, areas, tipos, cargar));
   $("#pt-importar").addEventListener("click", () => modalImportarPuntos(sitioId, cargar));
+  $("#pt-exportar").addEventListener("click", (e) =>
+    exportarPuntosExcel({ sitio_id: sitioId, tipo: $("#f-tipo").value, area_id: $("#f-area").value }, e.currentTarget)
+  );
   $("#pt-frecuencia").addEventListener("click", () => modalFrecuenciaMasiva(sitioId, areas, tipos, cargar));
   $("#pt-etiquetas").addEventListener("click", () =>
     imprimirEtiquetas(sitioId, $("#f-area").value || null)
@@ -1799,6 +1805,43 @@ async function descargarExcel(sitioId, nombrePlanta) {
     URL.revokeObjectURL(url);
   } catch (e) {
     toast(`No se pudo descargar el historial: ${e.message}`, true);
+  }
+}
+
+// Descarga el Excel de puntos de control. Sin sitio_id trae todas las plantas
+// que el usuario puede ver. El archivo tiene las mismas columnas que acepta
+// "Importar Excel", así que sirve de respaldo y se puede volver a subir.
+async function exportarPuntosExcel(filtros = {}, boton = null) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filtros)) if (v) qs.set(k, v);
+  const textoOriginal = boton?.textContent;
+  if (boton) { boton.disabled = true; boton.textContent = "Generando…"; }
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/puntos/exportar?${qs}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      let msg = `El servidor respondió ${res.status}`;
+      try { msg = (await res.json()).mensaje || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get("Content-Disposition") || "";
+    const nombre = (disp.match(/filename="?([^";]+)"?/) || [])[1] || "puntos-control.xlsx";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Excel de puntos descargado");
+  } catch (e) {
+    toast(`No se pudo exportar: ${e.message}`, true);
+  } finally {
+    if (boton) { boton.disabled = false; boton.textContent = textoOriginal; }
   }
 }
 

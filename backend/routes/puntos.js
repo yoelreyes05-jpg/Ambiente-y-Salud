@@ -792,6 +792,103 @@ async function plagasDelTipo(tipoPuntoId) {
     .sort((a, b) => (a.orden || 0) - (b.orden || 0) || String(a.nombre).localeCompare(String(b.nombre)));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /puntos/exportar?sitio_id=&tipo=&area_id=
+//
+// Descarga en .xlsx TODOS los puntos de control activos: de una planta (con
+// sitio_id) o de todas las plantas que el usuario puede ver (sin sitio_id).
+// Sirve de respaldo y para trabajar la lista fuera del sistema.
+//
+// Las columnas llevan los mismos nombres que entiende POST /puntos/importar
+// (Área, Código, Nombre, Habitación, Tipo, Estrategia, Frecuencia, Código QR),
+// así que el mismo archivo se puede volver a subir sin reimprimir etiquetas:
+// el Código QR es el token que ya está pegado en la pared.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/exportar", async (req, res) => {
+  const { sitio_id, tipo, area_id } = req.query;
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  let puntos, sitios;
+  try {
+    puntos = await traerTodo(() => {
+      let q = supabase.from("asa_v_puntos_estado").select("*");
+      q = sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+      if (tipo) q = q.eq("tipo_codigo", tipo);
+      if (area_id) q = q.eq("area_id", area_id);
+      return q.order("sitio_id").order("area_nombre").order("codigo_visible").order("id");
+    });
+    let qs = supabase.from("asa_sitios").select("id, nombre");
+    qs = sitio_id ? qs.eq("id", sitio_id) : filtrarPorSitio(qs, req, "id");
+    const r = await qs;
+    if (r.error) throw r.error;
+    sitios = r.data || [];
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: e.message });
+  }
+
+  const nombreSitio = new Map(sitios.map((s) => [s.id, s.nombre]));
+  const fmtFecha = (f) => (f ? new Date(f).toLocaleString("es-DO", { timeZone: "America/Santo_Domingo" }) : "");
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Ambiente y Salud RD (ASA SRL)";
+  wb.created = new Date();
+  const ws = wb.addWorksheet("Puntos de control");
+  const columnas = [
+    { header: "Planta", key: "planta", width: 28 },
+    { header: "Área", key: "area", width: 32 },
+    { header: "Código", key: "codigo", width: 14 },
+    { header: "Nombre", key: "nombre", width: 28 },
+    { header: "Habitación", key: "habitacion", width: 12 },
+    { header: "Tipo", key: "tipo", width: 24 },
+    { header: "Estrategia", key: "estrategia", width: 26 },
+    { header: "Frecuencia", key: "frecuencia", width: 12 },
+    { header: "Código QR", key: "qr", width: 22 },
+    { header: "Enlace QR", key: "url", width: 44 },
+    { header: "Última inspección", key: "ultima", width: 22 },
+    { header: "Último resultado", key: "ult_estado", width: 18 },
+    { header: "Último nivel", key: "ult_nivel", width: 14 },
+    { header: "Al día", key: "al_dia", width: 9 },
+  ];
+  ws.columns = columnas;
+  const VERDE = "FF16A34A";
+  ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: VERDE } };
+  ws.getRow(1).height = 22;
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columnas.length } };
+
+  for (const p of puntos) {
+    const fila = ws.addRow({
+      planta: nombreSitio.get(p.sitio_id) || "",
+      area: p.area_nombre || "",
+      codigo: p.codigo_visible || "",
+      nombre: p.punto_nombre || "",
+      habitacion: p.numero_habitacion || "",
+      tipo: p.tipo_nombre || "",
+      estrategia: p.estrategia_nombre || "",
+      frecuencia: p.frecuencia || "",
+      qr: p.qr_token || "",
+      url: p.qr_token ? urlQR(p.qr_token) : "",
+      ultima: fmtFecha(p.ultima_inspeccion),
+      ult_estado: p.ultimo_estado || "",
+      ult_nivel: p.ultimo_nivel || "",
+      al_dia: p.vencido ? "No" : "Sí",
+    });
+    if (p.vencido) fila.getCell("al_dia").font = { color: { argb: "FFB91C1C" }, bold: true };
+  }
+
+  const base = sitio_id ? (nombreSitio.get(sitio_id) || "planta") : "todas-las-plantas";
+  const archivo = `puntos-control-${base}`.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".xlsx";
+
+  logAccion(req, { accion: "exportar", modulo: "puntos", descripcion: `Excel de ${puntos.length} puntos (${base})` });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${archivo}"`);
+  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+  await wb.xlsx.write(res);
+  res.end();
+});
+
 // GET /puntos/:id
 router.get("/:id", async (req, res) => {
   const { data, error } = await supabase

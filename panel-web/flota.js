@@ -7,7 +7,8 @@
 // para esta pantalla habría convertido "editar el panel" en "compilar el
 // panel" para todo lo demás.
 //
-// Seis pestañas: Tablero, Vehículos, Fallas, Gastos, Reportes y Configuración.
+// Siete pestañas: Tablero, Vehículos, Fallas, Mantenimiento, Gastos, Reportes y
+// Configuración.
 // El parte diario lo llena el conductor desde la app del técnico o desde la
 // pantalla pública, no desde aquí.
 // ═════════════════════════════════════════════════════════════════════════
@@ -43,6 +44,7 @@ async function viewFlota(content) {
       <button class="tab active" data-tab="tablero">Tablero</button>
       <button class="tab" data-tab="vehiculos">Vehículos</button>
       <button class="tab" data-tab="fallas">Fallas</button>
+      <button class="tab" data-tab="mant">Mantenimiento</button>
       <button class="tab" data-tab="gastos">Gastos</button>
       <button class="tab" data-tab="reportes">Reportes</button>
       <button class="tab" data-tab="config">Configuración</button>
@@ -54,6 +56,7 @@ async function viewFlota(content) {
     tablero: () => flotaTablero(cuerpo),
     vehiculos: () => flotaVehiculos(cuerpo),
     fallas: () => flotaFallas(cuerpo),
+    mant: () => flotaMantenimiento(cuerpo),
     gastos: () => flotaGastos(cuerpo),
     reportes: () => flotaReportes(cuerpo),
     config: () => flotaConfig(cuerpo),
@@ -90,6 +93,10 @@ async function flotaTablero(cuerpo) {
       <div class="kpi-card ${k.documentos_alerta ? "w" : "g"}">
         <div class="lbl">Papeles por vencer</div><div class="val">${k.documentos_alerta}</div>
       </div>
+      <div class="kpi-card ${k.mantenimientos_rojo ? "r" : k.mantenimientos_amarillo ? "w" : "g"}">
+        <div class="lbl">Mantenimientos próximos</div>
+        <div class="val">${(k.mantenimientos_rojo || 0) + (k.mantenimientos_amarillo || 0)}</div>
+      </div>
       <div class="kpi-card"><div class="lbl">Unidades activas</div><div class="val">${k.vehiculos_activos}</div></div>
       <div class="kpi-card"><div class="lbl">Gasto del mes</div><div class="val">${MONEDA(k.gasto_mes)}</div></div>
       <div class="kpi-card"><div class="lbl">Costo por km de la flota</div>
@@ -118,6 +125,12 @@ async function flotaTablero(cuerpo) {
       <div class="card"><div class="center-msg" style="color:var(--verde,#4A7D4D)">
         Todas las unidades activas reportaron hoy.
       </div></div>`}
+
+    ${(d.mantenimientos_alerta || []).length ? `
+      <div class="card ${d.mantenimientos_alerta.some((m) => m.nivel === "rojo") ? "card-rojo" : ""}">
+        <div class="card-head"><h2>Mantenimientos próximos — ${d.mantenimientos_alerta.length}</h2></div>
+        <div id="tab-mant-alerta">${tableHTML(mantColumnas(true), d.mantenimientos_alerta, "")}</div>
+      </div>` : ""}
 
     <div class="dos-columnas">
       <div class="card">
@@ -182,7 +195,17 @@ async function flotaTablero(cuerpo) {
       </p>
     </div>`;
 
-  $("#flota-cuerpo").querySelectorAll("tr[data-id]").forEach((tr) => {
+  const cajaMant = $("#tab-mant-alerta");
+  if (cajaMant) {
+    mantMarcarFilas(cajaMant, d.mantenimientos_alerta);
+    cajaMant.querySelectorAll("tr[data-id]").forEach((tr) => {
+      tr.dataset.mant = "1";
+      tr.addEventListener("click", () =>
+        modalMantDetalle(d.mantenimientos_alerta.find((m) => String(m.id) === tr.dataset.id), () => flotaTablero(cuerpo)));
+    });
+  }
+
+  $("#flota-cuerpo").querySelectorAll("tr[data-id]:not([data-mant])").forEach((tr) => {
     const f = (d.fallas_abiertas || []).find((x) => String(x.id) === tr.dataset.id);
     if (f) tr.addEventListener("click", () => modalFalla(f, () => flotaTablero(cuerpo)));
   });
@@ -305,7 +328,7 @@ async function modalVehiculo(v, onSaved) {
   });
 }
 
-async function fichaVehiculo(id, contenedor) {
+async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
   contenedor.innerHTML = `<div class="center-msg">Cargando ficha…</div>`;
   const f = await apiFlota.get(`/vehiculos/${id}/ficha`);
   const v = f.vehiculo;
@@ -346,7 +369,11 @@ async function fichaVehiculo(id, contenedor) {
         <button class="tab active" data-t="partes">Partes (${f.chequeos.length})</button>
         <button class="tab" data-t="fallas">Fallas (${f.fallas.length})</button>
         <button class="tab" data-t="gastos">Gastos (${f.gastos.length})</button>
-        <button class="tab" data-t="mant">Mantenimiento</button>
+        <button class="tab" data-t="mant">Mantenimiento${(() => {
+          const n = f.mantenimientos.filter((m) => m.nivel === "rojo").length;
+          const a = f.mantenimientos.filter((m) => m.nivel === "amarillo").length;
+          return n ? ` <span class="sem-chip sem-rojo">${n}</span>` : a ? ` <span class="sem-chip sem-amarillo">${a}</span>` : "";
+        })()}</button>
         <button class="tab" data-t="docs">Documentos</button>
         <button class="tab" data-t="fotos">Fotos (${f.fotos.length})</button>
       </div>
@@ -394,20 +421,15 @@ async function fichaVehiculo(id, contenedor) {
       "Sin gastos registrados."
     ),
     mant: () => `
-      ${tableHTML(
-        [
-          { key: "etiqueta", label: "Mantenimiento", fmt: (m) => `<strong>${esc(m.etiqueta)}</strong>` },
-          { key: "intervalo_km", label: "Cada", fmt: (m) => (m.intervalo_km ? `${NUM(m.intervalo_km)} km` : m.intervalo_dias ? `${m.intervalo_dias} días` : "—") },
-          { key: "km_ultimo", label: "Último a los", fmt: (m) => (m.km_ultimo ? NUM(m.km_ultimo) : "—") },
-          { key: "faltan_km", label: "Faltan", fmt: (m) => (m.faltan_km == null ? "—" : m.vencido ? `<span class="estado-chip pendiente">Vencido</span>` : `${NUM(m.faltan_km)} km`) },
-          { key: "taller", label: "Taller", fmt: (m) => esc(m.taller || "—") },
-        ],
-        f.mantenimientos.map((m) => ({ ...m, _clickable: false })),
-        "Sin planes de mantenimiento."
-      )}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="text-muted">Vence por km o por tiempo, lo que llegue primero. Toca un plan para marcarlo como hecho.</span>
+        <button class="btn btn-primary btn-sm" id="fm-plan-nuevo">+ Plan de mantenimiento</button>
+      </div>
+      <div id="fm-ficha-tabla">${tableHTML(mantColumnas(false), f.mantenimientos,
+        "Sin planes de mantenimiento. Crea uno con “+ Plan de mantenimiento” (ej. aceite cada 5,000 km o 4 meses).")}</div>
       <p class="text-muted" style="margin-top:10px">
         El kilometraje que dispara esto entra por el parte diario del conductor.
-        Sin parte, el cambio de aceite se hace cuando alguien se acuerda.
+        Sin parte, solo cuenta el tiempo.
       </p>`,
     docs: () => tableHTML(
       [
@@ -427,14 +449,25 @@ async function fichaVehiculo(id, contenedor) {
       : `<div class="center-msg">Sin fotos.</div>`,
   };
 
-  const pintar = (t) => { cf.innerHTML = vistas[t](); };
+  const recargar = () => fichaVehiculo(id, contenedor, "mant");
+  const pintar = (t) => {
+    cf.innerHTML = vistas[t]();
+    if (t === "mant") {
+      mantMarcarFilas($("#fm-ficha-tabla"), f.mantenimientos);
+      $("#fm-plan-nuevo").addEventListener("click", () => modalPlanMant(null, v, recargar));
+      $("#fm-ficha-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
+        tr.addEventListener("click", () =>
+          modalMantDetalle(f.mantenimientos.find((m) => String(m.id) === tr.dataset.id), recargar, v)));
+    }
+  };
   $$("#tabs-ficha .tab").forEach((b) =>
     b.addEventListener("click", () => {
       $$("#tabs-ficha .tab").forEach((x) => x.classList.toggle("active", x === b));
       pintar(b.dataset.t);
     })
   );
-  pintar("partes");
+  $$("#tabs-ficha .tab").forEach((x) => x.classList.toggle("active", x.dataset.t === tabInicial));
+  pintar(tabInicial);
 
   $("#fv-volver").addEventListener("click", () => flotaVehiculos(contenedor));
   $("#fv-editar").addEventListener("click", () => modalVehiculo(v, () => fichaVehiculo(id, contenedor)));
@@ -475,6 +508,288 @@ async function borrarVehiculo(v, onDone) {
   await apiFlota.del(`/vehiculos/${v.id}?definitivo=1`);
   toast("Unidad eliminada");
   onDone?.();
+}
+
+// ── Mantenimiento preventivo ─────────────────────────────────────────────
+// Cada plan vence por km o por tiempo, lo que llegue primero (ej. 5,000 km o
+// 4 meses). El backend calcula el semáforo:
+//   verde    → le queda más de la mitad del intervalo (más de 2 meses de 4)
+//   amarillo → le queda la mitad o menos (2 meses / 2,500 km)
+//   rojo     → le queda un cuarto o menos (1 mes / 1,250 km) o ya venció
+const MANT_TIPOS = [
+  ["ACEITE", "Cambio de aceite y filtro"],
+  ["FILTRO_AIRE", "Filtro de aire"],
+  ["FRENOS", "Revisión de frenos"],
+  ["GOMAS", "Rotación / cambio de gomas"],
+  ["ALINEACION", "Alineación y balanceo"],
+  ["CORREA", "Correa de tiempo / accesorios"],
+  ["BUJIAS", "Bujías"],
+  ["TRANSMISION", "Aceite de transmisión"],
+  ["REFRIGERANTE", "Refrigerante"],
+  ["AIRE_ACONDICIONADO", "Aire acondicionado"],
+  ["BATERIA", "Batería"],
+  ["GENERAL", "Mantenimiento general"],
+  ["OTRO", "Otro"],
+];
+const MANT_TIPO_TXT = Object.fromEntries(MANT_TIPOS);
+const MANT_SEM = {
+  rojo: ["Urgente", "sem-rojo"],
+  amarillo: ["Próximo", "sem-amarillo"],
+  verde: ["Al día", "sem-verde"],
+  sin_datos: ["Sin datos", "sem-gris"],
+};
+const DIAS_MES = 30;
+
+function mantChip(m) {
+  const [txt, cls] = MANT_SEM[m.nivel] || MANT_SEM.sin_datos;
+  return `<span class="sem-chip ${cls}">${m.vencido ? "Vencido" : txt}</span>`;
+}
+function mantIntervalo(m) {
+  const partes = [];
+  if (m.intervalo_km) partes.push(`${NUM(m.intervalo_km)} km`);
+  if (m.intervalo_dias) {
+    const meses = m.intervalo_dias / DIAS_MES;
+    partes.push(Number.isInteger(meses) ? `${meses} ${meses === 1 ? "mes" : "meses"}` : `${m.intervalo_dias} días`);
+  }
+  return partes.length ? partes.join(" o ") : "—";
+}
+function mantFaltan(m) {
+  const trozos = [];
+  if (m.faltan_km != null) {
+    trozos.push(`<span class="sem-txt ${MANT_SEM[m.nivel_km || "sin_datos"][1]}">` +
+      (m.faltan_km <= 0 ? `pasado ${NUM(-m.faltan_km)} km` : `${NUM(m.faltan_km)} km`) + `</span>`);
+  }
+  if (m.faltan_dias != null) {
+    const d = m.faltan_dias;
+    const txt = d <= 0 ? `vencido hace ${-d} días`
+      : d >= 60 ? `${Math.floor(d / DIAS_MES)} meses` : `${d} días`;
+    trozos.push(`<span class="sem-txt ${MANT_SEM[m.nivel_dias || "sin_datos"][1]}">${txt}</span>`);
+  }
+  return trozos.length ? trozos.join(" · ") : "—";
+}
+function mantProximo(m) {
+  const t = [];
+  if (m.proximo_km != null) t.push(`${NUM(m.proximo_km)} km`);
+  if (m.proxima_fecha) t.push(fmtDate(m.proxima_fecha + "T12:00:00"));
+  return t.length ? t.join("<br>") : "—";
+}
+function mantColumnas(conVehiculo) {
+  return [
+    ...(conVehiculo ? [{ key: "vehiculo_codigo", label: "Unidad", fmt: (m) => `<strong>${esc(m.vehiculo_codigo)}</strong><br><small class="muted">${esc(m.vehiculo_placa || "")}</small>` }] : []),
+    { key: "nivel", label: "Estado", fmt: mantChip },
+    { key: "etiqueta", label: "Mantenimiento", fmt: (m) => `<strong>${esc(m.etiqueta)}</strong>` },
+    { key: "intervalo", label: "Cada", fmt: mantIntervalo },
+    { key: "ultimo", label: "Último", fmt: (m) =>
+        [m.km_ultimo != null ? `${NUM(m.km_ultimo)} km` : null, m.fecha_ultimo ? fmtDate(m.fecha_ultimo + "T12:00:00") : null]
+          .filter(Boolean).join("<br>") || "—" },
+    { key: "proximo", label: "Próximo", fmt: mantProximo },
+    { key: "faltan", label: "Faltan", fmt: mantFaltan },
+    { key: "taller", label: "Taller", fmt: (m) => esc(m.taller || "—") },
+  ];
+}
+// tableHTML no sabe de clases por fila: se pinta el borde después.
+function mantMarcarFilas(contenedor, lista) {
+  contenedor.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const m = lista.find((x) => String(x.id) === tr.dataset.id);
+    if (m) tr.classList.add(`sem-fila-${m.nivel}`);
+  });
+}
+
+async function flotaMantenimiento(cuerpo) {
+  const r = await apiFlota.get("/mantenimientos/estado");
+  const lista = r.mantenimientos || [];
+  const c = r.conteo || {};
+
+  cuerpo.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card ${c.rojo ? "r" : "g"}"><div class="lbl">🔴 Urgentes / vencidos</div><div class="val">${c.rojo || 0}</div></div>
+      <div class="kpi-card ${c.amarillo ? "w" : "g"}"><div class="lbl">🟡 Próximos</div><div class="val">${c.amarillo || 0}</div></div>
+      <div class="kpi-card g"><div class="lbl">🟢 Al día</div><div class="val">${c.verde || 0}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2>Planes de mantenimiento de la flota</h2>
+        <div class="actions">
+          <select id="fm-filtro">
+            <option value="">Todos</option>
+            <option value="alerta">Solo rojos y amarillos</option>
+            <option value="rojo">Solo rojos</option>
+          </select>
+          <button class="btn btn-primary" id="fm-nuevo">+ Plan de mantenimiento</button>
+        </div>
+      </div>
+      <p class="text-muted" style="margin-top:0">
+        Vence por kilómetros o por tiempo, <strong>lo que se cumpla primero</strong>.
+        Verde: le queda más de la mitad · Amarillo: la mitad o menos (ej. 2 meses / 2,500 km) ·
+        Rojo: un cuarto o menos (ej. 1 mes / 1,250 km) o vencido. Toca una fila para marcarla como realizada o editarla.
+      </p>
+      <div id="fm-tabla"></div>
+    </div>`;
+
+  const pintar = () => {
+    const f = $("#fm-filtro").value;
+    const vis = lista.filter((m) => !f || (f === "rojo" ? m.nivel === "rojo" : m.nivel === "rojo" || m.nivel === "amarillo"));
+    $("#fm-tabla").innerHTML = tableHTML(mantColumnas(true), vis,
+      lista.length ? "Ningún plan con ese filtro." : "Todavía no hay planes de mantenimiento. Crea el primero con “+ Plan de mantenimiento”.");
+    mantMarcarFilas($("#fm-tabla"), vis);
+    $("#fm-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
+      tr.addEventListener("click", () =>
+        modalMantDetalle(vis.find((m) => String(m.id) === tr.dataset.id), () => flotaMantenimiento(cuerpo))));
+  };
+  $("#fm-filtro").addEventListener("change", pintar);
+  $("#fm-nuevo").addEventListener("click", () => modalPlanMant(null, null, () => flotaMantenimiento(cuerpo)));
+  pintar();
+}
+
+// Crear / editar un plan. Con vehiculo fijo (desde la ficha) no se pregunta la unidad.
+async function modalPlanMant(plan, vehiculo, onSaved) {
+  const esNuevo = !plan;
+  let vehiculos = [];
+  if (!vehiculo && esNuevo) {
+    vehiculos = ((await apiFlota.get("/vehiculos")).vehiculos || []).filter((v) => v.estado !== "VENDIDO");
+    if (!vehiculos.length) return toast("Primero agrega un vehículo", true);
+  }
+  const kmBase = plan?.km_ultimo ?? vehiculo?.km_actual ?? "";
+  const tipoSel = plan?.tipo || "ACEITE";
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+  const meses = plan ? (plan.intervalo_dias ? plan.intervalo_dias / DIAS_MES : "") : 4;
+
+  openModal({
+    title: esNuevo ? `Nuevo plan de mantenimiento${vehiculo ? ` · ${vehiculo.codigo}` : ""}` : `Editar · ${plan.etiqueta}`,
+    large: true,
+    submitLabel: esNuevo ? "Crear plan" : "Guardar",
+    bodyHTML: `
+      <div class="form-grid">
+        ${!vehiculo && esNuevo ? `
+        <div class="form-group full"><label>Vehículo *</label>
+          <select name="vehiculo_id" id="pm-veh" required>
+            <option value="">Selecciona…</option>
+            ${vehiculos.map((v) => `<option value="${v.id}" data-km="${esc(v.km_actual ?? "")}">${esc(v.codigo)} · ${esc(v.placa)} — ${NUM(v.km_actual)} km</option>`).join("")}
+          </select></div>` : ""}
+        <div class="form-group"><label>Tipo *</label>
+          <select name="tipo" id="pm-tipo" ${esNuevo ? "" : "disabled"}>
+            ${MANT_TIPOS.map(([k, t]) => `<option value="${k}"${k === tipoSel ? " selected" : ""}>${esc(t)}</option>`).join("")}
+          </select>
+          ${esNuevo ? `<div class="form-hint">Un vehículo no puede tener dos planes del mismo tipo.</div>` : ""}</div>
+        <div class="form-group"><label>Nombre del plan *</label>
+          <input name="etiqueta" id="pm-etiqueta" required value="${esc(plan?.etiqueta || MANT_TIPO_TXT[tipoSel])}" /></div>
+        <div class="form-group"><label>Cada cuántos km</label>
+          <input name="intervalo_km" type="number" min="0" step="any" value="${esc(plan ? plan.intervalo_km ?? "" : 5000)}" placeholder="5000" /></div>
+        <div class="form-group"><label>Cada cuántos meses</label>
+          <input name="meses" type="number" min="0" step="0.5" value="${esc(meses)}" placeholder="4" />
+          <div class="form-hint">Vence con lo que se cumpla primero: los km o los meses.</div></div>
+        <div class="form-group"><label>Km del último mantenimiento *</label>
+          <input name="km_ultimo" id="pm-km" type="number" step="any" required value="${esc(kmBase)}" />
+          <div class="form-hint">Si no sabes cuándo se hizo, pon el km de hoy: empieza a contar desde ahora.</div></div>
+        <div class="form-group"><label>Fecha del último mantenimiento *</label>
+          <input name="fecha_ultimo" type="date" required value="${esc(plan?.fecha_ultimo || hoy)}" /></div>
+        <div class="form-group"><label>Taller</label><input name="taller" value="${esc(plan?.taller || "")}" /></div>
+        <div class="form-group"><label>Costo del último</label>
+          <input name="costo_ultimo" type="number" step="any" value="${esc(plan?.costo_ultimo ?? "")}" /></div>
+        <div class="form-group full"><label>Notas</label><textarea name="notas" rows="2">${esc(plan?.notas || "")}</textarea></div>
+      </div>`,
+    onMount: () => {
+      const tipo = $("#pm-tipo"), et = $("#pm-etiqueta");
+      tipo?.addEventListener("change", () => {
+        if (!et.dataset.tocado) et.value = MANT_TIPO_TXT[tipo.value] || "";
+      });
+      et.addEventListener("input", () => { et.dataset.tocado = "1"; });
+      $("#pm-veh")?.addEventListener("change", (e) => {
+        const km = e.target.selectedOptions[0]?.dataset.km;
+        if (km !== undefined && !$("#pm-km").dataset.tocado) $("#pm-km").value = km;
+      });
+      $("#pm-km").addEventListener("input", (e) => { e.target.dataset.tocado = "1"; });
+    },
+    async onSubmit(fd) {
+      const num = (k) => (fd.get(k) === "" || fd.get(k) == null ? null : Number(fd.get(k)));
+      const meses = num("meses");
+      const cuerpo = {
+        etiqueta: (fd.get("etiqueta") || "").trim(),
+        intervalo_km: num("intervalo_km") || null,
+        intervalo_dias: meses ? Math.round(meses * DIAS_MES) : null,
+        km_ultimo: num("km_ultimo"),
+        fecha_ultimo: fd.get("fecha_ultimo") || null,
+        taller: (fd.get("taller") || "").trim() || null,
+        costo_ultimo: num("costo_ultimo"),
+        notas: (fd.get("notas") || "").trim() || null,
+      };
+      if (!cuerpo.intervalo_km && !cuerpo.intervalo_dias) throw new Error("Pon al menos los km o los meses del intervalo.");
+      if (cuerpo.km_ultimo == null) throw new Error("Falta el km del último mantenimiento.");
+      try {
+        if (esNuevo) {
+          cuerpo.tipo = fd.get("tipo");
+          cuerpo.vehiculo_id = vehiculo ? vehiculo.id : Number(fd.get("vehiculo_id"));
+          if (!cuerpo.vehiculo_id) throw new Error("Escoge el vehículo.");
+          cuerpo.activo = true;
+          await apiFlota.post("/mantenimientos", cuerpo);
+        } else {
+          await apiFlota.patch(`/mantenimientos/${plan.id}`, cuerpo);
+        }
+      } catch (e) {
+        if (/duplicate|unique|idx_asaflota_mant_unico/i.test(e.message))
+          throw new Error("Ese vehículo ya tiene un plan de ese tipo (puede estar dado de baja). Edita el existente o escoge otro tipo.");
+        throw e;
+      }
+      closeModal();
+      toast(esNuevo ? "Plan de mantenimiento creado" : "Plan actualizado");
+      onSaved?.();
+    },
+  });
+}
+
+// Detalle de un plan: registrar que se hizo (reinicia el contador), editar o quitar.
+function modalMantDetalle(m, onSaved, vehiculo = null) {
+  if (!m) return;
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+  openModal({
+    title: `${m.etiqueta}${m.vehiculo_codigo ? ` · ${m.vehiculo_codigo}` : ""}`,
+    submitLabel: "✓ Marcar como realizado",
+    bodyHTML: `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        ${mantChip(m)} <span class="text-muted">Cada ${mantIntervalo(m)} · Faltan: ${mantFaltan(m)}</span>
+      </div>
+      <p class="text-muted" style="margin-top:0">
+        Al marcarlo como realizado el contador vuelve a empezar desde el km y la fecha que pongas aquí.
+      </p>
+      <div class="form-grid">
+        <div class="form-group"><label>Fecha en que se hizo *</label><input name="fecha" type="date" required value="${hoy}" /></div>
+        <div class="form-group"><label>Km al hacerlo *</label>
+          <input name="km" type="number" step="any" required value="${esc(m.km_actual ?? vehiculo?.km_actual ?? "")}" /></div>
+        <div class="form-group"><label>Costo</label><input name="costo" type="number" step="any" /></div>
+        <div class="form-group"><label>Taller</label><input name="taller" value="${esc(m.taller || "")}" /></div>
+      </div>
+      <label class="campo-check"><input type="checkbox" name="registrar_gasto" checked /> Registrar el costo como gasto de MANTENIMIENTO del vehículo</label>
+      <div style="display:flex;gap:8px;margin-top:14px;border-top:1px solid var(--border,#e5e7eb);padding-top:12px">
+        <button type="button" class="btn btn-sm" id="md-editar">Editar plan</button>
+        <button type="button" class="btn btn-sm btn-danger" id="md-quitar">Quitar plan</button>
+      </div>`,
+    onMount: () => {
+      $("#md-editar").addEventListener("click", () => { closeModal(); modalPlanMant(m, vehiculo || { id: m.vehiculo_id, codigo: m.vehiculo_codigo }, onSaved); });
+      $("#md-quitar").addEventListener("click", async () => {
+        if (!confirm(`¿Quitar el plan "${m.etiqueta}"? Deja de avisar, el historial de gastos no se toca.`)) return;
+        try {
+          // Se borra de verdad: el índice único (vehículo + tipo) no dejaría
+          // volver a crear un plan del mismo tipo si solo se diera de baja.
+          await apiFlota.del(`/mantenimientos/${m.id}?definitivo=1`);
+          closeModal();
+          toast("Plan quitado");
+          onSaved?.();
+        } catch (e) { toast(e.message, true); }
+      });
+    },
+    async onSubmit(fd) {
+      await apiFlota.post(`/mantenimientos/${m.id}/realizado`, {
+        fecha: fd.get("fecha"),
+        km: fd.get("km"),
+        costo: fd.get("costo"),
+        taller: fd.get("taller"),
+        registrar_gasto: fd.get("registrar_gasto") === "on",
+      });
+      closeModal();
+      toast("Mantenimiento registrado ✓");
+      onSaved?.();
+    },
+  });
 }
 
 // ── Fallas ───────────────────────────────────────────────────────────────

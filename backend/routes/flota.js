@@ -477,7 +477,7 @@ router.get("/dashboard", ruta(async (req, res) => {
   const fecha = req.query.fecha || hoyRD();
   const mesDesde = fecha.slice(0, 8) + "01";
 
-  const [resumen, chequeosHoy, fallas, docs, gastosMes, config] = await Promise.all([
+  const [resumen, chequeosHoy, fallas, docs, gastosMes, config, planesMant] = await Promise.all([
     supabase.from("asa_flota_v_resumen_vehiculo").select("*").order("codigo"),
     supabase.from("asa_flota_chequeos")
       .select("id,vehiculo_id,turno,conductor_nombre,km,combustible_octavos,items_mal,fallas_reportadas,fotos_completas,apto_circular,created_at")
@@ -488,7 +488,9 @@ router.get("/dashboard", ruta(async (req, res) => {
     supabase.from("asa_flota_v_documentos_alerta").select("*").neq("situacion", "VIGENTE").order("vence"),
     supabase.from("asa_flota_gastos").select("tipo,monto,galones").gte("fecha", mesDesde).lte("fecha", fecha),
     leerConfig(),
+    mantenimientosFlota().catch(() => []),
   ]);
+  const mantAlerta = planesMant.filter(m => m.nivel === "rojo" || m.nivel === "amarillo");
 
   if (resumen.error) return fallo(res, 500, resumen.error.message);
 
@@ -521,6 +523,8 @@ router.get("/dashboard", ruta(async (req, res) => {
       fallas_abiertas: (fallas.data || []).length,
       fallas_graves: (fallas.data || []).filter(f => f.severidad === "GRAVE").length,
       documentos_alerta: (docs.data || []).length,
+      mantenimientos_rojo: planesMant.filter(m => m.nivel === "rojo").length,
+      mantenimientos_amarillo: planesMant.filter(m => m.nivel === "amarillo").length,
       gasto_mes: Math.round(gastos.reduce((s, g) => s + Number(g.monto || 0), 0) * 100) / 100,
       galones_mes: Math.round(gastos.reduce((s, g) => s + Number(g.galones || 0), 0) * 100) / 100,
       km_flota: kmFlota,
@@ -533,9 +537,180 @@ router.get("/dashboard", ruta(async (req, res) => {
     sin_chequeo: sinChequeo,
     fallas_abiertas: fallas.data || [],
     documentos_alerta: docs.data || [],
+    mantenimientos_alerta: mantAlerta,
   });
 }));
 
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MANTENIMIENTO PREVENTIVO — semáforo
+//
+// Cada plan vence por kilómetros o por tiempo, LO QUE SE CUMPLA PRIMERO
+// (ej. cada 5,000 km o cada 4 meses = 120 días). El color sale de cuánto le
+// queda del intervalo, medido por las dos vías, y manda la peor:
+//
+//   verde     le queda más de la mitad       (4 meses → faltan más de 2 meses)
+//   amarillo  le queda la mitad o menos      (faltan 2 meses / 2,500 km o menos)
+//   rojo      le queda un cuarto o menos, o ya venció (1 mes / 1,250 km o menos)
+//
+// Se mide en proporción del intervalo para que funcione igual con un plan de
+// 5,000 km / 4 meses que con uno de 40,000 km / 2 años.
+// ═════════════════════════════════════════════════════════════════════════════
+const MANT_UMBRAL_AMARILLO = 0.5;
+const MANT_UMBRAL_ROJO = 0.25;
+const NIVEL_PESO = { verde: 0, amarillo: 1, rojo: 2 };
+
+function nivelPorFraccion(fr) {
+  if (fr == null) return null;
+  if (fr <= MANT_UMBRAL_ROJO) return "rojo";
+  if (fr <= MANT_UMBRAL_AMARILLO) return "amarillo";
+  return "verde";
+}
+
+export function calcularMantenimiento(m, kmActualVehiculo, hoy = hoyRD()) {
+  const kmActual = Number(kmActualVehiculo || 0);
+  const intKm = Number(m.intervalo_km) || null;
+  const intDias = Number(m.intervalo_dias) || null;
+
+  const proximoKm = m.km_ultimo != null && intKm ? Number(m.km_ultimo) + intKm : null;
+  const faltanKm = proximoKm != null ? Math.round(proximoKm - kmActual) : null;
+
+  let proximaFecha = null;
+  if (m.fecha_ultimo && intDias) {
+    const d = new Date(`${String(m.fecha_ultimo).slice(0, 10)}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + intDias);
+    proximaFecha = d.toISOString().slice(0, 10);
+  }
+  const faltanDias = proximaFecha
+    ? Math.round((new Date(`${proximaFecha}T12:00:00Z`) - new Date(`${hoy}T12:00:00Z`)) / 86400000) : null;
+
+  const vencidoKm = faltanKm != null && faltanKm <= 0;
+  const vencidoDias = faltanDias != null && faltanDias <= 0;
+  const vencido = vencidoKm || vencidoDias;
+
+  const nivelKm = faltanKm != null ? nivelPorFraccion(faltanKm / intKm) : null;
+  const nivelDias = faltanDias != null ? nivelPorFraccion(faltanDias / intDias) : null;
+  const niveles = [nivelKm, nivelDias].filter(Boolean);
+  const nivel = vencido ? "rojo"
+    : niveles.length ? niveles.reduce((a, b) => (NIVEL_PESO[b] > NIVEL_PESO[a] ? b : a)) : "sin_datos";
+
+  // Qué lo va a disparar primero, para decirlo en palabras.
+  let motivo = null;
+  if (vencidoKm && vencidoDias) motivo = "km y tiempo";
+  else if (vencidoKm) motivo = "km";
+  else if (vencidoDias) motivo = "tiempo";
+  else if (nivelKm && nivelDias) {
+    motivo = (faltanKm / intKm) <= (faltanDias / intDias) ? "km" : "tiempo";
+  } else motivo = nivelKm ? "km" : nivelDias ? "tiempo" : null;
+
+  return {
+    ...m,
+    km_actual: kmActual,
+    proximo_km: proximoKm, faltan_km: faltanKm,
+    proxima_fecha: proximaFecha, faltan_dias: faltanDias,
+    vencido, nivel, nivel_km: nivelKm, nivel_dias: nivelDias, dispara_por: motivo,
+  };
+}
+
+const ordenarPorUrgencia = (a, b) =>
+  (NIVEL_PESO[b.nivel] ?? -1) - (NIVEL_PESO[a.nivel] ?? -1) ||
+  (a.faltan_dias ?? 1e9) - (b.faltan_dias ?? 1e9) ||
+  (a.faltan_km ?? 1e9) - (b.faltan_km ?? 1e9);
+
+/** Todos los planes activos de la flota con su semáforo, del más urgente al que menos. */
+async function mantenimientosFlota() {
+  const [mant, veh] = await Promise.all([
+    supabase.from("asa_flota_mantenimientos").select("*").eq("activo", true),
+    supabase.from("asa_flota_vehiculos").select("id, codigo, placa, marca, modelo, km_actual, estado, activo"),
+  ]);
+  if (mant.error) throw mant.error;
+  if (veh.error) throw veh.error;
+  const porId = new Map((veh.data || []).map((v) => [v.id, v]));
+  const hoy = hoyRD();
+  return (mant.data || [])
+    .filter((m) => {
+      const v = porId.get(m.vehiculo_id);
+      return v && v.activo !== false && v.estado !== "VENDIDO";
+    })
+    .map((m) => {
+      const v = porId.get(m.vehiculo_id);
+      return { ...calcularMantenimiento(m, v.km_actual, hoy), vehiculo_codigo: v.codigo, vehiculo_placa: v.placa,
+               vehiculo_nombre: [v.marca, v.modelo].filter(Boolean).join(" ") };
+    })
+    .sort(ordenarPorUrgencia);
+}
+
+/**
+ * GET /flota/mantenimientos/estado — el semáforo de toda la flota.
+ */
+router.get("/mantenimientos/estado", ruta(async (req, res) => {
+  const planes = await mantenimientosFlota();
+  const conteo = { rojo: 0, amarillo: 0, verde: 0, sin_datos: 0 };
+  for (const p of planes) conteo[p.nivel] = (conteo[p.nivel] || 0) + 1;
+  res.json({ error: false, conteo, mantenimientos: planes });
+}));
+
+/**
+ * POST /flota/mantenimientos/:id/realizado
+ * Body: { fecha, km, costo?, taller?, notas?, registrar_gasto? }
+ *
+ * Marca el mantenimiento como hecho: reinicia el contador (km y fecha del
+ * último) y, si se pide, deja el gasto en la ficha del vehículo para que el
+ * costo por km lo cuente.
+ */
+router.post("/mantenimientos/:id/realizado", ruta(async (req, res) => {
+  const id = Number(req.params.id);
+  const b = req.body || {};
+  const { data: m, error } = await supabase.from("asa_flota_mantenimientos").select("*").eq("id", id).maybeSingle();
+  if (error) return fallo(res, 500, error.message);
+  if (!m) return fallo(res, 404, "Ese plan de mantenimiento no existe.");
+
+  const fecha = b.fecha || hoyRD();
+  const km = b.km === "" || b.km == null ? null : Number(b.km);
+  if (km == null || Number.isNaN(km)) return fallo(res, 400, "Indica el kilometraje al que se hizo el mantenimiento.");
+  const costo = b.costo === "" || b.costo == null ? null : Number(b.costo);
+
+  const cambios = {
+    km_ultimo: km,
+    fecha_ultimo: fecha,
+    costo_ultimo: costo,
+    updated_at: new Date().toISOString(),
+  };
+  if (b.taller) cambios.taller = String(b.taller).trim();
+  if (b.notas) cambios.notas = String(b.notas).trim();
+
+  const { data: act, error: e2 } = await supabase.from("asa_flota_mantenimientos")
+    .update(cambios).eq("id", id).select().maybeSingle();
+  if (e2) return fallo(res, 500, e2.message);
+
+  // Si el odómetro del mantenimiento es mayor que el del vehículo, se sube.
+  const { data: veh } = await supabase.from("asa_flota_vehiculos").select("id, km_actual").eq("id", m.vehiculo_id).maybeSingle();
+  if (veh && km > Number(veh.km_actual || 0)) {
+    await supabase.from("asa_flota_vehiculos").update({ km_actual: km }).eq("id", veh.id);
+  }
+
+  let gasto = null;
+  if (b.registrar_gasto && costo > 0) {
+    const usuario = usuarioDe(req);
+    const g = await supabase.from("asa_flota_gastos").insert([{
+      vehiculo_id: m.vehiculo_id,
+      fecha,
+      tipo: "MANTENIMIENTO",
+      descripcion: m.etiqueta,
+      monto: costo,
+      km,
+      suplidor: b.taller || m.taller || null,
+      registrado_por: usuario?.nombre || null,
+    }]).select().maybeSingle();
+    if (g.error) return fallo(res, 500, `Se marcó como hecho, pero el gasto no se guardó: ${g.error.message}`);
+    gasto = g.data;
+  }
+
+  logAccion(req, { accion: "actualizar", modulo: "flota_mantenimientos",
+    descripcion: `${m.etiqueta} realizado a los ${km} km (${fecha})` });
+  res.json({ error: false, registro: calcularMantenimiento(act, Math.max(km, Number(veh?.km_actual || 0))), gasto });
+}));
 
 /** GET /asa/vehiculos/:id/ficha — todo lo del vehículo en una pantalla. */
 router.get("/vehiculos/:id/ficha", ruta(async (req, res) => {
@@ -563,26 +738,10 @@ router.get("/vehiculos/:id/ficha", ruta(async (req, res) => {
 
   if (!veh.data) return fallo(res, 404, "Ese vehículo no existe.");
 
-  // Mantenimiento: cuánto falta según el km que trae el parte diario.
-  const kmActual = Number(veh.data.km_actual || 0);
-  const mantenimientos = (mant.data || []).map(m => {
-    const proximoKm = m.km_ultimo != null && m.intervalo_km
-      ? Number(m.km_ultimo) + Number(m.intervalo_km) : null;
-    const faltanKm = proximoKm != null ? Math.round(proximoKm - kmActual) : null;
-    let proximaFecha = null;
-    if (m.fecha_ultimo && m.intervalo_dias) {
-      const d = new Date(m.fecha_ultimo);
-      d.setDate(d.getDate() + Number(m.intervalo_dias));
-      proximaFecha = d.toISOString().slice(0, 10);
-    }
-    const faltanDias = proximaFecha
-      ? Math.round((new Date(proximaFecha) - new Date(hoyRD())) / 86400000) : null;
-    return {
-      ...m, proximo_km: proximoKm, faltan_km: faltanKm,
-      proxima_fecha: proximaFecha, faltan_dias: faltanDias,
-      vencido: (faltanKm != null && faltanKm <= 0) || (faltanDias != null && faltanDias <= 0),
-    };
-  });
+  // Mantenimiento: cuánto falta por km (del parte diario) y por tiempo, con semáforo.
+  const mantenimientos = (mant.data || [])
+    .map(m => calcularMantenimiento(m, veh.data.km_actual))
+    .sort(ordenarPorUrgencia);
 
   // Rendimiento tanqueo a tanqueo: km entre dos cargas completas ÷ galones de
   // la segunda. Es más honesto que dividir el total, que se ensucia con los

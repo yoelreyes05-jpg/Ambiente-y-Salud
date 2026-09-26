@@ -633,3 +633,20 @@ table.data tbody tr.clickable{cursor:pointer}
 .et-item{display:flex;gap:10px;align-items:baseline;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:5px;cursor:pointer;background:#fff}
 .et-item:hover{border-color:var(--asa-verde);background:var(--asa-verde-pastel)}
 .et-fila{display:flex;gap:8px;align-items:center;margin:4px 0}
+
+/* ── Semáforo de mantenimiento (flota) ─────────────────────────────────── */
+.sem-chip{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+.sem-chip.sem-verde{background:#dcfce7;color:#166534}
+.sem-chip.sem-amarillo{background:#fef9c3;color:#854d0e;border:1px solid #facc15}
+.sem-chip.sem-rojo{background:#fee2e2;color:#b91c1c;border:1px solid #ef4444}
+.sem-chip.sem-gris{background:#f1f5f9;color:#64748b}
+.sem-txt{font-weight:600}
+.sem-txt.sem-verde{color:#166534}
+.sem-txt.sem-amarillo{color:#a16207}
+.sem-txt.sem-rojo{color:#b91c1c}
+.sem-txt.sem-gris{color:#64748b}
+tr.sem-fila-rojo td:first-child{box-shadow:inset 4px 0 0 #ef4444}
+tr.sem-fila-amarillo td:first-child{box-shadow:inset 4px 0 0 #facc15}
+tr.sem-fila-verde td:first-child{box-shadow:inset 4px 0 0 #22c55e}
+tr.sem-fila-rojo{background:#fef2f2}
+tr.sem-fila-amarillo{background:#fefce8}
