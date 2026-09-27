@@ -1611,8 +1611,17 @@ router.patch("/:id/plano", requireRol("operaciones"), async (req, res) => {
 // historial que el hotel firma en auditoría. Un punto dado de baja desaparece
 // de la ruta del técnico y de los reportes, que es lo que se busca.
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Con { definitivo: true } el punto se BORRA de la base (solo admin). Eso borra
+// en cascada sus inspecciones, solicitudes y etiquetas QR adicionales; las
+// órdenes de trabajo y hallazgos quedan sin punto. No se puede deshacer y el
+// QR queda libre. En ese modo el filtro abarca también los puntos ya dados de
+// baja, y con { solo_baja: true } se limpian solo esos.
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/eliminar", requireRol("operaciones"), async (req, res) => {
-  const { sitio_id, area_id, tipo_codigo, punto_ids, simular = false } = req.body;
+  const { sitio_id, area_id, tipo_codigo, punto_ids, simular = false, definitivo = false, solo_baja = false } = req.body;
+
+  if (definitivo) return eliminarDefinitivo(req, res);
 
   if (!punto_ids?.length && !sitio_id) {
     return res.status(400).json({ error: true, mensaje: "Indica punto_ids o sitio_id" });
@@ -1662,6 +1671,81 @@ router.post("/eliminar", requireRol("operaciones"), async (req, res) => {
   });
   res.json({ eliminados: data.length });
 });
+
+// Borrado físico de puntos — ver la nota de POST /puntos/eliminar
+async function eliminarDefinitivo(req, res) {
+  if (req.usuario?.rol !== "admin") {
+    return res.status(403).json({ error: true, mensaje: "Solo un administrador puede eliminar puntos definitivamente." });
+  }
+  const { sitio_id, area_id, tipo_codigo, punto_ids, simular = false, solo_baja = false } = req.body;
+
+  if (!punto_ids?.length && !sitio_id) {
+    return res.status(400).json({ error: true, mensaje: "Indica punto_ids o sitio_id" });
+  }
+  if (!punto_ids?.length && !area_id && !tipo_codigo && !solo_baja) {
+    return res.status(400).json({
+      error: true,
+      mensaje: "Filtra por área o por tipo (o marca solo los dados de baja). Sin filtro borrarías la planta completa.",
+    });
+  }
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+  let tipoResuelto = null;
+  if (tipo_codigo) {
+    tipoResuelto = await resolverTipo({ tipo_codigo });
+    if (!tipoResuelto) return res.status(400).json({ error: true, mensaje: `Tipo "${tipo_codigo}" no existe` });
+  }
+
+  // Se juntan los ids primero (por páginas: PostgREST corta en 1000)
+  const ids = [];
+  for (let desde = 0; ; desde += 1000) {
+    let q = supabase.from("asa_puntos_control").select("id, sitio_id");
+    if (punto_ids?.length) q = q.in("id", punto_ids);
+    else {
+      q = q.eq("sitio_id", sitio_id);
+      if (area_id) q = q.eq("area_id", area_id);
+      if (tipoResuelto) q = q.eq("tipo_punto_id", tipoResuelto.id);
+      if (solo_baja) q = q.eq("activo", false);
+    }
+    const { data, error } = await q.order("id").range(desde, desde + 999);
+    if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
+    for (const p of data || []) {
+      if (punto_ids?.length && !exigirSitioPermitido(req, res, p.sitio_id)) return;
+      ids.push(p.id);
+    }
+    if (!data || data.length < 1000) break;
+  }
+
+  const trozos = [];
+  for (let i = 0; i < ids.length; i += 200) trozos.push(ids.slice(i, i + 200));
+
+  if (simular) {
+    let inspecciones = 0;
+    for (const t of trozos) {
+      const { count } = await supabase
+        .from("asa_inspecciones")
+        .select("id", { count: "exact", head: true })
+        .in("punto_id", t);
+      inspecciones += count || 0;
+    }
+    return res.json({ eliminarian: ids.length, inspecciones, simulado: true, definitivo: true });
+  }
+
+  let eliminados = 0;
+  for (const t of trozos) {
+    const { data, error } = await supabase.from("asa_puntos_control").delete().in("id", t).select("id");
+    if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error), eliminados });
+    eliminados += data?.length || 0;
+  }
+
+  logAccion(req, {
+    accion: "eliminar",
+    modulo: "puntos",
+    registroId: sitio_id ?? ids[0] ?? null,
+    descripcion: `Eliminación DEFINITIVA de ${eliminados} punto(s)`,
+  });
+  res.json({ eliminados, definitivo: true });
+}
 
 // POST /puntos/:id/reactivar — deshacer una baja
 //

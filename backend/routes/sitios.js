@@ -177,9 +177,36 @@ router.put("/areas/:areaId", requireRol("comercial", "operaciones"), async (req,
 
 // DELETE /sitios/areas/:areaId — baja lógica; los puntos quedan sin área
 router.delete("/areas/:areaId", requireRol("operaciones"), async (req, res) => {
-  const { error } = await supabase.from("asa_areas").update({ activo: false }).eq("id", req.params.areaId);
+  const areaId = req.params.areaId;
+  const { data: area, error: errA } = await supabase
+    .from("asa_areas")
+    .select("id, sitio_id, nombre")
+    .eq("id", areaId)
+    .maybeSingle();
+  if (errA) return res.status(500).json({ error: true, mensaje: errA.message });
+  if (!area) return res.status(404).json({ error: true, mensaje: "El área no existe" });
+  if (!exigirSitioPermitido(req, res, area.sitio_id)) return;
+
+  // Los puntos y planos se sueltan del área; si no, seguirían mostrando el
+  // nombre de un área dada de baja. Las inspecciones viejas no se tocan.
+  const { data: sueltos, error: errP } = await supabase
+    .from("asa_puntos_control")
+    .update({ area_id: null })
+    .eq("area_id", areaId)
+    .select("id");
+  if (errP) return res.status(500).json({ error: true, mensaje: errP.message });
+  await supabase.from("asa_planos").update({ area_id: null }).eq("area_id", areaId);
+
+  const { error } = await supabase.from("asa_areas").update({ activo: false }).eq("id", areaId);
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  res.json({ ok: true });
+
+  logAccion(req, {
+    accion: "eliminar",
+    modulo: "areas",
+    registroId: areaId,
+    descripcion: `Área "${area.nombre}" eliminada (${sueltos?.length || 0} puntos quedaron sin área)`,
+  });
+  res.json({ ok: true, puntos_sin_area: sueltos?.length || 0 });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1753,7 +1753,7 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
       <button class="btn btn-sm" id="area-mover">Mover puntos</button>
     </div>
     <p class="text-muted">
-      Toca un área para corregir su nombre: el cambio llega solo a todos sus
+      Toca un área para corregir su nombre o eliminarla: el cambio llega solo a todos sus
       puntos, porque cuelgan del área y no guardan el texto. "Fusionar" es para
       áreas repetidas; "Mover puntos" para cuando quedaron en el área equivocada.
     </p>

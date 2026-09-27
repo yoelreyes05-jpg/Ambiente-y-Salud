@@ -536,7 +536,15 @@ function modalArea(sitioId, area, onSaved) {
       campo("Código", `<input name="codigo" value="${esc(area?.codigo || "")}" placeholder="COC" />`,
         "Se usa como prefijo al generar códigos de puntos en masa.") +
       campo("Nivel / planta física", `<input name="nivel" value="${esc(area?.nivel || "")}" placeholder="Piso 3" />`) +
-      campo("Descripción", `<textarea name="descripcion" rows="2">${esc(area?.descripcion || "")}</textarea>`),
+      campo("Descripción", `<textarea name="descripcion" rows="2">${esc(area?.descripcion || "")}</textarea>`) +
+      (esNueva
+        ? ""
+        : `<button type="button" class="btn btn-danger" id="area-eliminar" style="margin-top:6px">
+             Eliminar esta área
+           </button>`),
+    onMount() {
+      $("#area-eliminar")?.addEventListener("click", () => eliminarArea(area, onSaved));
+    },
     async onSubmit(fd) {
       const cuerpo = {
         nombre: (fd.get("nombre") || "").trim(),
@@ -551,6 +559,28 @@ function modalArea(sitioId, area, onSaved) {
       onSaved?.();
     },
   });
+}
+
+// Baja lógica: el área desaparece de la planta y sus puntos quedan "Sin área"
+// (no se borran). Si lo que quieres es pasarlos a otra área, usa "Fusionar".
+async function eliminarArea(area, onSaved) {
+  const n = area.puntos_total || 0;
+  if (!confirm(
+    `¿Eliminar el área "${area.nombre}"?\n\n` +
+    (n
+      ? `Tiene ${n} punto(s) de control. No se borran: quedan "Sin área". ` +
+        `Si prefieres pasarlos a otra área, cancela y usa "Fusionar duplicadas" o "Mover puntos".`
+      : `No tiene puntos de control.`)
+  )) return;
+
+  try {
+    const r = await del(`/sitios/areas/${area.id}`);
+    closeModal();
+    toast(r?.puntos_sin_area ? `Área eliminada · ${r.puntos_sin_area} punto(s) quedaron sin área` : "Área eliminada");
+    onSaved?.();
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -586,9 +616,15 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
            <div id="punto-etiquetas"></div>
            <button type="button" class="btn btn-danger" id="punto-baja" style="margin-top:6px">
              Dar de baja este punto
-           </button>`),
+           </button>
+           ${esAdminPanel()
+             ? `<button type="button" class="btn btn-danger" id="punto-eliminar" style="margin-top:6px;margin-left:6px">
+                  Eliminar definitivamente
+                </button>`
+             : ""}`),
     onMount() {
       $("#punto-baja")?.addEventListener("click", () => darDeBajaPunto(punto, onSaved));
+      $("#punto-eliminar")?.addEventListener("click", () => eliminarPuntoDefinitivo(punto, onSaved));
       if (!esNuevo && typeof pintarEtiquetasPunto === "function") pintarEtiquetasPunto($("#punto-etiquetas"), punto);
     },
     async onSubmit(fd) {
@@ -1680,6 +1716,35 @@ async function darDeBajaPunto(punto, onSaved) {
   }
 }
 
+function esAdminPanel() {
+  return typeof USUARIO !== "undefined" && USUARIO?.rol === "admin";
+}
+
+// Borrado real en Supabase (solo admin). Se lleva por delante su historial de
+// inspecciones, así que se pide escribir el código del punto para confirmar.
+async function eliminarPuntoDefinitivo(punto, onSaved) {
+  try {
+    const previa = await post("/puntos/eliminar", { punto_ids: [punto.id], definitivo: true, simular: true });
+    const escrito = prompt(
+      `ELIMINAR DEFINITIVAMENTE ${punto.codigo_visible}\n\n` +
+      `Se borra de la base de datos junto con sus ${previa.inspecciones} inspección(es). ` +
+      `No se puede deshacer y el hotel pierde ese historial.\n\n` +
+      `Para confirmar escribe el código del punto: ${punto.codigo_visible}`
+    );
+    if (escrito === null) return;
+    if (escrito.trim().toUpperCase() !== String(punto.codigo_visible).toUpperCase()) {
+      toast("El código no coincide. No se eliminó nada.", true);
+      return;
+    }
+    await post("/puntos/eliminar", { punto_ids: [punto.id], definitivo: true });
+    closeModal();
+    toast(`${punto.codigo_visible} eliminado definitivamente`);
+    onSaved?.();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 function modalEliminarPuntos(sitioId, areas, tipos, onSaved) {
   openModal({
     title: "Dar de baja puntos en masa",
@@ -1691,15 +1756,76 @@ function modalEliminarPuntos(sitioId, areas, tipos, onSaved) {
        </p>` +
       campo("Área", `<select name="area_id"><option value="">Todas</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
       campo("Tipo", `<select name="tipo_codigo"><option value="">Todos</option>${opciones(tipos, null, (t) => t.codigo, (t) => t.nombre)}</select>`) +
+      (esAdminPanel()
+        ? campo("Qué hacer",
+            `<select name="modo">
+               <option value="baja">Dar de baja (se pueden reactivar)</option>
+               <option value="definitivo">Eliminar definitivamente de la base</option>
+               <option value="definitivo_baja">Eliminar definitivamente solo los ya dados de baja</option>
+             </select>`,
+            "Eliminar definitivamente borra también su historial de inspecciones. No se puede deshacer.")
+        : "") +
       `<div id="baja-previa"></div>`,
     submitLabel: "Revisar",
+    onMount(overlay) {
+      // Si cambian filtro o modo después de revisar, hay que volver a revisar
+      overlay.querySelectorAll("select").forEach((sel) =>
+        sel.addEventListener("change", () => {
+          const b = $("#asa-modal-submit");
+          delete b.dataset.confirmar;
+          b.textContent = "Revisar";
+          b.classList.remove("btn-danger");
+          $("#baja-previa").innerHTML = "";
+        })
+      );
+    },
     async onSubmit(fd) {
       const area_id = fd.get("area_id") || undefined;
       const tipo_codigo = fd.get("tipo_codigo") || undefined;
-      if (!area_id && !tipo_codigo) throw new Error("Elige al menos un área o un tipo");
+      const modo = fd.get("modo") || "baja";
+      const definitivo = modo !== "baja";
+      const solo_baja = modo === "definitivo_baja";
+      if (!area_id && !tipo_codigo && !solo_baja) throw new Error("Elige al menos un área o un tipo");
 
-      const cuerpo = { sitio_id: sitioId, area_id, tipo_codigo };
+      const cuerpo = definitivo
+        ? { sitio_id: sitioId, area_id, tipo_codigo, definitivo, solo_baja }
+        : { sitio_id: sitioId, area_id, tipo_codigo };
       const boton = $("#asa-modal-submit");
+
+      if (definitivo && boton.dataset.confirmar === "si") {
+        const escrito = prompt(`Esto BORRA ${boton.dataset.cuantos} punto(s) y su historial. No se puede deshacer.\n\nEscribe ELIMINAR para confirmar:`);
+        if (escrito === null || escrito.trim().toUpperCase() !== "ELIMINAR") {
+          toast("No se eliminó nada.", true);
+          boton.disabled = false;
+          return;
+        }
+        const r = await post("/puntos/eliminar", cuerpo);
+        closeModal();
+        toast(`${r.eliminados} punto(s) eliminados definitivamente`);
+        onSaved?.();
+        return;
+      }
+
+      if (definitivo) {
+        const r = await post("/puntos/eliminar", { ...cuerpo, simular: true });
+        if (!r.eliminarian) {
+          $("#baja-previa").innerHTML = `<div class="resumen-import">Ningún punto cumple ese filtro.</div>`;
+          boton.disabled = false;
+          return;
+        }
+        $("#baja-previa").innerHTML = `
+          <div class="resumen-import" style="background:#fef2f2;color:#b91c1c">
+            Se borrarían <strong>${r.eliminarian}</strong> punto(s) y
+            <strong>${r.inspecciones}</strong> inspección(es) de la base de datos.
+            <strong>No se puede deshacer.</strong>
+          </div>`;
+        boton.dataset.confirmar = "si";
+        boton.dataset.cuantos = r.eliminarian;
+        boton.textContent = `Eliminar ${r.eliminarian} definitivamente`;
+        boton.classList.add("btn-danger");
+        boton.disabled = false;
+        return;
+      }
 
       if (boton.dataset.confirmar !== "si") {
         const r = await post("/puntos/eliminar", { ...cuerpo, simular: true });
