@@ -524,3 +524,68 @@ y el servidor rechaza a quien no sea admin).
 **Archivos:** `backend/routes/limpieza.js` (nuevo), `backend/server.mjs`,
 `panel-web/limpieza.js` (nuevo), `panel-web/index.html`, `panel-web/app.js`.
 No requiere SQL. Solo subir a GitHub.
+
+---
+
+## Técnico en cada registro, pestañas en la app y pantalla de Técnicos (02-oct-2026)
+
+**1. El nombre del técnico sale en cada registro.** Antes salía
+"Registrado por: busqueda" y ningún nombre: las cuentas de los técnicos no
+tenían ficha de empleado vinculada y el servicio quedaba sin técnico.
+
+- Toda cuenta de técnico/operaciones queda amarrada sola a su ficha de
+  empleado (al crearla, al editarla y al iniciar sesión; si no existe la
+  ficha, se crea con su nombre).
+- Los servicios viejos toman el técnico de la cuenta que los subió, y un
+  trigger lo hace solo de aquí en adelante.
+- En la ficha del servicio (panel y portal del hotel) sale **Técnico** y,
+  aparte, **Cómo abrió el punto** (Escaneo de QR, Búsqueda por nombre, Desde
+  la lista, Desde el mapa). El PDF de evidencia también.
+
+**2. App del técnico: pestañas "Por hacer" y "✓ Hechos".**
+
+- *Por hacer*: lo que le toca (vencido) agrupado por área; lo que se intentó y
+  no se pudo sale arriba en rojo con el motivo. Lo que está al día queda
+  detrás de un botón para no llenar la lista.
+- *Hechos*: en verde, con el técnico que lo hizo y la hora.
+- Filtro por **tipo** (habitaciones, cebaderos, lámparas…) con el conteo de
+  cada uno, y un filtro rápido por texto. Todo se filtra en el teléfono, al
+  instante, y se recuerda al volver de registrar un punto.
+- La búsqueda por nombre también tiene filtro por tipo y responde al
+  instante con lo que ya está en el teléfono (sirve sin señal); el servidor
+  completa después.
+- El encabezado muestra el nombre del técnico de la sesión.
+
+**3. Panel → Operación → 👷 Técnicos.**
+
+- Hoy: registros del día, cuántos técnicos subieron y **quién no ha subido
+  nada**.
+- Ranking del período (hoy, 7, 30 o 90 días; por planta o todas): registros,
+  hechos y no realizados, días activos, promedio por día, % con foto,
+  **índice** (0–100) y último registro. El que más subió sale con 🥇.
+- Índice = 50% volumen + 20% constancia + 15% efectividad + 15% evidencia
+  (explicado en la pantalla).
+- Al tocar un técnico: sus números, qué registró, en qué plantas y sus
+  últimos registros; cada registro abre su desglose.
+
+**Archivos**
+
+- `supabase/33_tecnico_en_inspecciones.sql` (nuevo)
+- `backend/routes/usuarios.js`, `backend/routes/inspecciones.js`,
+  `backend/routes/reportes.js` (nueva ruta `GET /reportes/tecnicos`),
+  `backend/lib/reportePdf.js`
+- `app-tecnico/app.js`, `app-tecnico/estilos.css`, `app-tecnico/sw.js` (caché `asa-tecnico-v10`)
+- `panel-web/tecnicos.js` (nuevo), `panel-web/index.html`, `panel-web/app.js`,
+  `panel-web/servicios.js`, `panel-web/styles.css`
+- `portal-hotel/app.js`
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/33_tecnico_en_inspecciones.sql`. Al final muestra tres
+   números: `cuentas_sin_empleado` debe dar 0 y `trigger` 1.
+   `servicios_sin_tecnico` solo queda en más de 0 si hay servicios sin cuenta
+   (importados).
+2. Subir a GitHub: Railway redespliega el backend; Vercel el panel, el portal y la app.
+3. Si usas **Permisos por rol**, dale "Técnicos" a operaciones/comercial (el
+   admin la ve siempre).
+4. En los celulares, cerrar y abrir la app del técnico para que tome la versión v10.

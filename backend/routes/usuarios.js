@@ -8,6 +8,48 @@ import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ficha de empleado de los técnicos
+//
+// La inspección guarda QUIÉN la hizo tomando el `empleado_id` de la cuenta. Si
+// la cuenta no tiene ficha de empleado, el servicio queda sin técnico y en el
+// reporte sale "Sin técnico". Por eso toda cuenta de técnico u operaciones se
+// amarra sola a su ficha: se busca por nombre y, si no existe, se crea.
+// ─────────────────────────────────────────────────────────────────────────────
+const ROLES_CON_FICHA = ["tecnico_plagas", "operaciones"];
+
+export async function vincularEmpleado(usuario) {
+  if (!usuario || usuario.empleado_id || !ROLES_CON_FICHA.includes(usuario.rol)) {
+    return usuario?.empleado_id || null;
+  }
+  const nombre = String(usuario.nombre_completo || "").trim();
+  if (!nombre) return null;
+
+  let empleadoId = null;
+  const { data: existentes } = await supabase
+    .from("asa_empleados")
+    .select("id")
+    .ilike("nombre_completo", nombre)
+    .limit(1);
+  empleadoId = existentes?.[0]?.id || null;
+
+  if (!empleadoId) {
+    const { data: nuevo, error } = await supabase
+      .from("asa_empleados")
+      .insert([{ nombre_completo: nombre, email: usuario.email || null, rol: usuario.rol, activo: true }])
+      .select("id")
+      .single();
+    if (error) return null; // no se frena el login por esto
+    empleadoId = nuevo.id;
+  }
+
+  await supabase
+    .from("asa_usuarios")
+    .update({ empleado_id: empleadoId, updated_at: new Date().toISOString() })
+    .eq("id", usuario.id);
+  return empleadoId;
+}
+
 // POST /usuarios/registrar-cliente — usado por la app móvil del cliente
 router.post("/registrar-cliente", async (req, res) => {
   const { email, password, nombre_completo, cliente_id } = req.body;
@@ -34,6 +76,10 @@ router.post("/login", async (req, res) => {
 
   const valido = await bcrypt.compare(password, usuario.password_hash);
   if (!valido) return res.status(401).json({ error: true, mensaje: "Credenciales inválidas" });
+
+  // Cuentas de técnico creadas antes de que se pidiera la ficha de empleado:
+  // se amarran aquí, así el token ya sale con su empleado_id.
+  usuario.empleado_id = await vincularEmpleado(usuario);
 
   const token = jwt.sign(
     { id: usuario.id, rol: usuario.rol, nombre: usuario.nombre_completo, cliente_id: usuario.cliente_id, empleado_id: usuario.empleado_id },
@@ -66,6 +112,7 @@ router.post("/", requireAuth, requireRol("admin"), async (req, res) => {
   const password_hash = await bcrypt.hash(password, 10);
   const { data, error } = await supabase.from("asa_usuarios").insert([{ email, password_hash, nombre_completo, rol, empleado_id }]).select().single();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  data.empleado_id = await vincularEmpleado(data);
   const { password_hash: _omit, ...usuario } = data;
   res.status(201).json(usuario);
 });
@@ -269,9 +316,11 @@ router.patch("/:id", requireAuth, requireRol("admin"), async (req, res) => {
     .from("asa_usuarios")
     .update(cambios)
     .eq("id", req.params.id)
-    .select("id, email, nombre_completo, rol, activo, ultimo_acceso");
+    .select("id, email, nombre_completo, rol, activo, ultimo_acceso, empleado_id");
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
   if (!data?.length) return res.status(404).json({ error: true, mensaje: "Usuario no encontrado" });
+  // Si pasó a ser técnico, queda con su ficha de empleado desde ya.
+  await vincularEmpleado(data[0]);
 
   logAccion(req, { accion: "actualizar", modulo: "usuarios", registroId: req.params.id, descripcion: data[0].email, detalle: { campos: Object.keys(cambios) } });
   res.json(data[0]);

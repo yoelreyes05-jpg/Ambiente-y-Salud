@@ -334,7 +334,13 @@ function abrirMenu() {
 async function pantallaRuta() {
   if (!SITIO) return elegirHotel();
 
-  encabezado(SITIO.nombre, `Ruta del ${new Date().toLocaleDateString("es-DO", { day: "numeric", month: "long" })}`, false);
+  // El nombre del técnico a la vista: así sabe con qué cuenta está subiendo
+  // (en un teléfono compartido, cada registro sale a nombre de quien entró).
+  encabezado(
+    SITIO.nombre,
+    `Ruta del ${new Date().toLocaleDateString("es-DO", { day: "numeric", month: "long" })}${USUARIO?.nombre ? ` · ${USUARIO.nombre}` : ""}`,
+    false
+  );
   const cuerpo = document.createElement("div");
   cuerpo.className = "contenido";
   cuerpo.innerHTML = `<div class="cargando">Cargando tu ruta…</div>`;
@@ -367,11 +373,12 @@ async function pantallaRuta() {
 
   const total = realizados.length + pendientes.length;
   const pct = total ? Math.round((realizados.length / total) * 100) : 0;
+  const tocan = pendientes.filter((p) => p.vencido).length;
 
   cuerpo.innerHTML = `
     <div class="avance">
       <div class="hechos"><div class="numero">${realizados.length}</div><div class="rotulo">Realizados</div></div>
-      <div class="faltan"><div class="numero">${pendientes.length}</div><div class="rotulo">Faltan</div></div>
+      <div class="faltan"><div class="numero">${tocan}</div><div class="rotulo">Le toca hoy</div></div>
     </div>
     <div class="progreso"><span style="width:${pct}%"></span></div>
 
@@ -379,7 +386,7 @@ async function pantallaRuta() {
     <button class="btn secundario" id="btn-buscar">🔍 Buscar por nombre o habitación</button>
 
     <div id="solicitudes-hotel" style="margin-top:8px"></div>
-    <div id="listas" style="margin-top:8px"></div>`;
+    <div id="lista-dia" style="margin-top:8px"></div>`;
 
   if (!cuerpo.isConnected) return; // el técnico ya navegó a otra pantalla
 
@@ -388,54 +395,230 @@ async function pantallaRuta() {
 
   bloqueSolicitudes($("#solicitudes-hotel", cuerpo)).catch(() => {});
 
-  const listas = $("#listas", cuerpo);
-  listas.innerHTML = `
-    ${seccion("Faltan por hacer", pendientes, false)}
-    ${seccion("Ya realizados", realizados, true)}`;
-
-  listas.querySelectorAll("[data-token]").forEach((el) =>
-    el.addEventListener("click", () => (location.hash = `#/p/${el.dataset.token}`))
-  );
+  listaDelDia($("#lista-dia", cuerpo), pendientes, realizados);
 }
 
-function seccion(titulo, puntos, hechos) {
-  if (!puntos.length) {
-    return `<div class="grupo-area">${titulo}</div>
-      <div class="vacio" style="padding:24px">${hechos ? "Todavía nada." : "¡Todo al día!"}</div>`;
+// ─────────────────────────────────────────────────────────────────────────
+// Lista del día: pestañas "Por hacer" / "Hechos", filtro por tipo y filtro
+// rápido. Todo se filtra en el teléfono, sin ir al servidor: con 400
+// habitaciones y 80 cebaderos, cada toque tiene que responder al instante.
+//
+// La pestaña, el tipo y lo escrito se recuerdan (sessionStorage) para que, al
+// volver de registrar un punto, el técnico siga donde estaba y no tenga que
+// filtrar otra vez.
+// ─────────────────────────────────────────────────────────────────────────
+const FILTRO_RUTA = {
+  get() {
+    const f = leerSesion("asa_filtro_ruta") || {};
+    return { pestana: f.pestana || "pendientes", tipo: f.tipo || "", texto: f.texto || "", verAlDia: !!f.verAlDia };
+  },
+  set(cambios) {
+    try { sessionStorage.setItem("asa_filtro_ruta", JSON.stringify({ ...this.get(), ...cambios })); } catch {}
+  },
+};
+function leerSesion(clave) {
+  try { return JSON.parse(sessionStorage.getItem(clave) || "null"); } catch { return null; }
+}
+
+const normalizar = (v) =>
+  String(v ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+function textoDePunto(p) {
+  return normalizar([
+    p.codigo_visible, p.punto_nombre, p.numero_habitacion, p.area_nombre,
+    p.tipo_nombre, p.ubicacion_descripcion, p.inspeccion?.tecnico,
+  ].filter(Boolean).join(" "));
+}
+
+function listaDelDia(caja, pendientes, realizados) {
+  const f = FILTRO_RUTA.get();
+
+  caja.innerHTML = `
+    <div class="pestanas" role="tablist" aria-label="Puntos del día">
+      <button type="button" role="tab" class="pestana" data-pestana="pendientes" id="tab-pendientes">
+        Por hacer <span class="cuenta" id="cuenta-pendientes"></span>
+      </button>
+      <button type="button" role="tab" class="pestana hecho" data-pestana="hechos" id="tab-hechos">
+        ✓ Hechos <span class="cuenta" id="cuenta-hechos"></span>
+      </button>
+    </div>
+    <div class="chips-tipo" id="chips-tipo" role="group" aria-label="Filtrar por tipo"></div>
+    <div class="campo filtro-rapido">
+      <label for="filtro-texto" class="oculto">Filtrar la lista</label>
+      <input type="search" id="filtro-texto" placeholder="Filtrar: habitación, código, área…"
+             autocomplete="off" enterkeyhint="search" value="${esc(f.texto)}" />
+    </div>
+    <div id="listas" role="tabpanel"></div>`;
+
+  // Tipos presentes en el hotel, en orden de cantidad. La clave es el código
+  // del tipo; si un punto no lo trae se usa el nombre.
+  const claveTipo = (p) => p.tipo_codigo || p.tipo_nombre || "otro";
+  const tipos = new Map();
+  for (const p of [...pendientes, ...realizados]) {
+    const k = claveTipo(p);
+    if (!tipos.has(k)) tipos.set(k, { clave: k, nombre: p.tipo_nombre || "Otros", icono: p.tipo_icono || "📍" });
+  }
+  // Un tipo guardado que ya no existe en este hotel no puede dejar la lista vacía
+  if (f.tipo && !tipos.has(f.tipo)) FILTRO_RUTA.set({ tipo: "" });
+
+  const listas = $("#listas", caja);
+  const chips = $("#chips-tipo", caja);
+  const entrada = $("#filtro-texto", caja);
+
+  function pintar() {
+    const { pestana, tipo, texto, verAlDia } = FILTRO_RUTA.get();
+    const t = normalizar(texto.trim());
+    const pasaTexto = (p) => !t || textoDePunto(p).includes(t);
+    const pasaTipo = (p) => !tipo || claveTipo(p) === tipo;
+
+    const base = pestana === "hechos" ? realizados : pendientes;
+
+    // Pestañas: el número es lo que hay con el filtro de tipo y texto puesto
+    const nPend = pendientes.filter((p) => pasaTipo(p) && pasaTexto(p) && (verAlDia || p.vencido || p.intento)).length;
+    const nHech = realizados.filter((p) => pasaTipo(p) && pasaTexto(p)).length;
+    $("#cuenta-pendientes", caja).textContent = nPend;
+    $("#cuenta-hechos", caja).textContent = nHech;
+    caja.querySelectorAll("[data-pestana]").forEach((b) => {
+      const activa = b.dataset.pestana === pestana;
+      b.classList.toggle("activa", activa);
+      b.setAttribute("aria-selected", activa ? "true" : "false");
+    });
+
+    // Chips de tipo, con cuántos hay de cada uno en la pestaña abierta
+    const cuenta = new Map();
+    for (const p of base) {
+      if (!pasaTexto(p)) continue;
+      if (pestana === "pendientes" && !verAlDia && !p.vencido && !p.intento) continue;
+      cuenta.set(claveTipo(p), (cuenta.get(claveTipo(p)) || 0) + 1);
+    }
+    const totalChips = [...cuenta.values()].reduce((a, b) => a + b, 0);
+    chips.innerHTML =
+      `<button type="button" class="chip ${!tipo ? "activo" : ""}" data-tipo="" aria-pressed="${!tipo}">Todos <b>${totalChips}</b></button>` +
+      [...tipos.values()]
+        .sort((a, b) => (cuenta.get(b.clave) || 0) - (cuenta.get(a.clave) || 0) || a.nombre.localeCompare(b.nombre))
+        .map((x) => `
+          <button type="button" class="chip ${tipo === x.clave ? "activo" : ""} ${cuenta.get(x.clave) ? "" : "vacio"}"
+                  data-tipo="${esc(x.clave)}" aria-pressed="${tipo === x.clave}">
+            <span aria-hidden="true">${x.icono}</span> ${esc(x.nombre)} <b>${cuenta.get(x.clave) || 0}</b>
+          </button>`)
+        .join("");
+
+    // Lista
+    const filtrados = base.filter((p) => pasaTipo(p) && pasaTexto(p));
+    if (pestana === "hechos") {
+      listas.innerHTML = filtrados.length
+        ? `<div class="grupo-area">Hechos hoy · ${filtrados.length}</div>` + filtrados.map((p) => filaPunto(p, true)).join("")
+        : `<div class="vacio" style="padding:28px">${realizados.length ? "Nada hecho con ese filtro." : "Todavía no hay nada hecho hoy."}</div>`;
+    } else {
+      const leToca = filtrados.filter((p) => p.vencido || p.intento);
+      const alDia = filtrados.filter((p) => !p.vencido && !p.intento);
+      listas.innerHTML =
+        (leToca.length
+          ? porArea("Le toca", leToca)
+          : `<div class="vacio" style="padding:24px">${pendientes.length ? "¡Nada pendiente con ese filtro!" : "¡Todo al día!"}</div>`) +
+        (alDia.length
+          ? verAlDia
+            ? porArea("Al día — todavía no le toca", alDia) +
+              `<button type="button" class="btn secundario" id="ver-al-dia">Ocultar los que están al día</button>`
+            : `<button type="button" class="btn secundario" id="ver-al-dia">Ver también los que están al día (${alDia.length})</button>`
+          : "");
+    }
   }
 
-  // Agrupadas por área: el técnico recorre el hotel área por área, no en el
-  // orden en que la base de datos devuelva las filas.
-  const porArea = {};
-  for (const p of puntos) (porArea[p.area_nombre || "Sin área"] ||= []).push(p);
+  function porArea(titulo, puntos) {
+    // Agrupados por área: el técnico recorre el hotel área por área. Lo
+    // intentado sin éxito va primero dentro de cada área.
+    const grupos = {};
+    for (const p of puntos) (grupos[p.area_nombre || "Sin área"] ||= []).push(p);
+    return (
+      `<div class="grupo-area">${esc(titulo)} · ${puntos.length}</div>` +
+      Object.keys(grupos)
+        .sort((a, b) => a.localeCompare(b))
+        .map((area) => `
+          <div class="grupo-area sub">${esc(area)} · ${grupos[area].length}</div>
+          ${grupos[area]
+            .sort((a, b) => (b.intento ? 1 : 0) - (a.intento ? 1 : 0))
+            .map((p) => filaPunto(p, false))
+            .join("")}`)
+        .join("")
+    );
+  }
 
-  return (
-    `<div class="grupo-area">${titulo} · ${puntos.length}</div>` +
-    Object.entries(porArea)
-      .sort()
-      .map(
-        ([area, lista]) => `
-        <div class="grupo-area" style="margin-top:14px;color:var(--gris-400)">${esc(area)}</div>
-        ${lista.map((p) => filaPunto(p, hechos)).join("")}`
-      )
-      .join("")
-  );
+  // Un solo escuchador para toda la lista: con cientos de filas, poner uno por
+  // fila hacía lento repintar cada vez que se toca un filtro.
+  caja.addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-pestana]");
+    if (tab) { FILTRO_RUTA.set({ pestana: tab.dataset.pestana }); vibrar(15); return pintar(); }
+    const chip = e.target.closest("[data-tipo]");
+    if (chip) { FILTRO_RUTA.set({ tipo: chip.dataset.tipo }); vibrar(15); return pintar(); }
+    if (e.target.closest("#ver-al-dia")) { FILTRO_RUTA.set({ verAlDia: !FILTRO_RUTA.get().verAlDia }); return pintar(); }
+    const fila = e.target.closest("[data-token]");
+    if (fila) {
+      sessionStorage.setItem("asa_via_sig", "manual");
+      location.hash = `#/p/${fila.dataset.token}`;
+    }
+  });
+
+  caja.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const fila = e.target.closest?.("[data-token]");
+    if (fila) fila.click();
+  });
+
+  let espera;
+  entrada.addEventListener("input", () => {
+    clearTimeout(espera);
+    espera = setTimeout(() => { FILTRO_RUTA.set({ texto: entrada.value }); pintar(); }, 80);
+  });
+
+  pintar();
 }
 
 function filaPunto(p, hecho) {
   const nombre = p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.tipo_nombre || "";
-  const clases = ["punto", hecho ? "hecho" : "", !hecho && p.vencido ? "vencido" : ""].filter(Boolean).join(" ");
-  const marca = hecho ? (p._local ? "⏳" : "✅") : p.vencido ? "⚠️" : "›";
+  const clases = ["punto", hecho ? "hecho" : "", !hecho && (p.vencido || p.intento) ? "vencido" : ""].filter(Boolean).join(" ");
+  const marca = hecho ? (p._local ? "⏳" : "✓") : p.intento ? "⚠️" : "›";
+
+  let linea2 = esc([nombre, p.area_nombre && !hecho ? null : p.area_nombre].filter(Boolean).join(" · "));
+  if (hecho) {
+    // Quién lo hizo y a qué hora: es lo primero que pregunta el supervisor.
+    const i = p.inspeccion || {};
+    const hora = i.fecha
+      ? new Date(i.fecha).toLocaleTimeString("es-DO", { hour: "numeric", minute: "2-digit", timeZone: "America/Santo_Domingo" })
+      : "";
+    const quien = p._local ? `${USUARIO?.nombre || "Tú"} · por enviar` : i.tecnico || "Técnico no registrado";
+    linea2 += `<div class="quien">👷 ${esc(quien)}${hora ? ` · ${esc(hora)}` : ""}${
+      i.nivel_actividad && i.nivel_actividad !== "ninguna" ? ` <span class="etiqueta roja">Actividad ${esc({ bajo: "baja", medio: "media", alto: "alta" }[i.nivel_actividad] || i.nivel_actividad)}</span>` : ""
+    }</div>`;
+  } else if (p.intento) {
+    linea2 += `<div class="quien alerta">No se pudo: ${esc(MOTIVO_CORTO[p.intento.motivo_no_realizado] || p.intento.motivo_no_realizado)}${
+      p.intento.tecnico ? ` · ${esc(p.intento.tecnico)}` : ""}</div>`;
+  } else if (!p.vencido && p.ultima_inspeccion) {
+    const dias = Math.floor((Date.now() - new Date(p.ultima_inspeccion)) / 86400000);
+    linea2 += `<div class="quien">Hecho hace ${dias === 0 ? "menos de un día" : `${dias} día${dias === 1 ? "" : "s"}`}</div>`;
+  }
+
   return `
-    <div class="${clases}" data-token="${esc(p.qr_token)}">
-      <span class="icono">${p.tipo_icono || "📍"}</span>
+    <div class="${clases}" data-token="${esc(p.qr_token)}" role="button" tabindex="0">
+      <span class="icono" aria-hidden="true">${p.tipo_icono || "📍"}</span>
       <div class="texto">
         <div class="codigo">${esc(p.codigo_visible)}</div>
-        <div class="detalle">${esc(nombre)}</div>
+        <div class="detalle">${linea2}</div>
       </div>
-      <span class="marca">${marca}</span>
+      <span class="marca" aria-hidden="true">${marca}</span>
     </div>`;
 }
+
+const MOTIVO_CORTO = {
+  permiso_denegado: "no dieron permiso",
+  huesped_en_habitacion: "huésped en la habitación",
+  area_ocupada: "área ocupada",
+  sin_llave: "sin llave",
+  en_mantenimiento: "en mantenimiento",
+  punto_inaccesible: "inaccesible",
+  evento_en_curso: "evento en curso",
+  otro: "otro motivo",
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Escáner
@@ -575,107 +758,190 @@ function cargarJsQR() {
 // ─────────────────────────────────────────────────────────────────────────
 // Búsqueda por nombre (respaldo cuando el QR está dañado)
 // ─────────────────────────────────────────────────────────────────────────
-function pantallaBuscar() {
+async function pantallaBuscar() {
   encabezado("Buscar punto", SITIO?.nombre);
   const cuerpo = document.createElement("div");
   cuerpo.className = "contenido";
   cuerpo.innerHTML = `
     <div class="campo">
-      <input type="search" id="q" placeholder="Área, tipo, código o habitación" autocomplete="off" autofocus />
+      <label for="q" class="oculto">Buscar punto</label>
+      <input type="search" id="q" placeholder="Área, tipo, código o habitación" autocomplete="off" enterkeyhint="search" />
       <small class="ayuda">
-        Busca como hablas: escribe <strong>cocina</strong> y salen los puntos de las
-        cocinas, <strong>aerosol</strong> y salen los dispensadores, <strong>4312</strong>
-        y sale esa habitación.
+        Escribe <strong>cocina</strong>, <strong>aerosol</strong> o <strong>4312</strong>,
+        o toca un tipo para ver todos los de ese tipo.
       </small>
     </div>
+    <div class="chips-tipo" id="chips-buscar" role="group" aria-label="Filtrar por tipo"></div>
     <div id="resultados"></div>`;
   app().appendChild(cuerpo);
+  $("#q").focus();
 
-  let temporizador;
-  $("#q").addEventListener("input", (e) => {
-    clearTimeout(temporizador);
-    const termino = e.target.value.trim();
-    // Desde UNA letra: el servidor devuelve los que EMPIEZAN con ella, así que
-    // no hay riesgo de que una sola letra traiga medio hotel.
-    if (!termino) return ($("#resultados").innerHTML = "");
-    temporizador = setTimeout(() => buscar(termino), termino.length === 1 ? 420 : 260);
-  });
+  // Los puntos del hotel ya están en el teléfono (ruta del día): se busca ahí
+  // primero y el resultado sale al instante, con o sin señal. El servidor se
+  // consulta después solo para completar lo que no esté en la ruta (puntos
+  // "por orden").
+  const ruta = await leerCache(`ruta:${SITIO?.id}:${hoy()}`);
+  const hechosHoy = new Set((ruta?.realizados || []).map((p) => p.qr_token));
+  const locales = [...(ruta?.pendientes || []), ...(ruta?.realizados || [])].map((p) => ({
+    qr_token: p.qr_token,
+    codigo_visible: p.codigo_visible,
+    nombre: p.punto_nombre,
+    numero_habitacion: p.numero_habitacion,
+    ubicacion_descripcion: p.ubicacion_descripcion,
+    area: p.area_nombre || "Sin área",
+    tipo: p.tipo_nombre || "Otros",
+    icono: p.tipo_icono || "📍",
+    hecho: hechosHoy.has(p.qr_token),
+  }));
 
-  async function buscar(termino) {
+  let tipo = sessionStorage.getItem("asa_buscar_tipo") || "";
+  let termino = "";
+  let delServidor = [];
+  let pedido = 0;
+
+  const tipos = [...new Map(locales.map((p) => [p.tipo, p.icono])).entries()]
+    .map(([nombre, icono]) => ({ nombre, icono, n: locales.filter((p) => p.tipo === nombre).length }))
+    .sort((a, b) => b.n - a.n);
+  if (tipo && !tipos.some((t) => t.nombre === tipo)) tipo = "";
+
+  function pintarChips() {
+    $("#chips-buscar").innerHTML = tipos.length
+      ? `<button type="button" class="chip ${!tipo ? "activo" : ""}" data-tipo="" aria-pressed="${!tipo}">Todos</button>` +
+        tipos.map((t) => `
+          <button type="button" class="chip ${tipo === t.nombre ? "activo" : ""}" data-tipo="${esc(t.nombre)}" aria-pressed="${tipo === t.nombre}">
+            <span aria-hidden="true">${t.icono}</span> ${esc(t.nombre)} <b>${t.n}</b>
+          </button>`).join("")
+      : "";
+  }
+
+  function coincide(p, t) {
+    if (!t) return true;
+    const campos = [p.codigo_visible, p.nombre, p.numero_habitacion, p.area, p.tipo, p.ubicacion_descripcion];
+    // Una sola letra: lo que EMPIEZA con ella, para no traer medio hotel.
+    return campos.some((v) => {
+      const c = normalizar(v);
+      return t.length === 1 ? c.startsWith(t) : c.includes(t);
+    });
+  }
+
+  function pintar() {
     const caja = $("#resultados");
-    caja.innerHTML = `<div class="cargando">Buscando…</div>`;
-    let lista = [];
-    try {
-      lista = await GET(`/puntos/buscar?q=${encodeURIComponent(termino)}&sitio_id=${SITIO?.id || ""}`);
-    } catch {
-      lista = await buscarEnCache(termino);
+    const t = normalizar(termino.trim());
+    if (!t && !tipo) { caja.innerHTML = ""; return; }
+
+    const vistos = new Set();
+    const lista = [];
+    for (const p of [...locales, ...delServidor]) {
+      if (vistos.has(p.qr_token)) continue;
+      if (tipo && p.tipo !== tipo) continue;
+      if (!coincide(p, t)) continue;
+      vistos.add(p.qr_token);
+      lista.push(p);
     }
 
     if (!lista.length) {
       caja.innerHTML = `<div class="vacio"><span class="emoji">🔍</span>
-        Nada con "${esc(termino)}".<br><small>Prueba con el área ("cocina", "lobby"),
+        Nada${termino ? ` con "${esc(termino)}"` : ""}${tipo ? ` en ${esc(tipo)}` : ""}.<br><small>Prueba con el área ("cocina", "lobby"),
         con el tipo ("cebadero", "lámpara") o con el número de la habitación.</small></div>`;
       return;
     }
 
-    // Agrupado por área: cuando la búsqueda devuelve 40 cebaderos, verlos en un
-    // chorro plano no dice nada; por área sí se sabe dónde hay que caminar.
+    // Agrupado por área: cuando salen 40 cebaderos, por área se sabe dónde
+    // hay que caminar. Lo que falta por hacer va antes que lo ya hecho.
     const porArea = {};
-    for (const p of lista) {
-      const area = p.asa_areas?.nombre || "Sin área";
-      (porArea[area] = porArea[area] || []).push(p);
-    }
+    for (const p of lista) (porArea[p.area] ||= []).push(p);
+    const maximo = 300; // pintar miles de filas en un teléfono viejo traba la pantalla
+    let pintadas = 0;
 
     caja.innerHTML = `
       <p class="resumen-busqueda">
-        ${lista.length} punto${lista.length === 1 ? "" : "s"}
-        en ${Object.keys(porArea).length} área${Object.keys(porArea).length === 1 ? "" : "s"}
+        ${lista.length} punto${lista.length === 1 ? "" : "s"} en ${Object.keys(porArea).length} área${Object.keys(porArea).length === 1 ? "" : "s"}
+        · ${lista.filter((p) => !p.hecho).length} por hacer
       </p>
-      ${Object.entries(porArea).map(([area, puntos]) => `
-        <div class="grupo-area">${esc(area)} · ${puntos.length}</div>
-        ${puntos.map((p) => `
-          <div class="punto" data-token="${esc(p.qr_token)}">
-            <span class="icono">${p.asa_tipos_punto?.icono || "📍"}</span>
-            <div class="texto">
-              <div class="codigo">${esc(p.numero_habitacion ? `Hab. ${p.numero_habitacion}` : p.codigo_visible)}</div>
-              <div class="detalle">${esc([
-                p.numero_habitacion ? p.codigo_visible : p.nombre,
-                p.asa_tipos_punto?.nombre,
-                p.ubicacion_descripcion,
-              ].filter(Boolean).join(" · "))}</div>
-            </div>
-            <span class="marca">›</span>
-          </div>`).join("")}
-      `).join("")}`;
-
-    caja.querySelectorAll("[data-token]").forEach((el) =>
-      el.addEventListener("click", () => {
-        sessionStorage.setItem("asa_via_sig", "busqueda");
-        location.hash = `#/p/${el.dataset.token}`;
-      })
-    );
+      ${Object.entries(porArea)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([area, puntos]) => {
+          if (pintadas >= maximo) return "";
+          const filas = puntos
+            .sort((a, b) => (a.hecho ? 1 : 0) - (b.hecho ? 1 : 0))
+            .slice(0, maximo - pintadas);
+          pintadas += filas.length;
+          return `
+            <div class="grupo-area">${esc(area)} · ${puntos.length}</div>
+            ${filas.map((p) => `
+              <div class="punto ${p.hecho ? "hecho" : ""}" data-token="${esc(p.qr_token)}" role="button" tabindex="0">
+                <span class="icono" aria-hidden="true">${p.icono}</span>
+                <div class="texto">
+                  <div class="codigo">${esc(p.numero_habitacion ? `Hab. ${p.numero_habitacion}` : p.codigo_visible)}</div>
+                  <div class="detalle">${esc([
+                    p.numero_habitacion ? p.codigo_visible : p.nombre,
+                    p.tipo,
+                    p.ubicacion_descripcion,
+                  ].filter(Boolean).join(" · "))}</div>
+                </div>
+                <span class="marca" aria-hidden="true">${p.hecho ? "✓" : "›"}</span>
+              </div>`).join("")}`;
+        })
+        .join("")}
+      ${lista.length > maximo ? `<p class="resumen-busqueda">Se muestran ${maximo}. Escribe algo más para afinar.</p>` : ""}`;
   }
 
-  // Sin señal se busca dentro de la ruta guardada en el teléfono, con las
-  // mismas reglas: área, tipo, código, habitación y ubicación.
-  async function buscarEnCache(termino) {
-    const ruta = await leerCache(`ruta:${SITIO?.id}:${hoy()}`);
-    const todos = [...(ruta?.realizados || []), ...(ruta?.pendientes || [])];
-    const t = termino.toLowerCase();
-    const coincide = (v) => String(v || "").toLowerCase()[termino.length === 1 ? "startsWith" : "includes"](t);
-
-    return todos
-      .filter((p) => [p.codigo_visible, p.punto_nombre, p.numero_habitacion, p.area_nombre, p.tipo_nombre, p.ubicacion_descripcion].some(coincide))
-      .map((p) => ({
-        qr_token: p.qr_token,
-        codigo_visible: p.codigo_visible,
-        nombre: p.punto_nombre,
-        numero_habitacion: p.numero_habitacion,
-        ubicacion_descripcion: p.ubicacion_descripcion,
-        asa_areas: { nombre: p.area_nombre },
-        asa_tipos_punto: { nombre: p.tipo_nombre, icono: p.tipo_icono },
-      }));
+  // El servidor completa la búsqueda (puntos fuera de la ruta del día)
+  let temporizador;
+  function consultarServidor() {
+    clearTimeout(temporizador);
+    const t = termino.trim();
+    if (!t || !navigator.onLine) return;
+    const yo = ++pedido;
+    temporizador = setTimeout(async () => {
+      try {
+        const r = await GET(`/puntos/buscar?q=${encodeURIComponent(t)}&sitio_id=${SITIO?.id || ""}`);
+        if (yo !== pedido) return; // ya escribió otra cosa
+        delServidor = (r || []).map((p) => ({
+          qr_token: p.qr_token,
+          codigo_visible: p.codigo_visible,
+          nombre: p.nombre,
+          numero_habitacion: p.numero_habitacion,
+          ubicacion_descripcion: p.ubicacion_descripcion,
+          area: p.asa_areas?.nombre || "Sin área",
+          tipo: p.asa_tipos_punto?.nombre || "Otros",
+          icono: p.asa_tipos_punto?.icono || "📍",
+          hecho: hechosHoy.has(p.qr_token),
+        }));
+        pintar();
+      } catch {}
+    }, t.length === 1 ? 420 : 260);
   }
+
+  $("#q").addEventListener("input", (e) => {
+    termino = e.target.value;
+    delServidor = [];
+    pintar();            // al instante, con lo que hay en el teléfono
+    consultarServidor(); // y luego se completa
+  });
+
+  $("#chips-buscar").addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-tipo]");
+    if (!chip) return;
+    tipo = chip.dataset.tipo;
+    try { sessionStorage.setItem("asa_buscar_tipo", tipo); } catch {}
+    vibrar(15);
+    pintarChips();
+    pintar();
+  });
+
+  $("#resultados").addEventListener("click", (e) => {
+    const fila = e.target.closest("[data-token]");
+    if (!fila) return;
+    sessionStorage.setItem("asa_via_sig", "busqueda");
+    location.hash = `#/p/${fila.dataset.token}`;
+  });
+  $("#resultados").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") e.target.closest?.("[data-token]")?.click();
+  });
+
+  pintarChips();
+  pintar();
 }
 
 // ─────────────────────────────────────────────────────────────────────────

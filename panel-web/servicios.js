@@ -52,6 +52,8 @@ async function cargarEstadosPunto() {
 const estadoTexto = (codigo) =>
   ESTADOS_PUNTO?.[codigo] || ESTADO_TEXTO[codigo] || String(codigo || "").replace(/_/g, " ");
 
+// Cómo llegó el técnico al punto (antes salía la clave cruda "busqueda").
+const METODO_ACCESO_TXT = { qr: "Escaneo de QR", busqueda: "Búsqueda por nombre", plano: "Desde el mapa", manual: "Desde la lista" };
 const NIVEL_TEXTO = { ninguna: "Sin actividad", bajo: "Actividad baja", medio: "Actividad media", alto: "Actividad alta" };
 const NIVEL_CLASE = { ninguna: "hecho", bajo: "hecho", medio: "fuera", alto: "pendiente" };
 
@@ -305,9 +307,9 @@ function fichaServicioHTML(d) {
           ["Área", [d.area, d.nivel ? `Nivel ${d.nivel}` : null].filter(Boolean).join(" · ")],
           ["Ubicación", d.punto.ubicacion],
           ["Cliente", d.cliente],
-          ["Técnico", d.tecnico],
+          ["Técnico", d.tecnico || "No registrado"],
           ["Fecha y hora", fmtDateTime(d.fecha)],
-          ["Registrado por", d.metodo_acceso === "qr" ? "Escaneo de QR" : d.metodo_acceso],
+          ["Cómo abrió el punto", METODO_ACCESO_TXT[d.metodo_acceso] || d.metodo_acceso],
           ["Frecuencia", d.punto.frecuencia],
         ].filter(([, v]) => v).map(([k, v]) => `<div><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}
       </div>

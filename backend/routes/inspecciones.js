@@ -238,7 +238,8 @@ router.get("/:id/desglose", async (req, res) => {
                          frecuencia, plano_id, asa_tipos_punto(codigo, nombre, icono, color)),
       asa_areas(nombre, codigo, nivel, descripcion),
       asa_sitios(nombre, direccion, asa_clientes(razon_social, nombre_contacto)),
-      asa_empleados(nombre_completo, telefono)
+      asa_empleados(nombre_completo, telefono),
+      asa_usuarios(nombre_completo)
     `)
     .eq("id", req.params.id)
     .maybeSingle();
@@ -269,7 +270,7 @@ router.get("/:id/desglose", async (req, res) => {
     nivel: insp.asa_areas?.nivel || null,
     planta: insp.asa_sitios?.nombre || null,
     cliente: insp.asa_sitios?.asa_clientes?.razon_social || insp.asa_sitios?.asa_clientes?.nombre_contacto || null,
-    tecnico: insp.asa_empleados?.nombre_completo || null,
+    tecnico: insp.asa_empleados?.nombre_completo || insp.asa_usuarios?.nombre_completo || null,
     // Se ordenan como las contesto el tecnico, no alfabeticamente: asi el que
     // lee el reporte sigue el mismo recorrido que hizo en el punto.
     respuestas: (respuestas.data || []).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))),
@@ -322,21 +323,37 @@ router.get("/avance/hoy", async (req, res) => {
     supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id),
     supabase
       .from("asa_inspecciones")
-      .select("punto_id, fecha, estado_punto, nivel_actividad, tecnico_id, asa_empleados(nombre_completo)")
+      .select("id, punto_id, fecha, estado_punto, nivel_actividad, motivo_no_realizado, metodo_acceso, tecnico_id, asa_empleados(nombre_completo), asa_usuarios(nombre_completo)")
       .eq("sitio_id", sitio_id)
-      .eq("fecha_local", dia),
+      .eq("fecha_local", dia)
+      .order("fecha", { ascending: true }),
   ]);
+  if (puntos.error) return res.status(500).json({ error: true, mensaje: puntos.error.message });
+  if (hechas.error) return res.status(500).json({ error: true, mensaje: hechas.error.message });
 
+  // Un "no pude entrar" no cuenta como hecho: el punto sigue por hacer, pero
+  // se avisa en la tarjeta para que el técnico sepa que ya se intentó. Si en
+  // el día hay uno realizado, ese manda (por eso van en orden de hora).
   const porPunto = new Map();
-  for (const i of hechas.data || []) porPunto.set(i.punto_id, i);
+  const intentos = new Map();
+  for (const i of hechas.data || []) {
+    const fila = {
+      ...i,
+      tecnico: i.asa_empleados?.nombre_completo || i.asa_usuarios?.nombre_completo || null,
+    };
+    if (i.motivo_no_realizado) intentos.set(i.punto_id, fila);
+    else porPunto.set(i.punto_id, fila);
+  }
 
   const realizados = [];
   const pendientes = [];
   for (const p of puntos.data || []) {
     const insp = porPunto.get(p.punto_id);
     if (insp) realizados.push({ ...p, inspeccion: insp });
-    else if (p.frecuencia !== "por_orden") pendientes.push(p);
+    else if (p.frecuencia !== "por_orden") pendientes.push({ ...p, intento: intentos.get(p.punto_id) || null });
   }
+  // Lo último que se hizo arriba: el técnico ve primero lo que acaba de subir.
+  realizados.sort((a, b) => String(b.inspeccion.fecha).localeCompare(String(a.inspeccion.fecha)));
 
   res.json({
     fecha: dia,
@@ -451,6 +468,19 @@ async function registrarInspeccion(req, cuerpo) {
   // tabla queda la URL. Ver lib/evidencias.js para el por que.
   const fotos = await guardarFotos(resto.fotos, `inspecciones/${punto.sitio_id}`);
 
+  // Quién lo hizo. El token trae el empleado_id del técnico, pero un teléfono
+  // con la sesión abierta desde antes de vincular su ficha no lo tiene: se
+  // busca en la cuenta para que el servicio nunca quede "sin técnico".
+  let tecnicoId = resto.tecnico_id ?? req.usuario?.empleado_id ?? null;
+  if (!tecnicoId && req.usuario?.id) {
+    const { data: cuenta } = await supabase
+      .from("asa_usuarios")
+      .select("empleado_id")
+      .eq("id", req.usuario.id)
+      .maybeSingle();
+    tecnicoId = cuenta?.empleado_id ?? null;
+  }
+
   const { data: inspeccion, error } = await supabase
     .from("asa_inspecciones")
     .insert([
@@ -461,7 +491,7 @@ async function registrarInspeccion(req, cuerpo) {
         sitio_id: punto.sitio_id,
         area_id: punto.area_id,
         usuario_id: req.usuario?.id ?? null,
-        tecnico_id: resto.tecnico_id ?? req.usuario?.empleado_id ?? null,
+        tecnico_id: tecnicoId,
       },
     ])
     .select()

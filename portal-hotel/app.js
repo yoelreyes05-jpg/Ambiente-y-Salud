@@ -607,6 +607,10 @@ async function abrirServicio(inspeccionId) {
   );
 }
 
+// Cómo llegó el técnico al punto. Antes salía la clave cruda ("busqueda")
+// bajo "Registrado por", y se leía como si fuera el nombre de quien lo hizo.
+const METODO_ACCESO = { qr: "Escaneo de QR", busqueda: "Búsqueda por nombre", plano: "Desde el mapa", manual: "Desde la lista" };
+
 function fichaServicioHTML(d) {
   const noHecho = !!d.motivo_no_realizado;
   const fotos = [...(d.fotos || []), ...(d.respuestas || []).flatMap((r) => r.fotos || [])];
@@ -630,9 +634,9 @@ function fichaServicioHTML(d) {
         ${dato("Planta", d.planta)}
         ${dato("Área", [d.area, d.nivel ? `Nivel ${d.nivel}` : null].filter(Boolean).join(" · "))}
         ${dato("Ubicación", d.punto.ubicacion)}
-        ${dato("Técnico", d.tecnico)}
+        ${dato("Técnico", d.tecnico || "No registrado")}
         ${dato("Fecha y hora", fechaHora(d.fecha))}
-        ${dato("Registrado por", d.metodo_acceso === "qr" ? "Escaneo de QR" : d.metodo_acceso)}
+        ${dato("Cómo abrió el punto", METODO_ACCESO[d.metodo_acceso] || d.metodo_acceso)}
         ${dato("Frecuencia", d.punto.frecuencia)}
       </div>
 

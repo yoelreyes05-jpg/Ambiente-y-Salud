@@ -650,3 +650,25 @@ tr.sem-fila-amarillo td:first-child{box-shadow:inset 4px 0 0 #facc15}
 tr.sem-fila-verde td:first-child{box-shadow:inset 4px 0 0 #22c55e}
 tr.sem-fila-rojo{background:#fef2f2}
 tr.sem-fila-amarillo{background:#fefce8}
+
+/* ── Técnicos (tecnicos.js) ───────────────────────────────────────────── */
+.oculto-panel{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.kpi-de{font-size:15px;font-weight:600;color:var(--text-muted)}
+.kpi-nombre{font-size:19px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi-sub{font-size:12px;color:var(--text-muted);margin-top:4px}
+.aviso-tec{margin-top:4px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-left:4px solid #b91c1c}
+.aviso-tec.ok{border-left-color:var(--asa-verde-osc);color:var(--asa-verde-osc)}
+.tabla-tec td{vertical-align:middle}
+.tabla-tec tr.clickable{cursor:pointer}
+.tabla-tec tr.clickable:focus-visible{outline:2px solid var(--asa-azul);outline-offset:-2px}
+.tec-puesto{font-size:18px;text-align:center;width:40px}
+.tec-nombre{font-weight:700}
+.tec-sub{font-size:11.5px;color:var(--text-muted)}
+.tec-barra-celda{display:flex;align-items:center;gap:8px;min-width:150px}
+.tec-barra{flex:1;height:8px;background:var(--border);border-radius:20px;overflow:hidden}
+.tec-barra > span{display:block;height:100%;background:var(--asa-azul-medio);border-radius:20px}
+.tec-componentes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:18px}
+@media (max-width:760px){ .tec-componentes{grid-template-columns:1fr} }
+.tec-comp-cab{display:flex;justify-content:space-between;font-size:13px}
+.tec-h4{margin:18px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
+.tec-chips{display:flex;flex-wrap:wrap;gap:6px}

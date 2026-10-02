@@ -237,6 +237,8 @@ if (typeof MODULOS_EXTRA_4 !== "undefined") MODULES.splice(3, 0, ...MODULOS_EXTR
 if (typeof MODULOS_EXTRA_5 !== "undefined") MODULES.push(...MODULOS_EXTRA_5);
 // limpieza.js aporta "Borrar datos de prueba" (solo admin).
 if (typeof MODULOS_EXTRA_6 !== "undefined") MODULES.push(...MODULOS_EXTRA_6);
+// tecnicos.js aporta Técnicos (quién subió hoy, ranking e índice por técnico).
+if (typeof MODULOS_EXTRA_7 !== "undefined") MODULES.push(...MODULOS_EXTRA_7);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:

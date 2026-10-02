@@ -5,7 +5,7 @@
 import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
-import { exigirSitioPermitido, filtrarPorSitio } from "../middleware/auth.js";
+import { exigirSitioPermitido, filtrarPorSitio, requireRol } from "../middleware/auth.js";
 import { construirReporte } from "../lib/reportePdf.js";
 import { logAccion } from "../lib/auditoria.js";
 import { leerEstadosPunto } from "./configuracion.js";
@@ -250,6 +250,191 @@ router.get("/tablero", async (req, res) => {
 
   res.json({ desde, hasta: hoy, dias, tecnicos, plagas, operacion, ordenes: ordenesBloque });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /reportes/tecnicos?dias=7&sitio_id=
+//
+// Quién está subiendo su trabajo y cuánto. Es la pantalla "Técnicos" del
+// panel: la usa la oficina para saber, en el día, quién ya subió y quién no,
+// y en el período, quién lleva más registros y cómo va cada uno.
+//
+// Solo personal de ASA: el hotel no ve el desempeño de los técnicos.
+//
+// Por cada técnico:
+//   registros, hechos, no_realizados, hoy, dias_activos, promedio_dia,
+//   con_foto_pct, con_actividad, plantas, tipos, ultimo, participacion_pct,
+//   indice (0–100) y sus últimos registros.
+//
+// El índice junta cuatro cosas, para que no gane solo el que sube rápido y
+// sin evidencia:
+//   50 % volumen      — sus registros contra los del técnico que más subió
+//   20 % constancia   — días que subió, de los días en que hubo operación
+//   15 % efectividad  — de lo que registró, cuánto sí se pudo hacer
+//   15 % evidencia    — de lo hecho, cuánto lleva al menos una foto
+// ─────────────────────────────────────────────────────────────────────────────
+router.get(
+  "/tecnicos",
+  requireRol("admin", "comercial", "operaciones", "contabilidad", "nomina"),
+  async (req, res) => {
+    const { sitio_id } = req.query;
+    if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+
+    const dias = Math.min(Math.max(Number(req.query.dias) || 7, 1), 90);
+    const hoy = hoyRD();
+    const desde = dias === 1 ? hoy : haceDias(dias - 1);
+
+    // PostgREST corta en 1000 filas: se pide por páginas.
+    const filas = [];
+    for (let ini = 0; ; ini += 1000) {
+      let q = supabase
+        .from("asa_inspecciones")
+        .select(`
+          id, fecha, fecha_local, sitio_id, tecnico_id, usuario_id,
+          motivo_no_realizado, nivel_actividad, fotos, metodo_acceso,
+          asa_empleados(nombre_completo),
+          asa_usuarios(nombre_completo),
+          asa_sitios(nombre),
+          asa_puntos_control(codigo_visible, nombre, numero_habitacion, asa_tipos_punto(nombre, icono))
+        `)
+        .gte("fecha_local", desde)
+        .lte("fecha_local", hoy)
+        .order("fecha", { ascending: false })
+        .range(ini, ini + 999);
+      q = sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+      const { data, error } = await q;
+      if (error) return res.status(500).json({ error: true, mensaje: error.message });
+      filas.push(...(data || []));
+      if (!data || data.length < 1000 || filas.length >= 50000) break;
+    }
+
+    // Todos los técnicos activos, aunque no hayan subido nada: el que no
+    // aparece es justamente el que hay que ver.
+    const { data: cuentas } = await supabase
+      .from("asa_usuarios")
+      .select("id, nombre_completo, empleado_id, ultimo_acceso")
+      .eq("rol", "tecnico_plagas")
+      .eq("activo", true);
+
+    // Se agrupa por ficha de empleado; si el servicio no la tiene, por la
+    // cuenta que lo subió (y esa cuenta se cruza con su empleado si lo tiene).
+    const empleadoDeCuenta = new Map((cuentas || []).filter((c) => c.empleado_id).map((c) => [c.id, c.empleado_id]));
+    const claveDe = (i) => i.tecnico_id || empleadoDeCuenta.get(i.usuario_id) || (i.usuario_id ? `u:${i.usuario_id}` : "sin");
+
+    const porTecnico = new Map();
+    const nuevo = (clave, nombre, extra = {}) => ({
+      clave, nombre,
+      registros: 0, hechos: 0, no_realizados: 0, hoy: 0, con_foto: 0, con_actividad: 0,
+      dias: new Set(), plantas: new Map(), tipos: new Map(),
+      ultimo: null, primero_hoy: null, recientes: [],
+      ultimo_acceso: null,
+      ...extra,
+    });
+    for (const c of cuentas || []) {
+      const k = c.empleado_id || `u:${c.id}`;
+      if (!porTecnico.has(k)) porTecnico.set(k, nuevo(k, c.nombre_completo, { ultimo_acceso: c.ultimo_acceso }));
+    }
+
+    const diasConOperacion = new Set();
+    for (const i of filas) {
+      const k = claveDe(i);
+      const nombre = i.asa_empleados?.nombre_completo || i.asa_usuarios?.nombre_completo || "Sin técnico registrado";
+      if (!porTecnico.has(k)) porTecnico.set(k, nuevo(k, nombre));
+      const t = porTecnico.get(k);
+      const hecho = !i.motivo_no_realizado;
+      const fotos = Array.isArray(i.fotos) ? i.fotos.length : 0;
+      const punto = i.asa_puntos_control || {};
+      const tipo = punto.asa_tipos_punto || {};
+
+      t.registros++;
+      if (hecho) t.hechos++; else t.no_realizados++;
+      if (hecho && fotos) t.con_foto++;
+      if (hecho && i.nivel_actividad && i.nivel_actividad !== "ninguna") t.con_actividad++;
+      if (i.fecha_local === hoy) {
+        t.hoy++;
+        if (!t.primero_hoy || i.fecha < t.primero_hoy) t.primero_hoy = i.fecha;
+      }
+      t.dias.add(i.fecha_local);
+      diasConOperacion.add(i.fecha_local);
+      if (!t.ultimo || i.fecha > t.ultimo) t.ultimo = i.fecha;
+      const planta = i.asa_sitios?.nombre || "—";
+      t.plantas.set(planta, (t.plantas.get(planta) || 0) + 1);
+      const kt = tipo.nombre || "Otros";
+      if (!t.tipos.has(kt)) t.tipos.set(kt, { nombre: kt, icono: tipo.icono || "", n: 0 });
+      t.tipos.get(kt).n++;
+      if (t.recientes.length < 15) {
+        t.recientes.push({
+          id: i.id,
+          fecha: i.fecha,
+          planta,
+          punto: punto.numero_habitacion ? `Habitación ${punto.numero_habitacion}` : punto.nombre || punto.codigo_visible || "",
+          codigo: punto.codigo_visible || "",
+          tipo: kt,
+          icono: tipo.icono || "",
+          hecho,
+          motivo: i.motivo_no_realizado || null,
+          nivel_actividad: i.nivel_actividad,
+          fotos,
+        });
+      }
+    }
+
+    const total = filas.length;
+    const maxRegistros = Math.max(0, ...[...porTecnico.values()].map((t) => t.registros));
+    const nDiasOp = diasConOperacion.size;
+    const pct = (a, b) => (b ? Number(((a / b) * 100).toFixed(1)) : 0);
+
+    const tecnicos = [...porTecnico.values()]
+      .map((t) => {
+        const volumen = maxRegistros ? t.registros / maxRegistros : 0;
+        const constancia = nDiasOp ? t.dias.size / nDiasOp : 0;
+        const efectividad = t.registros ? t.hechos / t.registros : 0;
+        const evidencia = t.hechos ? t.con_foto / t.hechos : 0;
+        const indice = t.registros
+          ? Math.round((volumen * 0.5 + constancia * 0.2 + efectividad * 0.15 + evidencia * 0.15) * 100)
+          : 0;
+        return {
+          clave: t.clave,
+          nombre: t.nombre,
+          registros: t.registros,
+          hechos: t.hechos,
+          no_realizados: t.no_realizados,
+          hoy: t.hoy,
+          primero_hoy: t.primero_hoy,
+          ultimo: t.ultimo,
+          ultimo_acceso: t.ultimo_acceso,
+          dias_activos: t.dias.size,
+          promedio_dia: t.dias.size ? Number((t.registros / t.dias.size).toFixed(1)) : 0,
+          con_foto_pct: pct(t.con_foto, t.hechos),
+          con_actividad: t.con_actividad,
+          efectividad_pct: pct(t.hechos, t.registros),
+          constancia_pct: pct(t.dias.size, nDiasOp),
+          participacion_pct: pct(t.registros, total),
+          indice,
+          plantas: [...t.plantas.entries()].sort((a, b) => b[1] - a[1]).map(([nombre, n]) => ({ nombre, n })),
+          tipos: [...t.tipos.values()].sort((a, b) => b.n - a.n),
+          recientes: t.recientes,
+        };
+      })
+      // El que más subió primero; a igualdad, el de mejor índice
+      .sort((a, b) => b.registros - a.registros || b.indice - a.indice || a.nombre.localeCompare(b.nombre));
+
+    const conRegistros = tecnicos.filter((t) => t.registros);
+    res.json({
+      desde,
+      hasta: hoy,
+      dias,
+      total,
+      hoy_total: filas.filter((i) => i.fecha_local === hoy).length,
+      dias_con_operacion: nDiasOp,
+      tecnicos,
+      lider: conRegistros[0] || null,
+      mejor_indice: [...conRegistros].sort((a, b) => b.indice - a.indice)[0] || null,
+      activos_hoy: tecnicos.filter((t) => t.hoy).length,
+      sin_registro_hoy: tecnicos.filter((t) => !t.hoy && !t.clave.startsWith("sin")).map((t) => t.nombre),
+      truncado: filas.length >= 50000,
+    });
+  }
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /reportes/histograma?sitio_id=&desde=&hasta=&agrupar=dia|semana|mes&por=actividad|area|tipo

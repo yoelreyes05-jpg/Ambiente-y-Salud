@@ -717,7 +717,7 @@ async function bloqueServicio(doc, s, { conFotos, estadoTexto = (v) => ESTADOS_T
   doc.font("Helvetica").fontSize(8).fillColor(C.suave)
      .text(limpiar([s.tipo_nombre, s.area, s.nivel ? `Nivel ${s.nivel}` : null, s.planta].filter(Boolean).join("  ·  ")),
            x0 + 10, y + 20, { width: ancho - 160 })
-     .text(limpiar(`${s.tecnico || "Sin tecnico"}  ·  acceso por ${s.metodo_acceso === "qr" ? "QR" : s.metodo_acceso}`),
+     .text(limpiar(`Tecnico: ${s.tecnico || "no registrado"}  ·  ${({ qr: "escaneo de QR", busqueda: "busqueda por nombre", plano: "desde el mapa", manual: "desde la lista" })[s.metodo_acceso] || s.metodo_acceso}`),
            x0 + 10, y + 31, { width: ancho - 160 });
 
   doc.font("Helvetica-Bold").fontSize(8.2).fillColor(acento)
