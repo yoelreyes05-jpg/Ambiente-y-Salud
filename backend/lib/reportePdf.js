@@ -14,8 +14,13 @@
 //   puntos y cinco fotos cada uno son 3,000 descargas: sin tope se le agota la
 //   memoria al servidor, y con tope de 1 el reporte tarda minutos.
 //
-// · pdfkit solo mete JPEG y PNG. Una foto en webp se salta y se anota; es mejor
-//   un reporte con una foto menos y una nota, que un 500 a mitad de camino.
+// · Cada foto se ACHICA antes de meterla al PDF (sharp: 720 px de lado mayor,
+//   JPEG calidad 60). En el reporte una foto ocupa unos 3 cm; meterla a 1280 px
+//   era lo que hacia que 93 fotos pesaran 21 MB. Achicada, el mismo reporte
+//   queda en 3-4 MB y se puede mandar por WhatsApp o correo. sharp tambien
+//   convierte las WebP (la app ahora guarda en WebP) a JPEG, que es lo unico
+//   que pdfkit sabe meter junto con PNG. Si sharp no esta instalado, se usa la
+//   foto tal cual como antes y las WebP se saltan con una nota.
 //
 // · Las fuentes estandar de PDF (Helvetica) manejan acentos y ñ, pero NO
 //   emojis. El catalogo de tipos de punto y de plagas esta lleno de emojis
@@ -28,6 +33,29 @@
 //   lo que realmente se le pregunto al tecnico en marzo. Eso es lo que hace que
 //   el documento aguante una auditoria.
 import PDFDocument from "pdfkit";
+
+// sharp es opcional: si no esta instalado el reporte sale igual, solo mas pesado.
+let sharp = null;
+try { sharp = (await import("sharp")).default; } catch { sharp = null; }
+
+const LADO_FOTO_PDF = 720;
+const CALIDAD_FOTO_PDF = 60;
+
+// Deja la foto lista para el PDF: girada segun la camara, achicada y en JPEG.
+async function prepararFoto(buf) {
+  if (!buf) return null;
+  if (!sharp) return buf;
+  try {
+    return await sharp(buf, { failOn: "none" })
+      .rotate()
+      .resize({ width: LADO_FOTO_PDF, height: LADO_FOTO_PDF, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: CALIDAD_FOTO_PDF, mozjpeg: true })
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}
+const formatoAceptado = (tipo) => (sharp ? /jpeg|jpg|png|webp/i : /jpeg|jpg|png/i).test(tipo);
 
 const LOTE_FOTOS = 6;
 const MAX_BYTES_FOTO = 6 * 1024 * 1024;
@@ -104,18 +132,18 @@ async function bajarFoto(ref) {
     if (ref.startsWith("data:")) {
       const m = /^data:([^;]+);base64,(.*)$/s.exec(ref);
       if (!m) return null;
-      if (!/jpeg|jpg|png/i.test(m[1])) return null;
+      if (!formatoAceptado(m[1])) return null;
       const buf = Buffer.from(m[2], "base64");
-      return buf.length && buf.length < MAX_BYTES_FOTO ? buf : null;
+      return buf.length && buf.length < MAX_BYTES_FOTO ? prepararFoto(buf) : null;
     }
 
     if (!/^https?:\/\//i.test(ref)) return null;
     const res = await fetch(ref, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) return null;
     const tipo = res.headers.get("content-type") || "";
-    if (!/jpeg|jpg|png/i.test(tipo)) return null;
+    if (!formatoAceptado(tipo)) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length && buf.length < MAX_BYTES_FOTO ? buf : null;
+    return buf.length && buf.length < MAX_BYTES_FOTO ? prepararFoto(buf) : null;
   } catch {
     return null;
   }
@@ -232,28 +260,45 @@ function kpis(doc, tarjetas, opciones = {}) {
 }
 
 // Tabla sencilla. columnas: [{ titulo, ancho, alineacion?, negrita? }]
-function tabla(doc, columnas, filas, opciones = {}) {
-  const x0 = doc.page.margins.left;
+// opciones: { colorEncabezado?, tam? (letra de las filas), pad? (relleno) }
+//
+// El alto de cada fila se mide con la MISMA letra con la que se escribe cada
+// celda (negrita incluida). Antes se media todo en letra normal y las columnas
+// en negrita ("Respuesta del tecnico") ocupaban una linea mas de lo medido: el
+// texto se montaba encima de la fila siguiente ("Inspeccion visual, Aplicacion
+// de accion prolongada" pisando el "No" de abajo).
+function medidasTabla(doc, columnas, opciones = {}) {
   const total = columnas.reduce((a, c) => a + c.ancho, 0);
   const escala = ANCHO_UTIL(doc) / total;
   const anchos = columnas.map((c) => c.ancho * escala);
+  const tam = opciones.tam || 8.4;
+  const pad = opciones.pad ?? 4;
+  const tamEnc = Math.min(7.6, tam);
 
-  // El alto del encabezado se mide, no se fija: con "MAXIMO EN UN PUNTO" en una
-  // columna estrecha, un alto fijo de 17 cortaba la segunda linea a la mitad.
-  doc.font("Helvetica-Bold").fontSize(7.6);
+  doc.font("Helvetica-Bold").fontSize(tamEnc);
   const altoEnc = Math.max(
-    17,
-    ...columnas.map((c, i) => doc.heightOfString(limpiar(c.titulo).toUpperCase(), { width: anchos[i] - 8 }) + 9)
+    15,
+    ...columnas.map((c, i) => doc.heightOfString(limpiar(c.titulo).toUpperCase(), { width: anchos[i] - 8 }) + 2 * pad + 1)
   );
+  const altoFila = (fila) =>
+    Math.max(
+      ...columnas.map((c, i) => {
+        doc.font(c.negrita ? "Helvetica-Bold" : "Helvetica").fontSize(tam);
+        return doc.heightOfString(limpiar(fila[i]) || " ", { width: anchos[i] - 8 });
+      })
+    ) + 2 * pad;
+  return { anchos, tam, pad, tamEnc, altoEnc, altoFila };
+}
 
-  // Alto de una fila, medido igual que al dibujarla. Se usa para no dejar un
-  // encabezado de tabla solo al final de una hoja.
-  const altoFila = (fila) => {
-    doc.font("Helvetica").fontSize(8.4);
-    return Math.max(
-      ...columnas.map((c, i) => doc.heightOfString(limpiar(fila[i]) || " ", { width: anchos[i] - 8 }))
-    ) + 8;
-  };
+// Alto total que ocupara una tabla (para decidir antes si cabe en la hoja).
+function altoTabla(doc, columnas, filas, opciones = {}) {
+  const m = medidasTabla(doc, columnas, opciones);
+  return m.altoEnc + filas.reduce((a, f) => a + m.altoFila(f), 0) + 6;
+}
+
+function tabla(doc, columnas, filas, opciones = {}) {
+  const x0 = doc.page.margins.left;
+  const { anchos, tam, pad, tamEnc, altoEnc, altoFila } = medidasTabla(doc, columnas, opciones);
 
   const encabezado = () => {
     marcar(doc);
@@ -261,8 +306,8 @@ function tabla(doc, columnas, filas, opciones = {}) {
     doc.rect(x0, y, ANCHO_UTIL(doc), altoEnc).fill(opciones.colorEncabezado || C.azul);
     let x = x0;
     columnas.forEach((c, i) => {
-      doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(7.6)
-         .text(limpiar(c.titulo).toUpperCase(), x + 4, y + 4.5, { width: anchos[i] - 8, align: c.alineacion || "left" });
+      doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(tamEnc)
+         .text(limpiar(c.titulo).toUpperCase(), x + 4, y + pad + 0.5, { width: anchos[i] - 8, align: c.alineacion || "left" });
       x += anchos[i];
     });
     doc.y = y + altoEnc;
@@ -293,8 +338,8 @@ function tabla(doc, columnas, filas, opciones = {}) {
     let x = x0;
     columnas.forEach((c, i) => {
       doc.fillColor(fila._color || C.texto)
-         .font(c.negrita ? "Helvetica-Bold" : "Helvetica").fontSize(8.4)
-         .text(celdas[i] || "", x + 4, y + 4, { width: anchos[i] - 8, align: c.alineacion || "left" });
+         .font(c.negrita ? "Helvetica-Bold" : "Helvetica").fontSize(tam)
+         .text(celdas[i] || "", x + 4, y + pad, { width: anchos[i] - 8, align: c.alineacion || "left" });
       x += anchos[i];
     });
     doc.y = y + alto;
@@ -385,16 +430,22 @@ function histograma(doc, datos, series, colores, opciones = {}) {
 // ── Rejilla de fotos ─────────────────────────────────────────────────────────
 // Tres por fila con su pie. El pie importa: una foto sin decir de que punto y
 // de que area es, en auditoria no prueba nada.
-function rejillaFotos(doc, fotos, opciones = {}) {
+function medidasRejilla(doc, n, opciones = {}) {
   const porFila = opciones.porFila || 3;
-  const ancho = ANCHO_UTIL(doc);
-  const hueco = 8;
-  const w = (ancho - hueco * (porFila - 1)) / porFila;
+  const hueco = opciones.hueco ?? 8;
+  const w = (ANCHO_UTIL(doc) - hueco * (porFila - 1)) / porFila;
   const h = opciones.alto || w * 0.75;
+  const filas = Math.ceil(n / porFila);
+  const altoFila = h + (opciones.conPie === false ? 6 : 16);
+  return { porFila, hueco, w, h, filas, altoFila, total: filas * altoFila };
+}
+
+function rejillaFotos(doc, fotos, opciones = {}) {
+  const { porFila, hueco, w, h } = medidasRejilla(doc, fotos.length, opciones);
 
   for (let i = 0; i < fotos.length; i += porFila) {
     const fila = fotos.slice(i, i + porFila);
-    espacio(doc, h + 26);
+    espacio(doc, h + 18);
     marcar(doc);
     const y = doc.y;
 
@@ -407,11 +458,11 @@ function rejillaFotos(doc, fotos, opciones = {}) {
         doc.fillColor(C.gris).fontSize(7).text("Foto no legible", x + 4, y + h / 2 - 4, { width: w - 8, align: "center" });
       }
       if (f.pie) {
-        doc.fillColor(C.suave).font("Helvetica").fontSize(6.6)
-           .text(limpiar(f.pie), x, y + h + 2.5, { width: w, align: "center", height: 18 });
+        doc.fillColor(C.suave).font("Helvetica").fontSize(6.2)
+           .text(limpiar(f.pie), x, y + h + 2, { width: w, align: "center", height: 9, lineBreak: false, ellipsis: true });
       }
     });
-    doc.y = y + h + (fila.some((f) => f.pie) ? 20 : 6);
+    doc.y = y + h + (fila.some((f) => f.pie) ? 16 : 6);
     doc.x = doc.page.margins.left;
   }
   doc.fillColor(C.texto);
@@ -573,11 +624,24 @@ export async function construirReporte(d, opciones = {}) {
   }
 
   // ── No realizados ─────────────────────────────────────────────────────────
-  tituloSeccion(doc, "Servicios que NO se pudieron realizar", d.no_realizados?.length ? C.rojo : C.verde);
-  if (!d.no_realizados?.length) {
+  //
+  // Dos cosas distintas, las dos van aqui:
+  //   1. Lo que el tecnico intento y NO pudo hacer (con motivo y quien lo dijo).
+  //   2. Los puntos programados que se quedaron sin atender dentro de su
+  //      frecuencia. Antes esta seccion solo miraba (1), y con cientos de puntos
+  //      vencidos decia "todos los servicios programados se ejecutaron": la
+  //      seccion salia vacia y ademas afirmaba algo que no era cierto.
+  const pendientes = d.pendientes_por_area || [];
+  const totalPend = pendientes.reduce((a, p) => a + p.pendientes, 0);
+  const hayNoRealizados = !!d.no_realizados?.length;
+
+  tituloSeccion(doc, "Servicios que NO se pudieron realizar", hayNoRealizados || totalPend ? C.rojo : C.verde);
+  if (!hayNoRealizados && !totalPend) {
     parrafo(doc, "Todos los servicios programados en el periodo se ejecutaron. No hubo accesos negados ni areas inaccesibles.", { color: C.verde, negrita: true });
-  } else {
-    parrafo(doc, "Cada linea es un servicio que el tecnico se presento a hacer y no pudo. Se deja registrado el motivo y con quien se hablo, porque la responsabilidad no es la misma cuando el hotel no autoriza el acceso que cuando el equipo de ASA no llego.");
+  }
+
+  if (hayNoRealizados) {
+    parrafo(doc, "Servicios que el tecnico se presento a hacer y no pudo, con el motivo y quien lo informo: la responsabilidad no es la misma cuando el hotel no autoriza el acceso que cuando el equipo de ASA no llego.");
     doc.moveDown(0.3);
     tabla(doc,
       [
@@ -601,7 +665,32 @@ export async function construirReporte(d, opciones = {}) {
         fila._color = "#7F1D1D";
         return fila;
       }),
-      { colorEncabezado: C.rojo }
+      { colorEncabezado: C.rojo, tam: 8 }
+    );
+  } else if (totalPend) {
+    parrafo(doc, "No se registraron accesos negados ni areas inaccesibles en el periodo.", { color: C.verde, negrita: true, tam: 8.5 });
+  }
+
+  if (totalPend) {
+    doc.moveDown(0.3);
+    parrafo(doc, `Puntos programados pendientes de atender (${totalPend}), contados al momento de generar el reporte: no tienen un servicio realizado dentro de su frecuencia. "Sin visita registrada" son puntos que todavia no tienen ningun servicio en el sistema.`);
+    doc.moveDown(0.3);
+    tabla(doc,
+      [
+        { titulo: "Area", ancho: 170, negrita: true },
+        { titulo: "Tipo de punto", ancho: 130 },
+        { titulo: "Pendientes", ancho: 60, alineacion: "right" },
+        { titulo: "Sin visita registrada", ancho: 70, alineacion: "right" },
+        { titulo: "Ultima visita", ancho: 70, alineacion: "right" },
+      ],
+      pendientes.map((p) => [
+        p.area || "Sin area",
+        p.tipo || "—",
+        p.pendientes,
+        p.nunca,
+        p.ultima ? fechaCorta(p.ultima) : "—",
+      ]),
+      { colorEncabezado: C.rojo, tam: 8, pad: 3 }
     );
   }
 
@@ -632,8 +721,11 @@ export async function construirReporte(d, opciones = {}) {
 
   // ── Detalle servicio por servicio ─────────────────────────────────────────
   if (conDetalle && d.servicios?.length) {
-    nuevaHoja(doc);
-    tituloSeccion(doc, "Detalle de cada servicio realizado");
+    // Sin salto de hoja forzado: antes el detalle arrancaba siempre en hoja
+    // nueva y la hoja anterior quedaba casi en blanco despues de la seccion de
+    // no realizados. Ahora sigue debajo; `bloqueServicio` ya se encarga de no
+    // partir un servicio entre dos hojas.
+    tituloSeccion(doc, "Detalle de cada servicio realizado", C.azul, 150);
     parrafo(doc, `${d.servicios.length} servicios, con las preguntas que el tecnico verifico una por una, lo que encontro y su evidencia fotografica. El texto de cada pregunta es el que estaba vigente el dia de la visita, no el de hoy: por eso el reporte sigue siendo valido si despues se cambio el checklist.`);
     doc.moveDown(0.5);
 
@@ -696,93 +788,135 @@ export async function construirReporte(d, opciones = {}) {
 }
 
 // Un servicio: cabecera con donde y quien, la tabla de respuestas, las plagas y
-// sus fotos. Se mantiene junto en la medida de lo posible (`espacio`) para que
-// un servicio no quede partido entre dos hojas sin necesidad.
+// sus fotos.
+//
+// Se MIDE completo antes de dibujarlo: si no cabe en lo que queda de la hoja
+// pero si cabe en una hoja entera, se pasa completo a la siguiente. Antes solo
+// se reservaba espacio para la cabecera y las fotos quedaban solas arriba de la
+// hoja siguiente, sin decir de que servicio eran. Solo un servicio mas alto que
+// una hoja entera (muchas fotos) se parte, y entonces lo que pasa de hoja son
+// filas de fotos completas con su pie.
+const COLS_RESPUESTAS = [
+  { titulo: "Visto", ancho: 34, alineacion: "center" },
+  { titulo: "Pregunta", ancho: 236 },
+  { titulo: "Respuesta del tecnico", ancho: 210, negrita: true },
+];
+const OPC_RESPUESTAS = { colorEncabezado: C.azulOsc, tam: 7.8, pad: 3 };
+const REJILLA_SERVICIO = { porFila: 5, alto: 92, hueco: 6 };
+const ALTO_CABECERA = 38;
+
+const normal = (t) => limpiar(t).toLowerCase().replace(/[.\s]+$/g, "");
+
 async function bloqueServicio(doc, s, { conFotos, estadoTexto = (v) => ESTADOS_TEXTO[v] || v }) {
-  espacio(doc, 96);
-  marcar(doc);
   const x0 = doc.page.margins.left;
   const ancho = ANCHO_UTIL(doc);
-  const y = doc.y;
-
   const noHecho = !!s.motivo_no_realizado;
-  const acento = noHecho ? C.rojo : s.nivel_actividad && s.nivel_actividad !== "ninguna" ? C.ambar : C.verde;
 
-  doc.roundedRect(x0, y, ancho, 44, 5).fillAndStroke(noHecho ? C.rojoClaro : "#FBFCFE", C.linea);
-  doc.rect(x0, y, 3.5, 44).fill(acento);
+  // ── Lo que se va a dibujar ──────────────────────────────────────────────
+  const filas = noHecho ? [] : (s.respuestas || []).map((q) => ["Si", q.pregunta_texto, valorRespuesta(q)]);
 
-  const titulo = s.numero_habitacion ? `Habitacion ${s.numero_habitacion}` : (s.punto_nombre || s.codigo_visible);
-  doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(10.5)
-     .text(limpiar(`${s.codigo_visible} — ${titulo}`), x0 + 10, y + 6, { width: ancho - 160, lineBreak: false });
-  doc.font("Helvetica").fontSize(8).fillColor(C.suave)
-     .text(limpiar([s.tipo_nombre, s.area, s.nivel ? `Nivel ${s.nivel}` : null, s.planta].filter(Boolean).join("  ·  ")),
-           x0 + 10, y + 20, { width: ancho - 160 })
-     .text(limpiar(`Tecnico: ${s.tecnico || "no registrado"}  ·  ${({ qr: "escaneo de QR", busqueda: "busqueda por nombre", plano: "desde el mapa", manual: "desde la lista" })[s.metodo_acceso] || s.metodo_acceso}`),
-           x0 + 10, y + 31, { width: ancho - 160 });
+  // "Observaciones del tecnico" se omite si ya salio igual como respuesta de la
+  // pregunta "Observaciones": era la misma frase dos veces seguidas.
+  const respuestasTexto = new Set(filas.map((f) => normal(f[2])));
+  const notas = !noHecho && s.notas && !respuestasTexto.has(normal(s.notas)) ? s.notas : null;
 
-  doc.font("Helvetica-Bold").fontSize(8.2).fillColor(acento)
-     .text(limpiar(noHecho ? "NO REALIZADO" : estadoTexto(s.estado_punto)),
-           x0 + ancho - 150, y + 7, { width: 140, align: "right" });
-  doc.font("Helvetica").fontSize(7.6).fillColor(C.suave)
-     .text(limpiar(`${fechaCorta(s.fecha)} · ${horaCorta(s.fecha)}`), x0 + ancho - 150, y + 20, { width: 140, align: "right" })
-     .text(limpiar(noHecho ? "" : (NIVEL_TEXTO[s.nivel_actividad] || "")), x0 + ancho - 150, y + 31, { width: 140, align: "right" });
+  const capturasTexto = !noHecho && s.capturas?.length
+    ? limpiar(s.capturas.map((c) => `${c.plaga}: ${c.cantidad}${c.etapa ? ` (${c.etapa})` : ""}${c.sobre_umbral ? " — SOBRE EL UMBRAL" : ""}`).join("   |   "))
+    : null;
 
-  doc.y = y + 50;
-
-  if (noHecho) {
-    parrafo(doc, `Motivo: ${MOTIVOS_TEXTO[s.motivo_no_realizado] || s.motivo_no_realizado}${s.impedido_por ? `. Informado por: ${s.impedido_por}` : ""}${s.notas ? `. ${s.notas}` : ""}`, { color: C.rojo, negrita: true, tam: 8.5 });
-    doc.moveDown(0.5);
-    return;
-  }
-
-  // Respuestas del checklist: lo que el tecnico verifico y le dio el visto.
-  if (s.respuestas?.length) {
-    tabla(doc,
-      [
-        { titulo: "Visto", ancho: 40, alineacion: "center" },
-        { titulo: "Pregunta", ancho: 250 },
-        { titulo: "Respuesta del tecnico", ancho: 190, negrita: true },
-      ],
-      // La columna "Visto" es literal: cada linea es una pregunta que el tecnico
-      // respondio en campo. Lo que no contesto no aparece.
-      s.respuestas.map((q) => ["Si", q.pregunta_texto, valorRespuesta(q)]),
-      { colorEncabezado: C.azulOsc }
-    );
-  } else {
-    parrafo(doc, "Este punto no tenia checklist asignado el dia de la visita: solo se registro estado y nivel de actividad.", { color: C.gris, tam: 7.8 });
-  }
-
-  // Plagas contadas en este punto
-  if (s.capturas?.length) {
-    doc.font("Helvetica-Bold").fontSize(8.6).fillColor(C.texto).text("Plagas contadas en este punto:");
-    doc.font("Helvetica").fontSize(8.6).fillColor(C.suave)
-       .text(limpiar(s.capturas.map((c) => `${c.plaga}: ${c.cantidad}${c.etapa ? ` (${c.etapa})` : ""}${c.sobre_umbral ? " — SOBRE EL UMBRAL" : ""}`).join("   |   ")),
-             { width: ANCHO_UTIL(doc) });
-    doc.moveDown(0.4);
-  }
-
-  if (s.notas) {
-    doc.font("Helvetica-Bold").fontSize(8.4).fillColor(C.texto).text("Observaciones del tecnico: ", { continued: true });
-    doc.font("Helvetica").fillColor(C.suave).text(limpiar(s.notas));
-    doc.moveDown(0.3);
-  }
-
-  // Fotos del servicio, con su pie
-  if (conFotos) {
+  let fotos = [];
+  if (conFotos && !noHecho) {
     const refs = [...(s.fotos || [])];
     for (const q of s.respuestas || []) for (const f of q.fotos || []) refs.push(f);
     if (refs.length) {
       const buffers = await bajarFotos(refs);
       const pie = `${s.numero_habitacion ? `Hab. ${s.numero_habitacion}` : s.codigo_visible} · ${s.area || ""}`;
-      const utiles = buffers.map((b) => (b ? { buffer: b, pie } : null)).filter(Boolean);
-      if (utiles.length) rejillaFotos(doc, utiles, { porFila: 3, alto: 110 });
+      fotos = buffers.filter(Boolean).map((b) => ({ buffer: b, pie }));
     }
   }
 
-  doc.moveDown(0.4);
-  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.margins.left + ANCHO_UTIL(doc), doc.y)
-     .lineWidth(0.5).strokeColor(C.azulClaro).stroke();
-  doc.moveDown(0.7);
+  // ── Medir ───────────────────────────────────────────────────────────────
+  doc.font("Helvetica").fontSize(8);
+  let alto = ALTO_CABECERA + 6;
+  if (noHecho) alto += 20;
+  else if (filas.length) alto += altoTabla(doc, COLS_RESPUESTAS, filas, OPC_RESPUESTAS);
+  else alto += 14;
+  if (capturasTexto) alto += 12 + doc.heightOfString(capturasTexto, { width: ancho });
+  if (notas) alto += 4 + doc.heightOfString(`Observaciones del tecnico: ${limpiar(notas)}`, { width: ancho });
+  if (fotos.length) alto += 2 + medidasRejilla(doc, fotos.length, REJILLA_SERVICIO).total;
+  alto += 12;
+
+  const altoHoja = FONDO_HOJA(doc) - doc.page.margins.top;
+  if (alto <= altoHoja) espacio(doc, alto);
+  else espacio(doc, ALTO_CABECERA + 6 + (filas.length ? altoTabla(doc, COLS_RESPUESTAS, filas, OPC_RESPUESTAS) : 0));
+
+  // ── Cabecera ────────────────────────────────────────────────────────────
+  marcar(doc);
+  const y = doc.y;
+  const acento = noHecho ? C.rojo : s.nivel_actividad && s.nivel_actividad !== "ninguna" ? C.ambar : C.verde;
+
+  doc.roundedRect(x0, y, ancho, ALTO_CABECERA, 4).fillAndStroke(noHecho ? C.rojoClaro : "#FBFCFE", C.linea);
+  doc.rect(x0, y, 3.5, ALTO_CABECERA).fill(acento);
+
+  // "IBAEROSOLB006 — IBAEROSOLB006": si el punto no tiene nombre propio, el
+  // codigo va una sola vez.
+  const nombre = s.numero_habitacion ? `Habitacion ${s.numero_habitacion}` : (s.punto_nombre || "");
+  const titulo = nombre && normal(nombre) !== normal(s.codigo_visible) ? `${s.codigo_visible} — ${nombre}` : s.codigo_visible;
+  doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(9.8)
+     .text(limpiar(titulo), x0 + 10, y + 5, { width: ancho - 160, lineBreak: false, ellipsis: true });
+  doc.font("Helvetica").fontSize(7.4).fillColor(C.suave)
+     .text(limpiar([s.tipo_nombre, s.area, s.nivel ? `Nivel ${s.nivel}` : null, s.planta].filter(Boolean).join("  ·  ")),
+           x0 + 10, y + 17, { width: ancho - 160, lineBreak: false, ellipsis: true })
+     .text(limpiar(`Tecnico: ${s.tecnico || "no registrado"}  ·  ${({ qr: "escaneo de QR", busqueda: "busqueda por nombre", plano: "desde el mapa", manual: "desde la lista" })[s.metodo_acceso] || s.metodo_acceso || ""}`),
+           x0 + 10, y + 27, { width: ancho - 160, lineBreak: false, ellipsis: true });
+
+  doc.font("Helvetica-Bold").fontSize(7.8).fillColor(acento)
+     .text(limpiar(noHecho ? "NO REALIZADO" : estadoTexto(s.estado_punto)),
+           x0 + ancho - 150, y + 5, { width: 140, align: "right", lineBreak: false });
+  doc.font("Helvetica").fontSize(7.2).fillColor(C.suave)
+     .text(limpiar(`${fechaCorta(s.fecha)} · ${horaCorta(s.fecha)}`), x0 + ancho - 150, y + 16, { width: 140, align: "right", lineBreak: false })
+     .text(limpiar(noHecho ? "" : (NIVEL_TEXTO[s.nivel_actividad] || "")), x0 + ancho - 150, y + 26, { width: 140, align: "right", lineBreak: false });
+
+  doc.y = y + ALTO_CABECERA + 4;
+  doc.x = x0;
+
+  if (noHecho) {
+    parrafo(doc, `Motivo: ${MOTIVOS_TEXTO[s.motivo_no_realizado] || s.motivo_no_realizado}${s.impedido_por ? `. Informado por: ${s.impedido_por}` : ""}${s.notas ? `. ${s.notas}` : ""}`, { color: C.rojo, negrita: true, tam: 8.2 });
+    doc.moveDown(0.5);
+    return;
+  }
+
+  // Respuestas del checklist: lo que el tecnico verifico y le dio el visto.
+  // La columna "Visto" es literal: lo que no contesto no aparece.
+  if (filas.length) {
+    tabla(doc, COLS_RESPUESTAS, filas, OPC_RESPUESTAS);
+  } else {
+    parrafo(doc, "Este punto no tenia checklist asignado el dia de la visita: solo se registro estado y nivel de actividad.", { color: C.gris, tam: 7.6 });
+  }
+
+  if (capturasTexto) {
+    doc.x = x0;
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(C.texto).text("Plagas contadas en este punto:", x0, doc.y, { width: ancho });
+    doc.font("Helvetica").fontSize(8).fillColor(C.suave).text(capturasTexto, x0, doc.y, { width: ancho });
+    doc.moveDown(0.3);
+  }
+
+  if (notas) {
+    doc.x = x0;
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(C.texto).text("Observaciones del tecnico: ", x0, doc.y, { width: ancho, continued: true });
+    doc.font("Helvetica").fillColor(C.suave).text(limpiar(notas));
+    doc.moveDown(0.25);
+  }
+
+  if (fotos.length) {
+    doc.y += 2;
+    rejillaFotos(doc, fotos, REJILLA_SERVICIO);
+  }
+
+  doc.y += 3;
+  doc.moveTo(x0, doc.y).lineTo(x0 + ancho, doc.y).lineWidth(0.5).strokeColor(C.azulClaro).stroke();
+  doc.y += 8;
+  doc.x = x0;
 }
 
 function valorRespuesta(q) {

@@ -588,7 +588,9 @@ async function juntarEvidencia(req) {
     .lte("fecha_local", hasta)
     .order("fecha", { ascending: true })
     .limit(tope);
-  let qPuntos = supabase.from("asa_v_puntos_estado").select("vencido, frecuencia, sitio_id");
+  let qPuntos = supabase
+    .from("asa_v_puntos_estado")
+    .select("vencido, frecuencia, sitio_id, area_nombre, tipo_nombre, ultima_inspeccion");
   let qHallazgos = supabase
     .from("asa_hallazgos")
     .select("id, titulo, descripcion, severidad, responsable, estado, fecha_reporte, fecha_limite, sitio_id, asa_areas(nombre)")
@@ -722,6 +724,23 @@ async function juntarEvidencia(req) {
   const programables = (puntos.data || []).filter((p) => p.frecuencia !== "por_orden");
   const vencidos = programables.filter((p) => p.vencido).length;
 
+  // Puntos programados que se quedaron sin atender, agrupados por area y tipo.
+  // Van en la seccion "Servicios que NO se pudieron realizar" del PDF: sin esto
+  // esa seccion decia "todo se ejecuto" aunque hubiera cientos de vencidos.
+  const pend = new Map();
+  for (const p of programables) {
+    if (!p.vencido) continue;
+    const k = `${p.area_nombre || "Sin area"}|${p.tipo_nombre || ""}`;
+    if (!pend.has(k)) pend.set(k, { area: p.area_nombre || "Sin area", tipo: p.tipo_nombre || null, pendientes: 0, nunca: 0, ultima: null });
+    const g = pend.get(k);
+    g.pendientes++;
+    if (!p.ultima_inspeccion) g.nunca++;
+    else if (!g.ultima || p.ultima_inspeccion < g.ultima) g.ultima = p.ultima_inspeccion; // la mas vieja
+  }
+  const pendientesPorArea = [...pend.values()].sort(
+    (a, b) => b.pendientes - a.pendientes || a.area.localeCompare(b.area, "es")
+  );
+
   return {
     empresa: empresa.data?.valor || {},
     // Como los estados del punto se editan desde el panel, el reporte tiene que
@@ -756,6 +775,7 @@ async function juntarEvidencia(req) {
     por_area: [...porArea.values()].sort((a, b) => b.servicios - a.servicios),
     servicios: serviciosCompletos,
     no_realizados: noRealizados,
+    pendientes_por_area: pendientesPorArea,
     hallazgos: (hallazgos.data || []).map((h) => ({ ...h, area: h.asa_areas?.nombre || null })),
   };
 }

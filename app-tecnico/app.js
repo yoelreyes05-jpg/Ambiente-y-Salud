@@ -74,6 +74,13 @@ async function api(ruta, opciones = {}) {
   return datos;
 }
 const GET = (r) => api(r);
+
+// ¿El fallo fue de RED (sin señal) o el servidor contestó con un error?
+// Solo en el primer caso tiene sentido mostrar lo guardado en el teléfono.
+// Antes cualquier error —un 403, un 500, un punto que cambió de hotel— se
+// tapaba con la copia vieja y el técnico seguía viendo la estrategia y los
+// puntos de antes sin enterarse de que algo andaba mal.
+const esSinSenal = (e) => !e?.status;
 const POST = (r, cuerpo) => api(r, { method: "POST", body: JSON.stringify(cuerpo) });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -351,12 +358,17 @@ async function pantallaRuta() {
   try {
     avance = await GET(`/inspecciones/avance/hoy?sitio_id=${SITIO.id}`);
     await guardarCache(claveCache, avance);
-  } catch {
+  } catch (e) {
+    if (!esSinSenal(e)) {
+      cuerpo.innerHTML = `<div class="vacio"><span class="emoji">⚠️</span>${esc(e.message)}</div>`;
+      return;
+    }
     avance = await leerCache(claveCache);
     if (!avance) {
       cuerpo.innerHTML = `<div class="vacio"><span class="emoji">📡</span>Sin señal y sin ruta guardada. Conéctate una vez para descargarla.</div>`;
       return;
     }
+    aviso("Sin señal: mostrando la ruta guardada en el teléfono");
   }
 
   // Los puntos hechos offline todavía no están en el servidor: se marcan aquí
@@ -1037,7 +1049,9 @@ async function pantallaPunto(token) {
     await guardarCache(`punto:${token}`, punto);
   } catch (e) {
     if (e.datos?.sin_asignar) return pantallaEtiquetaSinAsignar(cuerpo, e.datos);
-    punto = await leerCache(`punto:${token}`);
+    // El servidor contestó (punto dado de baja, de otro hotel, error): se dice
+    // eso. La copia guardada es solo para cuando no hay señal.
+    punto = esSinSenal(e) ? await leerCache(`punto:${token}`) : null;
     if (!punto) {
       cuerpo.innerHTML = `
         <div class="vacio"><span class="emoji">❓</span>${esc(e.message)}</div>
@@ -1267,7 +1281,7 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
   const agregarFotos = async (lista) => {
     for (const archivo of lista) {
       if (!archivo.type?.startsWith("image/")) continue;
-      fotos.push(await reducirImagen(archivo));
+      fotos.push(await reducirImagen(archivo, 1024, 0.6, true));
     }
     pintarFotos();
   };
@@ -1422,8 +1436,13 @@ function leerRespuesta(form, p) {
 
 // Las fotos se reducen antes de guardarlas: una foto de teléfono pesa 4 MB y
 // en la cola offline eso llena el almacenamiento en pocas inspecciones.
-function reducirImagen(archivo, maxLado = 1280, calidad = 0.7) {
-  // Dibuja la foto achicada en un canvas y la devuelve como JPEG.
+//
+// Con `webp` en true se intenta WebP (pesa ~30% menos que un JPEG de la misma
+// calidad). Safari no sabe codificar WebP en canvas y devuelve PNG, que pesa
+// MUCHO más: en ese caso se cae a JPEG. El servidor convierte la WebP a JPEG
+// solo al armar el PDF, así que el reporte no pierde fotos.
+function reducirImagen(archivo, maxLado = 1280, calidad = 0.7, webp = false) {
+  // Dibuja la foto achicada en un canvas y la devuelve como JPEG (o WebP).
   // Si el navegador no la puede leer (formato raro), devuelve el data URL
   // original: quien llama decide si le sirve (el chequeo lo rechaza).
   const dibujar = (fuente, ancho, alto) => {
@@ -1432,6 +1451,10 @@ function reducirImagen(archivo, maxLado = 1280, calidad = 0.7) {
     lienzo.width = Math.max(1, Math.round(ancho * escala));
     lienzo.height = Math.max(1, Math.round(alto * escala));
     lienzo.getContext("2d").drawImage(fuente, 0, 0, lienzo.width, lienzo.height);
+    if (webp) {
+      const w = lienzo.toDataURL("image/webp", calidad);
+      if (w.startsWith("data:image/webp")) return w;
+    }
     return lienzo.toDataURL("image/jpeg", calidad);
   };
   const porImagen = () => new Promise((ok) => {
