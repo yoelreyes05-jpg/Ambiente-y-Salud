@@ -9,6 +9,7 @@ import { exigirSitioPermitido, filtrarPorSitio, requireRol } from "../middleware
 import { construirReporte } from "../lib/reportePdf.js";
 import { logAccion } from "../lib/auditoria.js";
 import { leerEstadosPunto } from "./configuracion.js";
+import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
 const router = express.Router();
 
@@ -29,21 +30,22 @@ router.get("/resumen", async (req, res) => {
   const desde = req.query.desde || haceDias(30);
   const hoy = hoyRD();
 
-  let qPuntos = supabase.from("asa_v_puntos_estado").select("*");
+  const armarPuntos = () => {
+    const q = supabase.from("asa_v_puntos_estado").select("*").order("id");
+    return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+  };
   let qInsp = supabase.from("asa_inspecciones").select("fecha_local, nivel_actividad, estado_punto, sitio_id").gte("fecha_local", desde);
   let qHall = supabase.from("asa_hallazgos").select("estado, severidad, sitio_id");
 
   if (sitio_id) {
-    qPuntos = qPuntos.eq("sitio_id", sitio_id);
     qInsp = qInsp.eq("sitio_id", sitio_id);
     qHall = qHall.eq("sitio_id", sitio_id);
   } else {
-    qPuntos = filtrarPorSitio(qPuntos, req);
     qInsp = filtrarPorSitio(qInsp, req);
     qHall = filtrarPorSitio(qHall, req);
   }
 
-  const [puntos, insp, hall] = await Promise.all([qPuntos, qInsp, qHall]);
+  const [puntos, insp, hall] = await Promise.all([traerTodoComoRespuesta(armarPuntos), qInsp, qHall]);
   if (puntos.error) return res.status(500).json({ error: true, mensaje: puntos.error.message });
 
   const P = puntos.data || [];
@@ -99,7 +101,10 @@ router.get("/tablero", async (req, res) => {
     .select("id, fecha_local, nivel_actividad, estado_punto, tecnico_id, sitio_id, asa_empleados(nombre_completo)")
     .gte("fecha_local", desde)
     .limit(20000);
-  let qPuntos = supabase.from("asa_v_puntos_estado").select("vencido, frecuencia, sitio_id");
+  const armarPuntos = () => {
+    const q = supabase.from("asa_v_puntos_estado").select("vencido, frecuencia, sitio_id").order("id");
+    return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+  };
   let qOrdenes = supabase
     .from("asa_ordenes_trabajo")
     .select("id, estado, prioridad, tecnico_id, fecha_solicitud, fecha_agendada, fecha_ejecucion, sitio_id")
@@ -107,17 +112,15 @@ router.get("/tablero", async (req, res) => {
 
   if (sitio_id) {
     qInsp = qInsp.eq("sitio_id", sitio_id);
-    qPuntos = qPuntos.eq("sitio_id", sitio_id);
     qOrdenes = qOrdenes.eq("sitio_id", sitio_id);
   } else {
     qInsp = filtrarPorSitio(qInsp, req);
-    qPuntos = filtrarPorSitio(qPuntos, req);
     qOrdenes = filtrarPorSitio(qOrdenes, req);
   }
 
   const [insp, puntos, ordenes, capturas] = await Promise.all([
     qInsp,
-    qPuntos,
+    traerTodoComoRespuesta(armarPuntos),
     qOrdenes,
     // Las capturas no tienen sitio_id propio: cuelgan de la inspección, así que
     // se filtran después contra los ids que sí pasaron el filtro de arriba.
@@ -514,11 +517,12 @@ router.get("/habitaciones", async (req, res) => {
 
   const dias = Math.min(Number(req.query.dias) || 7, 90);
 
-  const { data: puntos, error } = await supabase
+  const { data: puntos, error } = await traerTodoComoRespuesta(() => supabase
     .from("asa_v_puntos_estado")
     .select("*")
     .eq("sitio_id", sitio_id)
-    .eq("tipo_codigo", "habitacion");
+    .eq("tipo_codigo", "habitacion")
+    .order("id"));
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
 
   const { data: insp } = await supabase
@@ -588,9 +592,13 @@ async function juntarEvidencia(req) {
     .lte("fecha_local", hasta)
     .order("fecha", { ascending: true })
     .limit(tope);
-  let qPuntos = supabase
-    .from("asa_v_puntos_estado")
-    .select("vencido, frecuencia, sitio_id, area_nombre, tipo_nombre, ultima_inspeccion");
+  const armarPuntos = () => {
+    const q = supabase
+      .from("asa_v_puntos_estado")
+      .select("vencido, frecuencia, sitio_id, area_nombre, tipo_nombre, ultima_inspeccion")
+      .order("id");
+    return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+  };
   let qHallazgos = supabase
     .from("asa_hallazgos")
     .select("id, titulo, descripcion, severidad, responsable, estado, fecha_reporte, fecha_limite, sitio_id, asa_areas(nombre)")
@@ -599,16 +607,14 @@ async function juntarEvidencia(req) {
 
   if (sitio_id) {
     qServicios = qServicios.eq("sitio_id", sitio_id);
-    qPuntos = qPuntos.eq("sitio_id", sitio_id);
     qHallazgos = qHallazgos.eq("sitio_id", sitio_id);
   } else {
     qServicios = filtrarPorSitio(qServicios, req);
-    qPuntos = filtrarPorSitio(qPuntos, req);
     qHallazgos = filtrarPorSitio(qHallazgos, req);
   }
 
   const [empresa, sitio, servicios, puntos, hallazgos, estadosPunto] = await Promise.all([
-    qEmpresa, qSitio, qServicios, qPuntos, qHallazgos, leerEstadosPunto(),
+    qEmpresa, qSitio, qServicios, traerTodoComoRespuesta(armarPuntos), qHallazgos, leerEstadosPunto(),
   ]);
   if (servicios.error) throw new Error(servicios.error.message);
 
@@ -842,7 +848,7 @@ router.get("/excel", async (req, res) => {
 
   const [sitio, puntos, inspecciones, hallazgos] = await Promise.all([
     supabase.from("asa_sitios").select("*, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle(),
-    supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id),
+    traerTodoComoRespuesta(() => supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id).order("id")),
     supabase
       .from("asa_inspecciones")
       .select(`

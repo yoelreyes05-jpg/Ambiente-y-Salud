@@ -191,12 +191,18 @@ router.get("/", async (req, res) => {
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
   if (!exigirSitioPermitido(req, res, sitio_id)) return;
 
-  let q = supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id);
-  if (area_id) q = q.eq("area_id", area_id);
-  if (tipo) q = q.eq("tipo_codigo", tipo);
-
-  const { data, error } = await q.order("area_nombre").order("codigo_visible");
-  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  // Paginado: con más de 1000 puntos (Lopesan Caoba) el panel se quedaba en 1000.
+  let data;
+  try {
+    data = await traerTodo(() => {
+      let q = supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id);
+      if (area_id) q = q.eq("area_id", area_id);
+      if (tipo) q = q.eq("tipo_codigo", tipo);
+      return q.order("area_nombre").order("codigo_visible").order("id");
+    });
+  } catch (e) {
+    return res.status(500).json({ error: true, mensaje: e.message });
+  }
 
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
   const conHoy = (data || []).map((p) => ({
@@ -234,17 +240,7 @@ router.get("/", async (req, res) => {
 // Los tipos y las áreas se cuentan ANTES de filtrar, para que los selectores
 // siempre muestren todas las opciones con su total.
 // ─────────────────────────────────────────────────────────────────────────────
-async function traerTodo(armarConsulta) {
-  // PostgREST corta en 1000 filas; una planta grande tiene más puntos que eso.
-  const out = [];
-  for (let desde = 0; ; desde += 1000) {
-    const { data, error } = await armarConsulta().range(desde, desde + 999);
-    if (error) throw error;
-    out.push(...(data || []));
-    if (!data || data.length < 1000) break;
-  }
-  return out;
-}
+// traerTodo vive en lib/paginar.js (PostgREST corta en 1000 filas).
 
 router.get("/estado", async (req, res) => {
   const { sitio_id, tipo, area_id } = req.query;

@@ -9,6 +9,7 @@ import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio } from "../middleware/auth.js";
 import { guardarFotos } from "../lib/evidencias.js";
 import { leerEstadosPunto } from "./configuracion.js";
+import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
 const router = express.Router();
 
@@ -85,7 +86,7 @@ router.get("/dia", async (req, res) => {
 
   const [servicios, puntos] = await Promise.all([
     qServicios,
-    supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id),
+    traerTodoComoRespuesta(() => supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id).order("id")),
   ]);
   if (servicios.error) return res.status(500).json({ error: true, mensaje: servicios.error.message });
 
@@ -320,7 +321,7 @@ router.get("/avance/hoy", async (req, res) => {
   const dia = fecha || hoyRD();
 
   const [puntos, hechas] = await Promise.all([
-    supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id),
+    traerTodoComoRespuesta(() => supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id).order("id")),
     supabase
       .from("asa_inspecciones")
       .select("id, punto_id, fecha, estado_punto, nivel_actividad, motivo_no_realizado, metodo_acceso, tecnico_id, asa_empleados(nombre_completo), asa_usuarios(nombre_completo)")

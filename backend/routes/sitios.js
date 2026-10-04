@@ -6,6 +6,7 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido } from "../middleware/auth.js";
+import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
 const router = express.Router();
 
@@ -124,11 +125,12 @@ router.get("/:id/areas", async (req, res) => {
     .order("nombre");
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
 
-  const { data: puntos } = await supabase
+  const { data: puntos } = await traerTodoComoRespuesta(() => supabase
     .from("asa_puntos_control")
     .select("area_id")
     .eq("sitio_id", req.params.id)
-    .eq("activo", true);
+    .eq("activo", true)
+    .order("id"));
 
   const conteo = {};
   for (const p of puntos || []) conteo[p.area_id] = (conteo[p.area_id] || 0) + 1;
@@ -225,12 +227,13 @@ router.get("/:id/planos", async (req, res) => {
     .order("orden");
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
 
-  const { data: puntos } = await supabase
+  const { data: puntos } = await traerTodoComoRespuesta(() => supabase
     .from("asa_puntos_control")
     .select("id, qr_token, codigo_visible, nombre, plano_id, plano_x, plano_y, tipo_punto_id, asa_tipos_punto(codigo, icono, color)")
     .eq("sitio_id", req.params.id)
     .eq("activo", true)
-    .not("plano_id", "is", null);
+    .not("plano_id", "is", null)
+    .order("id"));
 
   // El portal del hotel también ve los planos (pestaña Mapa), pero no el QR:
   // con el token cualquiera podría abrir el punto en la app del técnico.
