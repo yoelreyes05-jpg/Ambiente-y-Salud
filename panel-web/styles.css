@@ -672,3 +672,54 @@ tr.sem-fila-amarillo{background:#fefce8}
 .tec-comp-cab{display:flex;justify-content:space-between;font-size:13px}
 .tec-h4{margin:18px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
 .tec-chips{display:flex;flex-wrap:wrap;gap:6px}
+
+/* ── Plagas encontradas (plagas.js) ───────────────────────────────────── */
+.pl-tarjetas{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.pl-tarjeta{border:1px solid var(--border);border-left:5px solid var(--asa-azul);border-radius:10px;padding:12px 14px;background:#fff}
+.pl-n{font-size:28px;font-weight:800;line-height:1.1}
+.pl-nombre{font-weight:700;margin-top:2px}
+.pl-sub{font-size:12px;color:var(--text-muted);margin:4px 0}
+
+/* ── Chinche / código rosa (incidencias.js) ───────────────────────────── */
+.btn-danger{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.btn-danger:hover{background:#991b1b}
+.btn-success{background:#15803d;border-color:#15803d;color:#fff}
+.btn-success:hover{background:#166534}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.inc-cert{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 14px;margin-top:6px}
+.inc-cert .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.inc-lista{display:flex;flex-direction:column;gap:6px}
+.inc-item{display:grid;grid-template-columns:minmax(220px,2fr) minmax(140px,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px}
+.inc-item.hecho{background:#f3f9f3;border-color:#cfe5d0}
+.inc-item label{display:flex;gap:8px;align-items:center;cursor:pointer}
+.inc-item input[type=checkbox]{width:auto;transform:scale(1.15)}
+.inc-paso{grid-template-columns:auto 140px minmax(200px,2fr) minmax(120px,1fr) auto auto}
+.inc-quien{font-size:11.5px;white-space:nowrap}
+.inc-botones{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}
+.inc-guardar{display:flex;justify-content:flex-end;margin:-4px 0 16px}
+.inc-log{font-size:12.5px;padding:5px 0;border-bottom:1px dashed var(--border)}
+.inc-fila-cond,.inc-fila-dir{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.inc-fila-cond .pc-texto,.inc-fila-dir .pd-texto{flex:1;min-width:220px}
+.pd-dia input{width:64px}
+.pd-niv,.pd-dia{display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap}
+.pd-niv input{width:auto}
+@media (max-width:760px){.inc-item,.inc-paso{grid-template-columns:1fr}}
+
+/* ── Cronograma (cronograma.js) ───────────────────────────────────────── */
+.cr-semana{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.cr-dia{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:8px;min-height:120px;display:flex;flex-direction:column;gap:6px}
+.cr-dia.hoy{border-color:var(--asa-azul);box-shadow:0 0 0 2px rgba(50,83,156,.15)}
+.cr-dia-tit{font-weight:800;font-size:12.5px;display:flex;justify-content:space-between}
+.cr-dia-tit span{color:var(--text-muted);font-weight:600}
+.cr-item{background:#fff;border:1px solid var(--border);border-left:4px solid var(--asa-azul);border-radius:7px;padding:6px 7px;cursor:pointer;font-size:12px}
+.cr-item:hover{box-shadow:var(--shadow)}
+.cr-item.realizado{background:#f3f9f3}
+.cr-item.cancelado{opacity:.55;text-decoration:line-through}
+.cr-hora{font-weight:800}
+.cr-planta{font-weight:700;font-size:11px;text-transform:uppercase}
+.cr-tit{margin-top:2px;line-height:1.3}
+.cr-sub{color:var(--text-muted);font-size:10.5px;margin-top:2px}
+.cr-vacio{color:var(--text-muted);text-align:center;font-size:12px;margin-top:10px}
+.cr-punto{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+@media (max-width:1100px){.cr-semana{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.cr-semana{grid-template-columns:1fr}}

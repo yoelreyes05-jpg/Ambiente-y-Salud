@@ -21,6 +21,7 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
+import { crearIncidencia } from "./incidencias.js";
 
 const router = express.Router();
 
@@ -265,7 +266,7 @@ router.get("/:id", async (req, res) => {
 //         punto_ids?: [], prioridad?, fecha_requerida?, descripcion?, tipo_plaga? }
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
-  const { sitio_id, tipo_solicitud = "habitaciones", punto_ids = [], prioridad = "normal", fecha_requerida, descripcion, tipo_plaga } = req.body || {};
+  const { sitio_id, tipo_solicitud = "habitaciones", punto_ids = [], prioridad = "normal", fecha_requerida, descripcion, tipo_plaga, numero_habitacion } = req.body || {};
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
   if (!exigirSitioPermitido(req, res, sitio_id)) return;
   if (!["habitaciones", "plaga", "puntos", "otro"].includes(tipo_solicitud)) {
@@ -324,11 +325,35 @@ router.post("/", async (req, res) => {
       if (eP) throw eP;
     }
 
+    // Chinche o código rosa con número de habitación: además de la orden se
+    // abre la incidencia con su protocolo (verificación → resultado →
+    // tratamiento o certificado). Si falla, la orden ya quedó creada y se avisa.
+    let incidencia = null;
+    if (tipo_solicitud === "plaga" && /chinche|rosa/i.test(tipo_plaga || "") && String(numero_habitacion || "").trim()) {
+      try {
+        incidencia = await crearIncidencia(req, {
+          sitio_id,
+          numero_habitacion,
+          tipo: /rosa/i.test(tipo_plaga) ? "codigo_rosa" : "chinche",
+          reportado_por: req.usuario?.nombre || null,
+          descripcion: String(descripcion || "").trim() || null,
+          orden_id: orden.id,
+        });
+      } catch (eI) {
+        console.error("[ASA][solicitudes] No se pudo abrir la incidencia:", eI.message);
+      }
+    }
+
     const etiqueta = tipo_solicitud === "habitaciones" ? `${validos.length} habitación(es)` : tipo_solicitud === "plaga" ? `reporte de ${tipo_plaga || "plaga"}` : `${validos.length} punto(s)`;
     await registrarEstado(orden.id, null, "solicitada", req, `Solicitud creada: ${etiqueta}`);
     logAccion(req, { accion: "crear", modulo: "solicitudes", registroId: orden.id, descripcion: `${numero_orden} · ${sitio.nombre} · ${etiqueta}` });
 
-    res.status(201).json({ ...orden, puntos_agregados: validos.length, puntos_rechazados: [...new Set(punto_ids)].length - validos.length });
+    res.status(201).json({
+      ...orden,
+      puntos_agregados: validos.length,
+      puntos_rechazados: [...new Set(punto_ids)].length - validos.length,
+      incidencia: incidencia ? { id: incidencia.id, numero: incidencia.numero } : null,
+    });
   } catch (e) {
     error500(res, e);
   }

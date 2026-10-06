@@ -10,6 +10,7 @@ import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio } from "../middleware/auth.js";
+import { traerTodo } from "../lib/paginar.js";
 
 const router = express.Router();
 

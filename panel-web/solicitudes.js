@@ -141,7 +141,9 @@ async function abrirSolicitud(id, alCambiar) {
               ${o.visto_admin_nombre ? ` · Abierta en el panel por ${esc(o.visto_admin_nombre)}` : ""}
             </span>
           </p>
-          ${o.tipo_plaga_reportada ? `<p><strong>Plaga:</strong> ${esc(o.tipo_plaga_reportada)}</p>` : ""}
+          ${o.tipo_plaga_reportada ? `<p><strong>Plaga:</strong> ${esc(o.tipo_plaga_reportada)}
+            ${/chinche|rosa/i.test(o.tipo_plaga_reportada) && typeof abrirIncidencia === "function"
+              ? ` <button class="btn btn-sm btn-danger" id="sd-incidencia">🛏️ Protocolo de chinche</button>` : ""}</p>` : ""}
           ${o.descripcion_cliente ? `<p style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px">${esc(o.descripcion_cliente)}</p>` : ""}
 
           <div class="form-grid" style="margin:12px 0">
@@ -216,6 +218,21 @@ async function abrirSolicitud(id, alCambiar) {
   const fallo = (e) => { q("#sd-error").textContent = e.message; q("#sd-error").style.display = "block"; };
   const recargar = async () => { alCambiar && alCambiar(); await abrirSolicitud(id, alCambiar); };
   q("#sd-cerrar").addEventListener("click", () => { closeModal(); alCambiar && alCambiar(); });
+
+  // Chinche / código rosa: abre el caso de esta orden, o lo crea si el hotel
+  // no puso el número de habitación al reportar.
+  q("#sd-incidencia")?.addEventListener("click", async () => {
+    const casos = await get(`/incidencias?sitio_id=${o.sitio_id}&estado=todas`).catch(() => []);
+    const caso = casos.find((c) => c.orden_id === o.id);
+    if (caso) { closeModal(); navigate("incidencias"); setTimeout(() => abrirIncidencia(caso.id), 50); return; }
+    const sitios = await get("/sitios").catch(() => []);
+    modalNuevaIncidencia(sitios, o.sitio_id, (i) => { navigate("incidencias"); setTimeout(() => abrirIncidencia(i.id), 50); }, {
+      sitio_id: o.sitio_id,
+      orden_id: o.id,
+      reportado_por: o.creado_por_nombre || "",
+      descripcion: o.descripcion_cliente || "",
+    });
+  });
   overlay.addEventListener("click", (e) => { if (e.target === overlay) { closeModal(); alCambiar && alCambiar(); } });
   const hilo = q("#sd-hilo"); hilo.scrollTop = hilo.scrollHeight;
 

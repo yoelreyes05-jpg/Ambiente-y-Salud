@@ -6,12 +6,158 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { exigirSitioPermitido, filtrarPorSitio, requireRol } from "../middleware/auth.js";
-import { construirReporte } from "../lib/reportePdf.js";
+import { construirReporte, construirReportePendientes } from "../lib/reportePdf.js";
 import { logAccion } from "../lib/auditoria.js";
 import { leerEstadosPunto } from "./configuracion.js";
-import { traerTodoComoRespuesta } from "../lib/paginar.js";
+import { traerTodo, traerTodoComoRespuesta } from "../lib/paginar.js";
 
 const router = express.Router();
+
+// Periodo al que pertenece una fecha (YYYY-MM-DD) según cómo se agrupe.
+// La semana arranca el domingo, igual que el histograma de siempre.
+function cubetaDe(fecha, agrupar) {
+  if (agrupar === "mes") return String(fecha).slice(0, 7);
+  if (agrupar === "semana") {
+    const d = new Date(fecha + "T12:00:00");
+    d.setDate(d.getDate() - d.getDay());
+    return d.toISOString().slice(0, 10);
+  }
+  return String(fecha).slice(0, 10);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conteo de plagas según lo que reportó el técnico
+//
+// Suma las capturas (asa_capturas) de las inspecciones del período: cuántas
+// de cada plaga, en qué período, por técnico y por área. Lo usan la pantalla
+// "Plagas encontradas" del panel y la gráfica de barras del PDF, así que los
+// dos dicen exactamente lo mismo.
+//
+// No se apoya en la vista de servicios (que en el PDF lleva tope de filas):
+// va directo a las capturas, por páginas, para que el total sea el real aunque
+// el período tenga miles de inspecciones.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "semana", tecnico_id } = {}) {
+  const armar = () => {
+    let q = supabase
+      .from("asa_capturas")
+      .select(`
+        id, cantidad, plaga_id,
+        asa_plagas(codigo, nombre, grupo, color, umbral_alerta),
+        asa_inspecciones!inner(fecha_local, sitio_id, tecnico_id, area_id,
+          asa_empleados(nombre_completo), asa_areas(nombre), asa_sitios(nombre),
+          asa_puntos_control(codigo_visible, numero_habitacion))
+      `)
+      .gte("asa_inspecciones.fecha_local", desde)
+      .lte("asa_inspecciones.fecha_local", hasta)
+      .order("id");
+    if (tecnico_id) q = q.eq("asa_inspecciones.tecnico_id", tecnico_id);
+    return sitio_id
+      ? q.eq("asa_inspecciones.sitio_id", sitio_id)
+      : filtrarPorSitio(q, req, "asa_inspecciones.sitio_id");
+  };
+
+  const filas = await traerTodo(armar);
+
+  const porPlaga = new Map();
+  const porPeriodo = new Map();
+  const porTecnico = new Map();
+  const porArea = new Map();
+  const corte = mitadPeriodo(desde, hasta);
+
+  for (const c of filas) {
+    const n = Number(c.cantidad) || 0;
+    const insp = c.asa_inspecciones || {};
+    const nombre = c.asa_plagas?.nombre || "Sin clasificar";
+
+    if (!porPlaga.has(nombre)) {
+      porPlaga.set(nombre, {
+        plaga: nombre,
+        codigo: c.asa_plagas?.codigo || null,
+        grupo: c.asa_plagas?.grupo || "otra",
+        color: c.asa_plagas?.color || null,
+        umbral: c.asa_plagas?.umbral_alerta ?? null,
+        total: 0, registros: 0, maximo: 0, sobre_umbral: 0, reciente: 0, previo: 0,
+        puntos: new Set(),
+      });
+    }
+    const p = porPlaga.get(nombre);
+    p.total += n;
+    p.registros++;
+    p.maximo = Math.max(p.maximo, n);
+    if (p.umbral != null && p.umbral > 0 && n > p.umbral) p.sobre_umbral++;
+    if (insp.fecha_local >= corte) p.reciente += n; else p.previo += n;
+    const punto = insp.asa_puntos_control;
+    if (punto) p.puntos.add(punto.codigo_visible || punto.numero_habitacion);
+
+    const k = cubetaDe(insp.fecha_local, agrupar);
+    if (!porPeriodo.has(k)) porPeriodo.set(k, {});
+    porPeriodo.get(k)[nombre] = (porPeriodo.get(k)[nombre] || 0) + n;
+
+    const tec = insp.asa_empleados?.nombre_completo || "Sin técnico registrado";
+    if (!porTecnico.has(tec)) porTecnico.set(tec, { tecnico: tec, total: 0, registros: 0, plagas: {} });
+    const t = porTecnico.get(tec);
+    t.total += n;
+    t.registros++;
+    t.plagas[nombre] = (t.plagas[nombre] || 0) + n;
+
+    const area = [insp.asa_sitios?.nombre && !sitio_id ? insp.asa_sitios.nombre : null, insp.asa_areas?.nombre || "Sin área"]
+      .filter(Boolean).join(" · ");
+    if (!porArea.has(area)) porArea.set(area, { area, total: 0, plagas: {} });
+    const a = porArea.get(area);
+    a.total += n;
+    a.plagas[nombre] = (a.plagas[nombre] || 0) + n;
+  }
+
+  const plagas = [...porPlaga.values()]
+    .map(({ puntos, ...p }) => ({
+      ...p,
+      puntos: puntos.size,
+      variacion_pct: p.previo > 0 ? Number((((p.reciente - p.previo) / p.previo) * 100).toFixed(0)) : null,
+      tendencia: p.previo === 0 ? (p.reciente > 0 ? "nueva" : "estable")
+        : p.reciente > p.previo * 1.15 ? "sube"
+        : p.reciente < p.previo * 0.85 ? "baja" : "estable",
+    }))
+    .sort((a, b) => b.total - a.total || a.plaga.localeCompare(b.plaga, "es"));
+
+  const series = plagas.map((p) => p.plaga);
+  const colores = Object.fromEntries(plagas.filter((p) => p.color).map((p) => [p.plaga, p.color]));
+
+  return {
+    desde,
+    hasta,
+    agrupar,
+    total_individuos: plagas.reduce((s, p) => s + p.total, 0),
+    registros: filas.length,
+    plagas,
+    series,
+    colores,
+    periodos: [...porPeriodo.keys()].sort().map((k) => ({
+      periodo: k,
+      total: Object.values(porPeriodo.get(k)).reduce((s, v) => s + v, 0),
+      ...Object.fromEntries(series.map((s) => [s, porPeriodo.get(k)[s] || 0])),
+    })),
+    por_tecnico: [...porTecnico.values()].sort((a, b) => b.total - a.total),
+    por_area: [...porArea.values()].sort((a, b) => b.total - a.total),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /reportes/plagas?sitio_id=&desde=&hasta=&agrupar=dia|semana|mes&tecnico_id=
+// Cuántas plagas de cada tipo reportaron los técnicos, y en qué período.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/plagas", async (req, res) => {
+  const { sitio_id, tecnico_id } = req.query;
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+  const agrupar = ["dia", "semana", "mes"].includes(req.query.agrupar) ? req.query.agrupar : "semana";
+  const desde = req.query.desde || haceDias(30);
+  const hasta = req.query.hasta || hoyRD();
+  try {
+    res.json(await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id }));
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
+});
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
 const haceDias = (n) => {
@@ -687,31 +833,11 @@ async function juntarEvidencia(req) {
     datos: [...mapa.keys()].sort().map((k) => ({ periodo: k, ...mapa.get(k), total: Object.values(mapa.get(k)).reduce((a, b) => a + b, 0) })),
   };
 
-  // ── Plagas con tendencia ──────────────────────────────────────────────────
-  const corte = mitadPeriodo(desde, hasta);
-  const porPlaga = new Map();
-  for (const s2 of serviciosCompletos) {
-    for (const c of s2.capturas) {
-      if (!porPlaga.has(c.plaga)) {
-        porPlaga.set(c.plaga, { plaga: c.plaga, grupo: c.grupo, color: c.color, total: 0, registros: 0, maximo: 0, reciente: 0, previo: 0 });
-      }
-      const p = porPlaga.get(c.plaga);
-      p.total += c.cantidad || 0;
-      p.registros++;
-      p.maximo = Math.max(p.maximo, c.cantidad || 0);
-      if (s2.fecha_local >= corte) p.reciente += c.cantidad || 0;
-      else p.previo += c.cantidad || 0;
-    }
-  }
-  const plagas = [...porPlaga.values()]
-    .map((p) => ({
-      ...p,
-      variacion_pct: p.previo > 0 ? Number((((p.reciente - p.previo) / p.previo) * 100).toFixed(0)) : null,
-      tendencia: p.previo === 0 ? (p.reciente > 0 ? "nueva" : "estable")
-        : p.reciente > p.previo * 1.15 ? "sube"
-        : p.reciente < p.previo * 0.85 ? "baja" : "estable",
-    }))
-    .sort((a, b) => b.total - a.total);
+  // ── Plagas: cantidad por tipo y por periodo ───────────────────────────────
+  // Sale de las capturas completas del periodo (no de los servicios con
+  // detalle, que llevan tope), asi el total y las barras son los reales.
+  const conteo = await contarPlagas(req, { sitio_id, desde, hasta, agrupar });
+  const plagas = conteo.plagas;
 
   // ── Por area ──────────────────────────────────────────────────────────────
   const porArea = new Map();
@@ -765,7 +891,8 @@ async function juntarEvidencia(req) {
       servicios_realizados: realizados.length,
       no_realizados: noRealizados.length,
       con_actividad: realizados.filter((x) => x.nivel_actividad && x.nivel_actividad !== "ninguna").length,
-      plagas_contadas: S.reduce((a, b) => a + (b.plagas_total || 0), 0),
+      plagas_contadas: conteo.total_individuos,
+      tipos_plaga: conteo.plagas.filter((p) => p.total > 0).length,
       fotos: S.reduce((a, b) => a + (b.fotos_total || 0), 0),
       puntos_total: (puntos.data || []).length,
       puntos_vencidos: vencidos,
@@ -778,6 +905,16 @@ async function juntarEvidencia(req) {
     },
     histograma,
     plagas,
+    // Barras de plagas por periodo: una barra por dia/semana/mes, partida por
+    // tipo de plaga, con la cantidad de individuos que reportaron los tecnicos.
+    plagas_periodo: {
+      agrupar,
+      series: conteo.series,
+      colores: conteo.colores,
+      datos: conteo.periodos,
+      total: conteo.total_individuos,
+    },
+    plagas_por_tecnico: conteo.por_tecnico,
     por_area: [...porArea.values()].sort((a, b) => b.servicios - a.servicios),
     servicios: serviciosCompletos,
     no_realizados: noRealizados,
@@ -831,6 +968,167 @@ router.get("/pdf", async (req, res) => {
     res.send(pdf);
   } catch (e) {
     console.error("[ASA][reportes/pdf]", e);
+    res.status(500).json({ error: true, mensaje: `No se pudo generar el PDF: ${e.message}` });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// REPORTE APARTE: SOLO LO QUE NO SE HA REALIZADO
+//
+// GET /reportes/pendientes?sitio_id=&desde=&hasta=      (JSON, para pantalla)
+// GET /reportes/pdf-pendientes?sitio_id=&desde=&hasta=  (el PDF)
+//
+// Antes esto iba dentro del reporte de evidencia, en la seccion "Servicios que
+// NO se pudieron realizar". Se saco de alli para que el reporte de servicios
+// muestre lo hecho, y lo pendiente se entregue por separado cuando se pida.
+//
+// Junta tres cosas:
+//   1. Lo que el tecnico intento y no pudo hacer en el periodo (con el motivo
+//      y de quien es la responsabilidad).
+//   2. Los puntos programados que hoy estan fuera de su frecuencia, uno por uno
+//      y resumidos por area.
+//   3. Las habitaciones/puntos que el hotel pidio en una solicitud y siguen sin
+//      hacerse.
+// ═════════════════════════════════════════════════════════════════════════════
+async function juntarPendientes(req) {
+  const { sitio_id } = req.query;
+  const desde = req.query.desde || haceDias(30);
+  const hasta = req.query.hasta || hoyRD();
+
+  const qEmpresa = supabase.from("asa_config_sistema").select("valor").eq("clave", "empresa").maybeSingle();
+  const qSitio = sitio_id
+    ? supabase.from("asa_sitios").select("nombre, direccion, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
+    : Promise.resolve({ data: null });
+
+  const armarNoRealizados = () => {
+    const q = supabase
+      .from("asa_v_servicios_dia")
+      .select("*")
+      .eq("no_realizado", true)
+      .gte("fecha_local", desde)
+      .lte("fecha_local", hasta)
+      .order("fecha", { ascending: true })
+      .order("inspeccion_id");
+    return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+  };
+  const armarPuntos = () => {
+    const q = supabase
+      .from("asa_v_puntos_estado")
+      .select("*")
+      .order("id");
+    return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+  };
+  let qSolicitudes = supabase
+    .from("asa_orden_puntos")
+    .select(`
+      estado, motivo_no_realizado, created_at,
+      asa_ordenes_trabajo!inner(numero_orden, estado, sitio_id, created_at, fecha_requerida, asa_sitios(nombre)),
+      asa_puntos_control(codigo_visible, nombre, numero_habitacion, asa_areas(nombre))
+    `)
+    .in("estado", ["pendiente", "no_realizado"])
+    .in("asa_ordenes_trabajo.estado", ["solicitada", "agendada", "en_ruta", "en_sitio"])
+    .limit(5000);
+  qSolicitudes = sitio_id
+    ? qSolicitudes.eq("asa_ordenes_trabajo.sitio_id", sitio_id)
+    : filtrarPorSitio(qSolicitudes, req, "asa_ordenes_trabajo.sitio_id");
+
+  const [empresa, sitio, noRealizados, puntos, solicitudes, sitios] = await Promise.all([
+    qEmpresa, qSitio, traerTodoComoRespuesta(armarNoRealizados), traerTodoComoRespuesta(armarPuntos), qSolicitudes,
+    filtrarPorSitio(supabase.from("asa_sitios").select("id, nombre"), req, "id"),
+  ]);
+  const nombrePlanta = new Map((sitios.data || []).map((x) => [x.id, x.nombre]));
+  if (noRealizados.error) throw new Error(noRealizados.error.message);
+  if (puntos.error) throw new Error(puntos.error.message);
+
+  const programables = (puntos.data || []).filter((p) => p.frecuencia !== "por_orden");
+  const vencidos = programables
+    .filter((p) => p.vencido)
+    .map((p) => ({
+      codigo: p.codigo_visible,
+      punto: p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.codigo_visible,
+      area: p.area_nombre || "Sin área",
+      tipo: p.tipo_nombre || null,
+      frecuencia: p.frecuencia,
+      ultima: p.ultima_inspeccion || null,
+      planta: nombrePlanta.get(p.sitio_id) || null,
+    }))
+    .sort((a, b) => a.area.localeCompare(b.area, "es") || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
+
+  const pend = new Map();
+  for (const p of vencidos) {
+    const k = `${p.area}|${p.tipo || ""}`;
+    if (!pend.has(k)) pend.set(k, { area: p.area, tipo: p.tipo, pendientes: 0, nunca: 0, ultima: null });
+    const g = pend.get(k);
+    g.pendientes++;
+    if (!p.ultima) g.nunca++;
+    else if (!g.ultima || p.ultima < g.ultima) g.ultima = p.ultima;
+  }
+
+  const NR = noRealizados.data || [];
+  const DEL_HOTEL = ["permiso_denegado", "sin_llave", "huesped_en_habitacion", "area_ocupada", "evento_en_curso"];
+
+  return {
+    empresa: empresa.data?.valor || {},
+    sitio: sitio.data
+      ? {
+          nombre: sitio.data.nombre,
+          direccion: sitio.data.direccion,
+          cliente: sitio.data.asa_clientes?.razon_social || sitio.data.asa_clientes?.nombre_contacto || null,
+        }
+      : null,
+    periodo: { desde, hasta },
+    resumen: {
+      no_realizados: NR.length,
+      no_realizados_hotel: NR.filter((n) => DEL_HOTEL.includes(n.motivo_no_realizado)).length,
+      puntos_programables: programables.length,
+      puntos_vencidos: vencidos.length,
+      nunca_visitados: vencidos.filter((v) => !v.ultima).length,
+      solicitudes_pendientes: (solicitudes.data || []).length,
+    },
+    no_realizados: NR,
+    pendientes_por_area: [...pend.values()].sort((a, b) => b.pendientes - a.pendientes || a.area.localeCompare(b.area, "es")),
+    puntos_vencidos: vencidos,
+    solicitudes_pendientes: (solicitudes.data || []).map((s) => ({
+      orden: s.asa_ordenes_trabajo?.numero_orden || "",
+      planta: s.asa_ordenes_trabajo?.asa_sitios?.nombre || "",
+      pedida: s.asa_ordenes_trabajo?.created_at || s.created_at,
+      requerida: s.asa_ordenes_trabajo?.fecha_requerida || null,
+      punto: s.asa_puntos_control?.numero_habitacion
+        ? `Habitación ${s.asa_puntos_control.numero_habitacion}`
+        : s.asa_puntos_control?.nombre || s.asa_puntos_control?.codigo_visible || "",
+      area: s.asa_puntos_control?.asa_areas?.nombre || "",
+      estado: s.estado,
+      motivo: s.motivo_no_realizado || null,
+    })),
+  };
+}
+
+router.get("/pendientes", async (req, res) => {
+  if (req.query.sitio_id && !exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+  try {
+    res.json(await juntarPendientes(req));
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
+});
+
+router.get("/pdf-pendientes", async (req, res) => {
+  if (req.query.sitio_id && !exigirSitioPermitido(req, res, req.query.sitio_id)) return;
+  try {
+    const datos = await juntarPendientes(req);
+    const pdf = await construirReportePendientes(datos, { detallePuntos: req.query.puntos !== "no" });
+    const nombre = `ASA-no-realizados-${(datos.sitio?.nombre || "general").replace(/[^\w]+/g, "-").toLowerCase()}-${datos.periodo.desde}-a-${datos.periodo.hasta}.pdf`;
+    logAccion(req, {
+      accion: "crear",
+      modulo: "reportes",
+      descripcion: `Reporte de no realizados de ${datos.sitio?.nombre || "todas las plantas"} (${datos.periodo.desde} a ${datos.periodo.hasta})`,
+      detalle: datos.resumen,
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error("[ASA][reportes/pdf-pendientes]", e);
     res.status(500).json({ error: true, mensaje: `No se pudo generar el PDF: ${e.message}` });
   }
 });

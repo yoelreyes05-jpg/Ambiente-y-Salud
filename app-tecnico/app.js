@@ -315,6 +315,8 @@ function pintarEstadoConexion() {
 function abrirMenu() {
   const opciones = [
     ["🗺️ Mapa del hotel", () => { location.hash = "#/plano"; }],
+    ["📅 Cronograma de la semana", () => { location.hash = "#/cronograma"; }],
+    ["🛏️ Chinche / código rosa", () => { location.hash = "#/incidencias"; }],
     ["🚐 Chequeo del vehículo", () => { location.hash = "#/chequeo"; }],
     ["🏨 Cambiar de hotel", () => { location.hash = ""; elegirHotel(); }],
     ["↻ Sincronizar ahora", () => sincronizar(false)],
@@ -397,6 +399,7 @@ async function pantallaRuta() {
     <button class="btn grande" id="btn-escanear">📷 Escanear punto</button>
     <button class="btn secundario" id="btn-buscar">🔍 Buscar por nombre o habitación</button>
 
+    <div id="incidencias-hotel" style="margin-top:8px"></div>
     <div id="solicitudes-hotel" style="margin-top:8px"></div>
     <div id="lista-dia" style="margin-top:8px"></div>`;
 
@@ -406,6 +409,7 @@ async function pantallaRuta() {
   $("#btn-buscar", cuerpo)?.addEventListener("click", () => (location.hash = "#/buscar"));
 
   bloqueSolicitudes($("#solicitudes-hotel", cuerpo)).catch(() => {});
+  if (typeof bloqueIncidencias === "function") bloqueIncidencias($("#incidencias-hotel", cuerpo)).catch(() => {});
 
   listaDelDia($("#lista-dia", cuerpo), pendientes, realizados);
 }
@@ -1799,6 +1803,9 @@ function enrutar() {
   }
   if (ruta === "hoteles") return elegirHotel();
   if (ruta.startsWith("solicitud/")) return pantallaSolicitud(ruta.slice(10));
+  if (ruta === "cronograma") return pantallaCronograma();
+  if (ruta === "incidencias") return pantallaIncidencias();
+  if (ruta.startsWith("incidencia/")) return pantallaIncidencia(ruta.slice(11));
   if (!SITIO) return elegirHotel();
   return pantallaRuta();
 }

@@ -115,10 +115,28 @@ const ESTADOS_TEXTO = {
 
 const NIVEL_TEXTO = { ninguna: "Sin actividad", bajo: "Actividad baja", medio: "Actividad media", alto: "Actividad alta" };
 
+// Colores de respaldo para las series que no traen el suyo (plagas sin color
+// en el catalogo). Distintos entre si para que la leyenda se pueda leer.
+const PALETA_SERIES = ["#32539C", "#B45309", "#4A7D4D", "#B91C1C", "#0E7490", "#7C3AED", "#CA8A04", "#DB2777", "#475569", "#15803D", "#9A3412"];
+
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+// Rotulo del eje X: dd/mm para dias y semanas ("sem dd/mm"), "oct 26" para meses.
+function rotuloPeriodo(periodo, agrupar) {
+  const t = String(periodo);
+  if (t.length === 7) return `${MESES_CORTOS[Number(t.slice(5, 7)) - 1] || t.slice(5, 7)} ${t.slice(2, 4)}`;
+  const dm = `${t.slice(8, 10)}/${t.slice(5, 7)}`;
+  return agrupar === "semana" ? `sem ${dm}` : dm;
+}
+const nombreAgrupar = (a) => (a === "mes" ? "mes" : a === "semana" ? "semana" : "dia");
+
+// Una fecha suelta "2026-08-01" se lee como medianoche UTC, que en RD todavia es
+// el dia anterior: la portada decia "31 de julio" para un periodo que empezaba
+// el 1 de agosto. Se ancla al mediodia para que caiga en su dia.
+const aFecha = (d) => (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T12:00:00") : new Date(d));
 const fechaLarga = (d) =>
-  new Date(d).toLocaleDateString("es-DO", { timeZone: "America/Santo_Domingo", day: "2-digit", month: "long", year: "numeric" });
+  aFecha(d).toLocaleDateString("es-DO", { timeZone: "America/Santo_Domingo", day: "2-digit", month: "long", year: "numeric" });
 const fechaCorta = (d) =>
-  new Date(d).toLocaleDateString("es-DO", { timeZone: "America/Santo_Domingo", day: "2-digit", month: "2-digit", year: "numeric" });
+  aFecha(d).toLocaleDateString("es-DO", { timeZone: "America/Santo_Domingo", day: "2-digit", month: "2-digit", year: "numeric" });
 const horaCorta = (d) =>
   new Date(d).toLocaleTimeString("es-DO", { timeZone: "America/Santo_Domingo", hour: "2-digit", minute: "2-digit" });
 
@@ -370,7 +388,10 @@ function histograma(doc, datos, series, colores, opciones = {}) {
   const y0 = doc.y;
   const ejeY = 34;                       // espacio para los numeros de la izquierda
   const areaAncho = ancho - ejeY;
-  const maximo = Math.max(1, ...datos.map((d) => series.reduce((a, s) => a + (Number(d[s]) || 0), 0)));
+  const mayor = Math.max(1, ...datos.map((d) => series.reduce((a, s) => a + (Number(d[s]) || 0), 0)));
+  // Con los totales encima de la barra se deja aire arriba para que el numero
+  // de la barra mas alta no quede pisando el borde del grafico.
+  const maximo = opciones.totales ? Math.ceil(mayor * 1.12) : mayor;
 
   // Lineas guia y su valor. Cuatro son suficientes: mas lineas no se leen.
   doc.font("Helvetica").fontSize(6.8).fillColor(C.gris);
@@ -390,14 +411,23 @@ function histograma(doc, datos, series, colores, opciones = {}) {
   datos.forEach((d, i) => {
     const centro = x0 + ejeY + paso * i + paso / 2;
     let acumulado = 0;
-    series.forEach((s) => {
+    let suma = 0;
+    series.forEach((s, n) => {
       const v = Number(d[s]) || 0;
       if (!v) return;
+      suma += v;
       const h = (v / maximo) * altoGrafico;
       doc.rect(centro - wBarra / 2, y0 + altoGrafico - acumulado - h, wBarra, h)
-         .fill(colores[s] || C.azul);
+         .fill(colores[s] || PALETA_SERIES[n % PALETA_SERIES.length]);
       acumulado += h;
     });
+
+    // La cantidad encima de cada barra: es lo que se lee en una auditoria sin
+    // tener que adivinar contra las lineas guia. Con mas de 31 barras no cabe.
+    if (opciones.totales && suma > 0 && datos.length <= 31) {
+      doc.font("Helvetica-Bold").fontSize(6.4).fillColor(C.texto)
+         .text(String(suma), centro - paso / 2, y0 + altoGrafico - acumulado - 9, { width: paso, align: "center", lineBreak: false });
+    }
 
     // Etiqueta del eje X. Si hay muchos periodos solo se rotula uno cada n,
     // porque encimadas no se leen y ensucian el grafico.
@@ -414,11 +444,11 @@ function histograma(doc, datos, series, colores, opciones = {}) {
   // Leyenda
   let lx = x0 + ejeY;
   doc.fontSize(7.4);
-  series.forEach((s) => {
-    const texto = limpiar(s);
+  series.forEach((s, n) => {
+    const texto = limpiar(opciones.leyenda ? opciones.leyenda(s) : s);
     const w = doc.widthOfString(texto) + 18;
     if (lx + w > x0 + ancho) { lx = x0 + ejeY; doc.y += 12; }
-    doc.rect(lx, doc.y + 1.5, 7, 7).fill(colores[s] || C.azul);
+    doc.rect(lx, doc.y + 1.5, 7, 7).fill(colores[s] || PALETA_SERIES[n % PALETA_SERIES.length]);
     doc.fillColor(C.suave).font("Helvetica").text(texto, lx + 11, doc.y, { lineBreak: false });
     lx += w;
   });
@@ -476,16 +506,16 @@ function rejillaFotos(doc, fotos, opciones = {}) {
 // armado sirve para el panel de ASA y para el portal del hotel, que consultan
 // con permisos distintos.
 // ════════════════════════════════════════════════════════════════════════════
-export async function construirReporte(d, opciones = {}) {
-  const conFotos = opciones.fotos !== false;
-  const conDetalle = opciones.detalle !== false;
-
+// Documento A4 con la portada de ASA (franja azul con los datos de la empresa y
+// la ficha del cliente/periodo). La comparten el reporte de servicios y el de
+// no realizados, para que los dos se vean como parte del mismo juego.
+function abrirDocumento(d, { titulo, tituloInfo }) {
   const doc = new PDFDocument({
     size: "A4",
     margins: { top: 46, bottom: 52, left: 40, right: 40 },
     bufferPages: true,
     info: {
-      Title: `Reporte de control de plagas - ${limpiar(d.sitio?.nombre || "")}`,
+      Title: `${tituloInfo} - ${limpiar(d.sitio?.nombre || "")}`,
       Author: limpiar(d.empresa?.razon_social || d.empresa?.nombre || "Ambiente y Salud RD"),
       Subject: `Periodo ${d.periodo.desde} a ${d.periodo.hasta}`,
     },
@@ -499,12 +529,6 @@ export async function construirReporte(d, opciones = {}) {
   // algo. Es lo que impide que un salto de hoja se coma una hoja en blanco.
   doc._hojaVacia = true;
   doc.on("pageAdded", () => { doc._hojaVacia = true; });
-
-  // Los estados del punto se editan desde el panel, asi que el texto viene con
-  // los datos. La tabla de aqui abajo queda solo como respaldo para reportes de
-  // ambientes donde todavia no se corrio la migracion.
-  const estadoTexto = (codigo) =>
-    d.estados?.[codigo] || ESTADOS_TEXTO[codigo] || String(codigo || "").replace(/_/g, " ");
 
   // ── Portada ───────────────────────────────────────────────────────────────
   const e = d.empresa || {};
@@ -524,7 +548,7 @@ export async function construirReporte(d, opciones = {}) {
 
   doc.y = 124;
   doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(17)
-     .text(limpiar(`Reporte de servicios y evidencia`), x0, doc.y, { width: ancho });
+     .text(limpiar(titulo), x0, doc.y, { width: ancho });
   doc.font("Helvetica").fontSize(11).fillColor(C.suave)
      .text(limpiar(d.sitio?.nombre || "Todas las plantas"), { width: ancho });
   doc.moveDown(0.8);
@@ -546,14 +570,35 @@ export async function construirReporte(d, opciones = {}) {
     doc.y = Math.max(doc.y, y) + 2;
   });
 
+  return { doc, terminado, e };
+}
+
+export async function construirReporte(d, opciones = {}) {
+  const conFotos = opciones.fotos !== false;
+  const conDetalle = opciones.detalle !== false;
+
+  const { doc, terminado, e } = abrirDocumento(d, {
+    titulo: "Reporte de servicios y evidencia",
+    tituloInfo: "Reporte de control de plagas",
+  });
+
+  // Los estados del punto se editan desde el panel, asi que el texto viene con
+  // los datos. La tabla de aqui abajo queda solo como respaldo para reportes de
+  // ambientes donde todavia no se corrio la migracion.
+  const estadoTexto = (codigo) =>
+    d.estados?.[codigo] || ESTADOS_TEXTO[codigo] || String(codigo || "").replace(/_/g, " ");
+
   // ── Resumen ───────────────────────────────────────────────────────────────
+  //
+  // Lo que NO se pudo hacer ya no va en este reporte: se pide aparte ("Reporte
+  // de no realizados", construirReportePendientes). Aqui queda lo ejecutado.
   const r = d.resumen || {};
   tituloSeccion(doc, "Resumen del periodo");
   kpis(doc, [
     { valor: r.servicios_realizados ?? 0, etiqueta: "Servicios realizados", fondo: C.verdeClaro, borde: C.verde, color: C.verde },
-    { valor: r.no_realizados ?? 0, etiqueta: "No realizados", fondo: r.no_realizados ? C.rojoClaro : C.azulPastel, borde: r.no_realizados ? C.rojo : C.azulClaro, color: r.no_realizados ? C.rojo : C.azulOsc },
     { valor: r.con_actividad ?? 0, etiqueta: "Con actividad detectada", fondo: C.ambarClaro, borde: C.ambar, color: C.ambar },
-    { valor: r.plagas_contadas ?? 0, etiqueta: "Individuos contados" },
+    { valor: r.plagas_contadas ?? 0, etiqueta: "Plagas reportadas (individuos)" },
+    { valor: r.tipos_plaga ?? 0, etiqueta: "Tipos de plaga encontrados" },
     { valor: r.puntos_total ?? 0, etiqueta: "Puntos de control" },
     { valor: `${r.cumplimiento_pct ?? 0}%`, etiqueta: "Puntos dentro de frecuencia" },
     { valor: r.fotos ?? 0, etiqueta: "Fotos de evidencia" },
@@ -566,14 +611,31 @@ export async function construirReporte(d, opciones = {}) {
 
   // ── Histograma ────────────────────────────────────────────────────────────
   if (d.histograma?.datos?.length) {
-    tituloSeccion(doc, `Servicios registrados por ${d.histograma.agrupar === "mes" ? "mes" : d.histograma.agrupar === "semana" ? "semana" : "dia"}`);
+    tituloSeccion(doc, `Servicios registrados por ${nombreAgrupar(d.histograma.agrupar)}`, C.azul, 250);
     parrafo(doc, "Cada barra es un periodo, partida por el nivel de actividad encontrado. Una barra que crece con mucho rojo es el aviso temprano: el problema esta subiendo antes de que el hotel lo reclame.");
     doc.moveDown(0.4);
     histograma(doc, d.histograma.datos, d.histograma.series, {
       ninguna: C.azulClaro, bajo: C.verde, medio: C.ambar, alto: C.rojo,
       ...(d.histograma.colores || {}),
     }, {
-      etiqueta: (x) => (String(x.periodo).length === 10 ? String(x.periodo).slice(5).replace("-", "/") : x.periodo),
+      etiqueta: (x) => rotuloPeriodo(x.periodo, d.histograma.agrupar),
+      leyenda: (s) => NIVEL_TEXTO[s] || s,
+      totales: true,
+    });
+  }
+
+  // ── Plagas por periodo (barras) ───────────────────────────────────────────
+  // Cuantas plagas reportaron los tecnicos en cada dia/semana/mes, partida por
+  // tipo de plaga. El numero arriba de cada barra es el total del periodo.
+  const pp = d.plagas_periodo;
+  if (pp?.datos?.length) {
+    tituloSeccion(doc, `Cantidad de plagas por ${nombreAgrupar(pp.agrupar)}`, C.azul, 260);
+    parrafo(doc, `Individuos contados por los tecnicos en cada ${nombreAgrupar(pp.agrupar)}, partidos por tipo de plaga. Total del periodo: ${pp.total}.`);
+    doc.moveDown(0.4);
+    histograma(doc, pp.datos, pp.series, pp.colores || {}, {
+      etiqueta: (x) => rotuloPeriodo(x.periodo, pp.agrupar),
+      totales: true,
+      alto: 160,
     });
   }
 
@@ -603,94 +665,44 @@ export async function construirReporte(d, opciones = {}) {
     parrafo(doc, "La tendencia compara la mitad reciente del periodo contra la mitad anterior. Una plaga marcada como nueva no aparecia en la primera mitad.");
   }
 
+  // ── Plagas por tecnico ────────────────────────────────────────────────────
+  if (d.plagas_por_tecnico?.length && d.plagas?.length) {
+    const principales = d.plagas.slice(0, 5).map((p) => p.plaga);
+    tituloSeccion(doc, "Plagas reportadas por cada tecnico");
+    tabla(doc,
+      [
+        { titulo: "Tecnico", ancho: 140, negrita: true },
+        ...principales.map((n) => ({ titulo: n, ancho: 62, alineacion: "right" })),
+        ...(d.plagas.length > 5 ? [{ titulo: "Otras", ancho: 50, alineacion: "right" }] : []),
+        { titulo: "Total", ancho: 55, alineacion: "right", negrita: true },
+      ],
+      d.plagas_por_tecnico.map((t) => {
+        const otras = Object.entries(t.plagas).filter(([k]) => !principales.includes(k)).reduce((s2, [, v]) => s2 + v, 0);
+        return [
+          t.tecnico,
+          ...principales.map((n) => t.plagas[n] || 0),
+          ...(d.plagas.length > 5 ? [otras] : []),
+          t.total,
+        ];
+      }),
+      { tam: 8 }
+    );
+  }
+
   // ── Por area ──────────────────────────────────────────────────────────────
   if (d.por_area?.length) {
     tituloSeccion(doc, "Servicios por area");
     tabla(doc,
       [
-        { titulo: "Area", ancho: 170, negrita: true },
-        { titulo: "Nivel / planta", ancho: 80 },
-        { titulo: "Servicios", ancho: 55, alineacion: "right" },
+        { titulo: "Area", ancho: 190, negrita: true },
+        { titulo: "Nivel / planta", ancho: 90 },
+        { titulo: "Servicios", ancho: 60, alineacion: "right" },
         { titulo: "Con activ.", ancho: 60, alineacion: "right" },
-        { titulo: "No realiz.", ancho: 60, alineacion: "right" },
-        { titulo: "Individuos", ancho: 55, alineacion: "right" },
+        { titulo: "Individuos", ancho: 60, alineacion: "right" },
       ],
-      d.por_area.map((a) => {
-        const fila = [a.area || "Sin area", a.nivel || "—", a.servicios, a.con_actividad, a.no_realizados, a.plagas];
-        if (a.no_realizados > 0) fila._color = C.rojo;
-        return fila;
-      })
-    );
-  }
-
-  // ── No realizados ─────────────────────────────────────────────────────────
-  //
-  // Dos cosas distintas, las dos van aqui:
-  //   1. Lo que el tecnico intento y NO pudo hacer (con motivo y quien lo dijo).
-  //   2. Los puntos programados que se quedaron sin atender dentro de su
-  //      frecuencia. Antes esta seccion solo miraba (1), y con cientos de puntos
-  //      vencidos decia "todos los servicios programados se ejecutaron": la
-  //      seccion salia vacia y ademas afirmaba algo que no era cierto.
-  const pendientes = d.pendientes_por_area || [];
-  const totalPend = pendientes.reduce((a, p) => a + p.pendientes, 0);
-  const hayNoRealizados = !!d.no_realizados?.length;
-
-  tituloSeccion(doc, "Servicios que NO se pudieron realizar", hayNoRealizados || totalPend ? C.rojo : C.verde);
-  if (!hayNoRealizados && !totalPend) {
-    parrafo(doc, "Todos los servicios programados en el periodo se ejecutaron. No hubo accesos negados ni areas inaccesibles.", { color: C.verde, negrita: true });
-  }
-
-  if (hayNoRealizados) {
-    parrafo(doc, "Servicios que el tecnico se presento a hacer y no pudo, con el motivo y quien lo informo: la responsabilidad no es la misma cuando el hotel no autoriza el acceso que cuando el equipo de ASA no llego.");
-    doc.moveDown(0.3);
-    tabla(doc,
-      [
-        { titulo: "Fecha", ancho: 52 },
-        { titulo: "Punto / habitacion", ancho: 95, negrita: true },
-        { titulo: "Area", ancho: 95 },
-        { titulo: "Motivo", ancho: 120 },
-        { titulo: "Informado por", ancho: 88 },
-        { titulo: "Resp.", ancho: 55 },
-      ],
-      d.no_realizados.map((n) => {
-        const fila = [
-          fechaCorta(n.fecha),
-          n.numero_habitacion ? `Hab. ${n.numero_habitacion}` : n.codigo_visible,
-          [n.area, n.nivel].filter(Boolean).join(" · ") || "—",
-          MOTIVOS_TEXTO[n.motivo_no_realizado] || n.motivo_no_realizado || "Sin motivo registrado",
-          n.impedido_por || "—",
-          ["permiso_denegado", "sin_llave", "huesped_en_habitacion", "area_ocupada", "evento_en_curso"].includes(n.motivo_no_realizado) ? "Hotel" : "ASA",
-        ];
-        fila._fondo = C.rojoClaro;
-        fila._color = "#7F1D1D";
-        return fila;
-      }),
-      { colorEncabezado: C.rojo, tam: 8 }
-    );
-  } else if (totalPend) {
-    parrafo(doc, "No se registraron accesos negados ni areas inaccesibles en el periodo.", { color: C.verde, negrita: true, tam: 8.5 });
-  }
-
-  if (totalPend) {
-    doc.moveDown(0.3);
-    parrafo(doc, `Puntos programados pendientes de atender (${totalPend}), contados al momento de generar el reporte: no tienen un servicio realizado dentro de su frecuencia. "Sin visita registrada" son puntos que todavia no tienen ningun servicio en el sistema.`);
-    doc.moveDown(0.3);
-    tabla(doc,
-      [
-        { titulo: "Area", ancho: 170, negrita: true },
-        { titulo: "Tipo de punto", ancho: 130 },
-        { titulo: "Pendientes", ancho: 60, alineacion: "right" },
-        { titulo: "Sin visita registrada", ancho: 70, alineacion: "right" },
-        { titulo: "Ultima visita", ancho: 70, alineacion: "right" },
-      ],
-      pendientes.map((p) => [
-        p.area || "Sin area",
-        p.tipo || "—",
-        p.pendientes,
-        p.nunca,
-        p.ultima ? fechaCorta(p.ultima) : "—",
-      ]),
-      { colorEncabezado: C.rojo, tam: 8, pad: 3 }
+      d.por_area
+        .filter((a) => a.servicios > 0)
+        .map((a) => [a.area || "Sin area", a.nivel || "—", a.servicios, a.con_actividad, a.plagas])
     );
   }
 
@@ -753,7 +765,14 @@ export async function construirReporte(d, opciones = {}) {
     }
   }
 
-  // ── Pie y numeracion ──────────────────────────────────────────────────────
+  numerarPaginas(doc, d, e);
+
+  doc.end();
+  return terminado;
+}
+
+// ── Pie y numeracion ──────────────────────────────────────────────────────
+function numerarPaginas(doc, d, e) {
   //
   // Aqui estaba el grueso de las hojas vacias, y no se veia a simple vista: el
   // pie se escribe a 34 puntos del borde, o sea POR DEBAJO del margen inferior
@@ -783,8 +802,6 @@ export async function construirReporte(d, opciones = {}) {
     doc.page.margins.bottom = margenAbajo;
   }
 
-  doc.end();
-  return terminado;
 }
 
 // Un servicio: cabecera con donde y quien, la tabla de respuestas, las plagas y
@@ -925,4 +942,138 @@ function valorRespuesta(q) {
   if (Array.isArray(q.valor_opciones) && q.valor_opciones.length) return q.valor_opciones.join(", ");
   if (q.valor_texto) return q.valor_texto;
   return "—";
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Reporte aparte: SOLO lo que no se ha realizado
+//
+// Antes era la seccion "Servicios que NO se pudieron realizar" del reporte de
+// evidencia. Ahora se entrega por separado y solo cuando se pide: el reporte de
+// servicios muestra lo hecho y este muestra lo que falta.
+//
+// Datos: routes/reportes.js → juntarPendientes().
+// ════════════════════════════════════════════════════════════════════════════
+const FRECUENCIA_TEXTO = {
+  diaria: "Diaria", semanal: "Semanal", quincenal: "Quincenal",
+  mensual: "Mensual", trimestral: "Trimestral", por_orden: "Por orden",
+};
+const MOTIVOS_DEL_HOTEL = ["permiso_denegado", "sin_llave", "huesped_en_habitacion", "area_ocupada", "evento_en_curso"];
+
+export async function construirReportePendientes(d, opciones = {}) {
+  const detallePuntos = opciones.detallePuntos !== false;
+  const { doc, terminado, e } = abrirDocumento(d, {
+    titulo: "Reporte de servicios no realizados y pendientes",
+    tituloInfo: "Reporte de no realizados",
+  });
+
+  const r = d.resumen || {};
+  tituloSeccion(doc, "Resumen", C.rojo);
+  kpis(doc, [
+    { valor: r.no_realizados ?? 0, etiqueta: "Intentados y no realizados", fondo: r.no_realizados ? C.rojoClaro : C.azulPastel, borde: r.no_realizados ? C.rojo : C.azulClaro, color: r.no_realizados ? C.rojo : C.azulOsc },
+    { valor: r.no_realizados_hotel ?? 0, etiqueta: "De esos, por causa del hotel" },
+    { valor: r.puntos_vencidos ?? 0, etiqueta: "Puntos fuera de frecuencia", fondo: r.puntos_vencidos ? C.ambarClaro : C.azulPastel, borde: r.puntos_vencidos ? C.ambar : C.azulClaro, color: r.puntos_vencidos ? C.ambar : C.azulOsc },
+    { valor: r.solicitudes_pendientes ?? 0, etiqueta: "Pedidos del hotel sin hacer" },
+  ]);
+
+  const nada = !r.no_realizados && !r.puntos_vencidos && !r.solicitudes_pendientes;
+  if (nada) {
+    parrafo(doc, "No hay servicios pendientes: todo lo programado esta dentro de su frecuencia, no se registraron accesos negados y no quedan pedidos del hotel sin atender.", { color: C.verde, negrita: true });
+  }
+
+  // 1. Intentados y no realizados
+  if (d.no_realizados?.length) {
+    tituloSeccion(doc, "Servicios que el tecnico intento y no pudo realizar", C.rojo);
+    parrafo(doc, "Con el motivo y quien lo informo: la responsabilidad no es la misma cuando el hotel no autoriza el acceso que cuando el equipo de ASA no llego.");
+    doc.moveDown(0.3);
+    tabla(doc,
+      [
+        { titulo: "Fecha", ancho: 52 },
+        { titulo: "Punto / habitacion", ancho: 95, negrita: true },
+        { titulo: "Area", ancho: 95 },
+        { titulo: "Motivo", ancho: 120 },
+        { titulo: "Informado por", ancho: 88 },
+        { titulo: "Resp.", ancho: 55 },
+      ],
+      d.no_realizados.map((n) => {
+        const fila = [
+          fechaCorta(n.fecha),
+          n.numero_habitacion ? `Hab. ${n.numero_habitacion}` : n.codigo_visible,
+          [n.area, n.nivel].filter(Boolean).join(" · ") || "—",
+          MOTIVOS_TEXTO[n.motivo_no_realizado] || n.motivo_no_realizado || "Sin motivo registrado",
+          n.impedido_por || "—",
+          MOTIVOS_DEL_HOTEL.includes(n.motivo_no_realizado) ? "Hotel" : "ASA",
+        ];
+        fila._fondo = C.rojoClaro;
+        fila._color = "#7F1D1D";
+        return fila;
+      }),
+      { colorEncabezado: C.rojo, tam: 8 }
+    );
+  }
+
+  // 2. Pedidos del hotel sin hacer
+  if (d.solicitudes_pendientes?.length) {
+    tituloSeccion(doc, "Habitaciones y puntos pedidos por el hotel que siguen sin hacerse", C.rojo);
+    tabla(doc,
+      [
+        { titulo: "Solicitud", ancho: 70, negrita: true },
+        { titulo: "Pedida", ancho: 55 },
+        { titulo: "Para", ancho: 55 },
+        { titulo: "Punto / habitacion", ancho: 110, negrita: true },
+        { titulo: "Area", ancho: 100 },
+        { titulo: "Estado", ancho: 90 },
+      ],
+      d.solicitudes_pendientes.map((x) => [
+        x.orden,
+        x.pedida ? fechaCorta(x.pedida) : "—",
+        x.requerida ? fechaCorta(x.requerida + "T12:00:00") : "—",
+        x.punto,
+        x.area || "—",
+        x.estado === "no_realizado" ? `No se pudo: ${MOTIVOS_TEXTO[x.motivo] || x.motivo || "sin motivo"}` : "Pendiente",
+      ]),
+      { colorEncabezado: C.rojo, tam: 8 }
+    );
+  }
+
+  // 3. Puntos fuera de frecuencia
+  if (d.pendientes_por_area?.length) {
+    tituloSeccion(doc, "Puntos programados fuera de su frecuencia, por area", C.ambar);
+    parrafo(doc, `Contados al momento de generar el reporte: no tienen un servicio realizado dentro de su frecuencia. "Sin visita" son puntos que todavia no tienen ningun servicio en el sistema.`);
+    doc.moveDown(0.3);
+    tabla(doc,
+      [
+        { titulo: "Area", ancho: 170, negrita: true },
+        { titulo: "Tipo de punto", ancho: 130 },
+        { titulo: "Pendientes", ancho: 60, alineacion: "right" },
+        { titulo: "Sin visita", ancho: 60, alineacion: "right" },
+        { titulo: "Visita mas vieja", ancho: 80, alineacion: "right" },
+      ],
+      d.pendientes_por_area.map((p) => [p.area || "Sin area", p.tipo || "—", p.pendientes, p.nunca, p.ultima ? fechaCorta(p.ultima) : "—"]),
+      { colorEncabezado: C.ambar, tam: 8, pad: 3 }
+    );
+
+    if (detallePuntos && d.puntos_vencidos?.length) {
+      tituloSeccion(doc, "Detalle punto por punto", C.ambar);
+      const conPlanta = d.puntos_vencidos.some((p) => p.planta) && !d.sitio;
+      tabla(doc,
+        [
+          ...(conPlanta ? [{ titulo: "Planta", ancho: 90 }] : []),
+          { titulo: "Area", ancho: 120 },
+          { titulo: "Codigo", ancho: 55, negrita: true },
+          { titulo: "Punto / habitacion", ancho: 120 },
+          { titulo: "Frecuencia", ancho: 60 },
+          { titulo: "Ultima visita", ancho: 65, alineacion: "right" },
+        ],
+        d.puntos_vencidos.map((p) => [
+          ...(conPlanta ? [p.planta || "—"] : []),
+          p.area, p.codigo, p.punto, FRECUENCIA_TEXTO[p.frecuencia] || p.frecuencia, p.ultima ? fechaCorta(p.ultima) : "Sin visita",
+        ]),
+        { colorEncabezado: C.ambar, tam: 7.6, pad: 2.5 }
+      );
+    }
+  }
+
+  numerarPaginas(doc, d, e);
+  doc.end();
+  return terminado;
 }

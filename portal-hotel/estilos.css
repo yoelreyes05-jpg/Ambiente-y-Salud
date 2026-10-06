@@ -362,3 +362,12 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
   .doc-fila,.doc-prod{flex-wrap:wrap}
   .doc-acc{width:100%;justify-content:flex-start}
 }
+
+/* Cronograma (extras.js) */
+.cr-semana-p{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.cr-dia-p.hoy{border-color:var(--azul);box-shadow:0 0 0 2px rgba(50,83,156,.15)}
+.cr-item-p{border-left:3px solid var(--azul);padding:6px 8px;margin-bottom:8px;background:#f8fafc;border-radius:6px;font-size:13px}
+.cr-item-p.realizado{border-left-color:var(--verde)}
+.cr-item-p.cancelado{opacity:.55;text-decoration:line-through}
+.cr-item-p .h{font-weight:700}
+.cr-item-p .s,.cr-dia-p .s{color:var(--suave);font-size:12px}

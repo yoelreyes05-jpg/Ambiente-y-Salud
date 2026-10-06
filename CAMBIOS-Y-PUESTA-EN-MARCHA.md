@@ -589,3 +589,68 @@ tenían ficha de empleado vinculada y el servicio quedaba sin técnico.
 3. Si usas **Permisos por rol**, dale "Técnicos" a operaciones/comercial (el
    admin la ve siempre).
 4. En los celulares, cerrar y abrir la app del técnico para que tome la versión v10.
+
+---
+
+## Plagas por tipo, reporte de no realizados, chinche / código rosa y cronograma (octubre 2026)
+
+**Qué cambió**
+
+1. **Plagas encontradas** (panel, menú Operación): cuántas plagas de cada tipo
+   reportaron los técnicos, con barras por día / semana / mes, por técnico y por
+   área. Filtros: planta, técnico y fechas. Sale de `GET /reportes/plagas`.
+2. **Reporte PDF de servicios**: ahora trae la gráfica de barras **Cantidad de
+   plagas por período** (con el total encima de cada barra) y la tabla de plagas
+   por técnico. Se **quitó** la sección "Servicios que NO se pudieron realizar".
+3. **Reporte aparte de no realizados** (`GET /reportes/pdf-pendientes`): lo que
+   el técnico intentó y no pudo hacer (con motivo y responsable), lo que el hotel
+   pidió y sigue sin hacerse y los puntos fuera de frecuencia (resumen por área y
+   lista punto por punto). En el panel: "Generar reporte" → Tipo de reporte. En el
+   portal: botón "Reporte de no realizados" en Historial.
+4. **Chinche / código rosa** (panel, menú Operación; app del técnico, menú ⋮;
+   portal, pestaña Chinche):
+   - Se abre solo cuando el hotel reporta Chinches o Código rosa con número de
+     habitación desde el portal, o a mano desde el panel (o desde la solicitud).
+   - Verificaciones (checklist) → ¿hay chinche?
+     - **Sí**: se marcan las condiciones, el sistema sugiere el nivel y arma el
+       protocolo con fechas. Las directrices se ajustan en cada caso (texto,
+       fecha, agregar, quitar). Al terminar: "Nueva verificación (final)" → No
+       hay → habitación liberada.
+     - **No**: caso negativo.
+   - Con resultado negativo se descarga el **certificado** en español, inglés o
+     los dos, con el mismo membrete, firma y sello del Word original. Cambia
+     hotel, destinatario, habitación y fecha.
+   - "Plantilla del protocolo": verificaciones, condiciones (con peso para el
+     nivel), directrices por nivel y datos de quien firma.
+5. **Cronograma** (panel, menú Operación): subir el Excel de PROG. SERVICIO
+   (vista previa y a qué planta va cada una), vista semanal, por planta o en
+   lista; editar fecha, horas, planta, título, notas, equipo y estado; borrar uno
+   o varios; repetir una semana en las siguientes. El técnico lo ve en su app
+   (menú ⋮ → Cronograma, y puede marcar realizado) y el hotel en su portal
+   (pestaña Cronograma), cada uno solo de sus plantas.
+
+**Archivos**
+
+- `supabase/34_cronograma_e_incidencias.sql` (nuevo)
+- `backend/routes/incidencias.js`, `backend/routes/cronograma.js`,
+  `backend/lib/certificadoPdf.js`, `backend/assets/certificado/*` (nuevos)
+- `backend/routes/reportes.js`, `backend/lib/reportePdf.js`,
+  `backend/routes/solicitudes.js`, `backend/routes/configuracion.js`, `backend/server.mjs`
+- `panel-web/plagas.js`, `panel-web/incidencias.js`, `panel-web/cronograma.js` (nuevos),
+  `panel-web/app.js`, `panel-web/index.html`, `panel-web/servicios.js`,
+  `panel-web/solicitudes.js`, `panel-web/styles.css`
+- `app-tecnico/extras.js` (nuevo), `app-tecnico/app.js`, `app-tecnico/index.html`,
+  `app-tecnico/estilos.css`, `app-tecnico/sw.js` (caché `asa-tecnico-v12`)
+- `portal-hotel/extras.js` (nuevo), `portal-hotel/app.js`, `portal-hotel/index.html`,
+  `portal-hotel/estilos.css`
+
+**Puesta en marcha**
+
+1. Ejecutar `supabase/34_cronograma_e_incidencias.sql` en el SQL Editor de
+   Supabase. Al final dice `OK 34_`.
+2. Subir a GitHub: Railway redespliega el backend; Vercel el panel, el portal y la app.
+3. Si usas **Permisos por rol**, dale "Chinche / codigo rosa", "Cronograma" y
+   "Plagas encontradas" a operaciones/comercial (el admin los ve siempre).
+4. Revisar en "Plantilla del protocolo" las verificaciones y directrices, y los
+   datos del firmante del certificado.
+5. En los celulares, cerrar y abrir la app del técnico para que tome la versión v12.

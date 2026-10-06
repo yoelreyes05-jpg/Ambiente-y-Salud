@@ -466,28 +466,55 @@ function modalReporte(sitioIdPorDefecto) {
     title: "Generar reporte de evidencia",
     large: true,
     bodyHTML: `
-      <p class="text-muted">
+      <div class="form-group"><label>Tipo de reporte</label>
+        <select name="tipo" id="rep-tipo">
+          <option value="servicios">Servicios realizados y evidencia (con plagas por período)</option>
+          <option value="pendientes">Solo lo que NO se ha realizado</option>
+        </select>
+      </div>
+      <p class="text-muted" id="rep-explica">
         El PDF que se entrega en auditoría: qué se hizo, quién lo hizo, qué se
-        encontró, con qué evidencia, y qué <strong>no</strong> se pudo hacer y por qué.
+        encontró (cuántas plagas de cada tipo, en barras por período) y con qué evidencia.
+        Lo que no se pudo hacer va en su reporte aparte.
       </p>
       <div class="form-grid">
         <div class="form-group"><label>Planta</label>
           <select name="sitio_id" id="rep-sitio"><option value="">Cargando…</option></select>
         </div>
-        <div class="form-group"><label>Agrupar el histograma</label>
+        <div class="form-group rep-solo-servicios"><label>Agrupar las barras</label>
           <select name="agrupar"><option value="dia">Por día</option><option value="semana">Por semana</option><option value="mes">Por mes</option></select>
         </div>
         <div class="form-group"><label>Desde</label><input type="date" name="desde" value="${hace(30)}" /></div>
         <div class="form-group"><label>Hasta</label><input type="date" name="hasta" value="${hoyLocal()}" /></div>
       </div>
-      <label class="campo-check"><input type="checkbox" name="detalle" checked /> Incluir el detalle de cada servicio con sus preguntas</label>
-      <label class="campo-check"><input type="checkbox" name="fotos" checked /> Incluir las fotos de los técnicos</label>
-      <p class="text-muted" style="margin-top:10px">
-        Con fotos y detalle el PDF pesa más y tarda: un mes de una planta grande
-        puede tomar un minuto. Si solo necesitas los números, desmarca las dos.
-      </p>`,
+      <div class="rep-solo-servicios">
+        <label class="campo-check"><input type="checkbox" name="detalle" checked /> Incluir el detalle de cada servicio con sus preguntas</label>
+        <label class="campo-check"><input type="checkbox" name="fotos" checked /> Incluir las fotos de los técnicos</label>
+        <p class="text-muted" style="margin-top:10px">
+          Con fotos y detalle el PDF pesa más y tarda: un mes de una planta grande
+          puede tomar un minuto. Si solo necesitas los números, desmarca las dos.
+        </p>
+      </div>
+      <div class="rep-solo-pendientes" style="display:none">
+        <label class="campo-check"><input type="checkbox" name="puntos" checked /> Incluir la lista punto por punto de lo que está fuera de frecuencia</label>
+      </div>`,
     submitLabel: "Generar PDF",
     onMount() {
+      const textos = {
+        servicios: `El PDF que se entrega en auditoría: qué se hizo, quién lo hizo, qué se
+          encontró (cuántas plagas de cada tipo, en barras por período) y con qué evidencia.
+          Lo que no se pudo hacer va en su reporte aparte.`,
+        pendientes: `Solo lo que falta: los servicios que el técnico intentó y no pudo hacer
+          (con el motivo y de quién es la responsabilidad), lo que el hotel pidió y sigue sin
+          hacerse, y los puntos que están fuera de su frecuencia.`,
+      };
+      $("#rep-tipo").addEventListener("change", (e) => {
+        const pend = e.target.value === "pendientes";
+        $$(".rep-solo-servicios").forEach((x) => (x.style.display = pend ? "none" : ""));
+        $$(".rep-solo-pendientes").forEach((x) => (x.style.display = pend ? "" : "none"));
+        $("#rep-explica").textContent = textos[e.target.value].replace(/\s+/g, " ");
+        $("#asa-modal-submit").textContent = pend ? "Generar PDF de no realizados" : "Generar PDF";
+      });
       get("/sitios").then((ss) => {
         $("#rep-sitio").innerHTML =
           ss.map((s) => `<option value="${s.id}"${s.id === sitioIdPorDefecto ? " selected" : ""}>${esc(s.nombre)}</option>`).join("") +
@@ -499,6 +526,14 @@ function modalReporte(sitioIdPorDefecto) {
       if (fd.get("sitio_id")) qs.set("sitio_id", fd.get("sitio_id"));
       qs.set("desde", fd.get("desde"));
       qs.set("hasta", fd.get("hasta"));
+      if (fd.get("tipo") === "pendientes") {
+        if (fd.get("puntos") !== "on") qs.set("puntos", "no");
+        $("#asa-modal-submit").textContent = "Generando…";
+        await descargarPdf(`/reportes/pdf-pendientes?${qs}`, `no-realizados-asa-${fd.get("desde")}-a-${fd.get("hasta")}.pdf`);
+        closeModal();
+        toast("Reporte de no realizados descargado");
+        return;
+      }
       qs.set("agrupar", fd.get("agrupar"));
       if (fd.get("detalle") !== "on") qs.set("detalle", "no");
       if (fd.get("fotos") !== "on") qs.set("fotos", "no");

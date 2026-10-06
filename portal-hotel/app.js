@@ -138,6 +138,8 @@ function pintarMarco() {
     ["mapa", "Mapa"],
     ["hallazgos", "Hallazgos"],
     ["ordenes", "Solicitudes"],
+    ["cronograma", "Cronograma"],
+    ["incidencias", "Chinche"],
     ["documentos", "Documentos"],
   ];
 
@@ -179,7 +181,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {
@@ -437,15 +439,18 @@ async function vistaHistorial(cuerpo) {
         <option value="90">Últimos 90 días</option>
       </select>
       <button class="btn principal" id="btn-pdf">Generar reporte (PDF)</button>
+      <button class="btn" id="btn-pdf-pend">Reporte de no realizados</button>
     </div>
     <p class="nota-reporte">
-      El PDF trae el gráfico de barras del período, todas las revisiones con las
-      preguntas que el técnico verificó, las plagas contadas y sus fotos — y lo
-      que no se pudo hacer, con el motivo. Es el documento para auditoría.
+      El reporte trae las barras del período (servicios y cantidad de plagas de
+      cada tipo), todas las revisiones con las preguntas que el técnico verificó,
+      las plagas contadas y sus fotos. Es el documento para auditoría. Lo que no
+      se pudo hacer, con su motivo, sale en el reporte de no realizados.
     </p>
     <div class="tarjeta" id="lista"><div class="cargando">Cargando…</div></div>`;
 
-  $("#btn-pdf").addEventListener("click", descargarReportePdf);
+  $("#btn-pdf").addEventListener("click", () => descargarReportePdf());
+  $("#btn-pdf-pend").addEventListener("click", () => descargarReportePdf("pendientes"));
   $("#dias").addEventListener("change", cargar);
 
   async function cargar() {
@@ -522,8 +527,9 @@ async function vistaHistorial(cuerpo) {
 // exactamente el mismo documento que saca ASA desde su panel — un PDF del hotel
 // que no cuadre con el de ASA es una discusión asegurada. El servidor limita la
 // consulta a las plantas de esta cuenta, así que el hotel solo saca el suyo.
-async function descargarReportePdf() {
-  const boton = $("#btn-pdf");
+async function descargarReportePdf(tipo = "servicios") {
+  const pend = tipo === "pendientes";
+  const boton = $(pend ? "#btn-pdf-pend" : "#btn-pdf");
   const original = boton.textContent;
   const dias = Number($("#dias").value) || 30;
   const desde = new Date(Date.now() - (dias - 1) * 86400000)
@@ -538,7 +544,7 @@ async function descargarReportePdf() {
       hasta: hoyLocal(),
       agrupar: dias > 60 ? "semana" : "dia",
     });
-    const res = await fetch(`${CONFIG.API_BASE}/reportes/pdf?${qs}`, {
+    const res = await fetch(`${CONFIG.API_BASE}/reportes/${pend ? "pdf-pendientes" : "pdf"}?${qs}`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     if (!res.ok) {
@@ -550,7 +556,7 @@ async function descargarReportePdf() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `reporte-${PLANTA.nombre.replace(/\s+/g, "-").toLowerCase()}-${desde}-a-${hoyLocal()}.pdf`;
+    a.download = `${pend ? "no-realizados" : "reporte"}-${PLANTA.nombre.replace(/\s+/g, "-").toLowerCase()}-${desde}-a-${hoyLocal()}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
@@ -1278,10 +1284,15 @@ function formularioReporte() {
           <option>Roedores</option>
           <option>Hormigas</option>
           <option>Chinches</option>
+          <option>Código rosa</option>
           <option>Mosquitos</option>
           <option>Termitas</option>
           <option>Otra</option>
         </select>
+      </label>
+      <label class="campo" id="campo-hab" style="display:none">Número de habitación
+        <input name="numero_habitacion" inputmode="numeric" placeholder="2446" />
+        <small>Con chinche o código rosa se abre el protocolo de verificación de esa habitación. Si sale negativo, ASA emite el certificado.</small>
       </label>
       <label class="campo">Urgencia
         <select name="prioridad">
@@ -1303,6 +1314,13 @@ function formularioReporte() {
 
   $("#btn-cancelar").addEventListener("click", () => (zona.innerHTML = ""));
 
+  const tipoSel = $("#form-reporte select[name=tipo]");
+  tipoSel.addEventListener("change", () => {
+    const conHab = /chinche|rosa/i.test(tipoSel.value);
+    $("#campo-hab").style.display = conHab ? "" : "none";
+    $("#form-reporte input[name=numero_habitacion]").required = conHab;
+  });
+
   $("#form-reporte").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.target);
@@ -1315,12 +1333,14 @@ function formularioReporte() {
         sitio_id: PLANTA.id,
         tipo_solicitud: "plaga",
         tipo_plaga: fd.get("tipo"),
+        numero_habitacion: (fd.get("numero_habitacion") || "").trim() || null,
         prioridad: fd.get("prioridad"),
         descripcion: (fd.get("descripcion") || "").trim(),
       });
       AVISO_ORDEN =
         `Reporte enviado. Tu orden es <strong>${esc(orden.numero_orden || "")}</strong>. ` +
-        `Puedes seguir su estado en esta misma lista.`;
+        `Puedes seguir su estado en esta misma lista.` +
+        (orden.incidencia ? ` Se abrió el caso <strong>${esc(orden.incidencia.numero)}</strong> en la pestaña Chinche.` : "");
       await pintarPestana();
     } catch (e) {
       const err = document.createElement("div");

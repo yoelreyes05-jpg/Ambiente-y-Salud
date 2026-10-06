@@ -239,6 +239,12 @@ if (typeof MODULOS_EXTRA_5 !== "undefined") MODULES.push(...MODULOS_EXTRA_5);
 if (typeof MODULOS_EXTRA_6 !== "undefined") MODULES.push(...MODULOS_EXTRA_6);
 // tecnicos.js aporta Técnicos (quién subió hoy, ranking e índice por técnico).
 if (typeof MODULOS_EXTRA_7 !== "undefined") MODULES.push(...MODULOS_EXTRA_7);
+// plagas.js aporta Plagas encontradas (cuántas de cada tipo, barras por período).
+if (typeof MODULOS_EXTRA_8 !== "undefined") MODULES.push(...MODULOS_EXTRA_8);
+// incidencias.js aporta Chinche / código rosa (protocolo y certificado).
+if (typeof MODULOS_EXTRA_9 !== "undefined") MODULES.push(...MODULOS_EXTRA_9);
+// cronograma.js aporta Cronograma (programación de servicios desde Excel).
+if (typeof MODULOS_EXTRA_10 !== "undefined") MODULES.push(...MODULOS_EXTRA_10);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:

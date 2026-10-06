@@ -559,3 +559,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 .punto { border-left-width: 5px; }
 .punto.hecho { border-left-color: var(--verde-borde); }
 .punto.vencido { border-left-color: var(--rojo); }
+
+/* Cronograma (extras.js) */
+.semana-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.semana-nav .btn { width: auto; min-height: 44px; padding: 0 18px; margin: 0; }
