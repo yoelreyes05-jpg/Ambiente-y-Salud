@@ -1412,6 +1412,116 @@ router.get("/chequeos/:id", ruta(async (req, res) => {
   res.json({ error: false, chequeo: chq.data, items: items.data || [], fotos: fotos.data || [] });
 }));
 
+/**
+ * PATCH /asa/chequeos/:id — corregir un parte ya guardado desde el panel.
+ *
+ * Se corrige lo que el conductor tecleó mal: kilometraje, combustible,
+ * conductor, fecha, turno, si estaba apta y la observación. El checklist y las
+ * fotos no se tocan aquí. Al cambiar el km, la fecha o el turno se recalcula
+ * lo recorrido de los partes de la unidad y, si hace falta, su odómetro.
+ */
+router.patch("/chequeos/:id", ruta(async (req, res) => {
+  const id = Number(req.params.id);
+  const b = req.body || {};
+  const { data: actual } = await supabase.from("asa_flota_chequeos").select("*").eq("id", id).maybeSingle();
+  if (!actual) return fallo(res, 404, "Ese parte no existe.");
+
+  const campos = {};
+  if (b.fecha !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha))) return fallo(res, 400, "Fecha inválida.");
+    campos.fecha = b.fecha;
+  }
+  if (b.turno !== undefined) {
+    const turno = String(b.turno).toUpperCase();
+    if (!["SALIDA", "ENTRADA"].includes(turno)) return fallo(res, 400, "Turno inválido.");
+    campos.turno = turno;
+  }
+  if (b.km !== undefined) {
+    const km = num(b.km);
+    if (km !== null && (!Number.isFinite(km) || km < 0)) return fallo(res, 400, "Kilometraje inválido.");
+    campos.km = km;
+  }
+  if (b.combustible_octavos !== undefined) {
+    campos.combustible_octavos = b.combustible_octavos === null || b.combustible_octavos === ""
+      ? null : Math.max(0, Math.min(8, Number(b.combustible_octavos)));
+  }
+  if (b.apto_circular !== undefined) campos.apto_circular = !!b.apto_circular;
+  if (b.observacion !== undefined) campos.observacion = (b.observacion || "").trim() || null;
+  if (b.conductor_id !== undefined) {
+    const conductor_id = b.conductor_id ? Number(b.conductor_id) : null;
+    campos.conductor_id = conductor_id;
+    if (conductor_id) {
+      const { data: c } = await supabase.from("asa_flota_conductores").select("nombre").eq("id", conductor_id).maybeSingle();
+      if (!c) return fallo(res, 404, "Ese conductor no existe.");
+      campos.conductor_nombre = c.nombre;
+    }
+  }
+
+  const { error } = await supabase.from("asa_flota_chequeos").update(campos).eq("id", id);
+  if (error) {
+    if (error.code === "23505") return fallo(res, 409, "Ya hay un parte de ese vehículo en esa fecha y turno.");
+    return fallo(res, 500, error.message);
+  }
+
+  // Lo recorrido se mide contra el parte anterior con km. Con la fecha, el
+  // turno o el km cambiados, se rehace para toda la unidad: así el parte
+  // corregido y el que venía después quedan bien.
+  if ("km" in campos || "fecha" in campos || "turno" in campos) {
+    const vehiculo_id = actual.vehiculo_id;
+    const [{ data: partes }, { data: veh }] = await Promise.all([
+      supabase.from("asa_flota_chequeos").select("id, fecha, turno, km, km_recorrido, created_at")
+        .eq("vehiculo_id", vehiculo_id),
+      supabase.from("asa_flota_vehiculos").select("km_inicial, km_actual").eq("id", vehiculo_id).maybeSingle(),
+    ]);
+    const ordenTurno = { SALIDA: 0, ENTRADA: 1 };
+    const lista = (partes || []).sort((x, y) =>
+      String(x.fecha).localeCompare(String(y.fecha)) ||
+      (ordenTurno[x.turno] ?? 0) - (ordenTurno[y.turno] ?? 0) ||
+      x.id - y.id);
+    let anterior = Number(veh?.km_inicial || 0);
+    for (const p of lista) {
+      if (p.km === null || p.km === undefined) continue;
+      const km = Number(p.km);
+      // Igual que al recibir el parte: si el km baja, no se cuenta recorrido.
+      const recorrido = anterior > 0 && km >= anterior ? km - anterior : null;
+      if (recorrido !== (p.km_recorrido === null ? null : Number(p.km_recorrido))) {
+        await supabase.from("asa_flota_chequeos").update({ km_recorrido: recorrido }).eq("id", p.id);
+      }
+      if (km >= anterior) anterior = km;
+    }
+
+    // El odómetro del vehículo: sube si el km corregido es mayor. Si este
+    // parte era el que lo había puesto y se bajó, vuelve al mayor de los
+    // partes. Si lo puso otra cosa (un mantenimiento, la importación), se deja.
+    if ("km" in campos && veh) {
+      const kmVeh = Number(veh.km_actual || 0);
+      const nuevo = campos.km === null ? null : Number(campos.km);
+      const viejo = actual.km === null ? null : Number(actual.km);
+      let kmActual = null;
+      if (nuevo !== null && nuevo > kmVeh) kmActual = nuevo;
+      else if (viejo !== null && viejo === kmVeh && nuevo !== viejo) {
+        const mayor = lista.reduce((m, p) => (p.km != null && Number(p.km) > m ? Number(p.km) : m), 0);
+        kmActual = Math.max(mayor, Number(veh.km_inicial || 0));
+      }
+      if (kmActual !== null && kmActual !== kmVeh) {
+        await supabase.from("asa_flota_vehiculos").update({
+          km_actual: kmActual,
+          km_actualizado: new Date().toISOString(),
+        }).eq("id", vehiculo_id);
+      }
+    }
+  }
+
+  const { data } = await supabase.from("asa_flota_chequeos").select("*").eq("id", id).maybeSingle();
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "flota_chequeos",
+    descripcion: `Parte ${data?.fecha} ${data?.turno} corregido`,
+    detalle: { id, campos: Object.keys(campos) },
+  });
+  res.json({ error: false, chequeo: data });
+}));
+
 router.get("/fallas", ruta(async (req, res) => {
   let q = supabase.from("asa_flota_fallas_reportadas").select("*, asa_flota_vehiculos(codigo,placa,marca,modelo)");
   if (req.query.vehiculo_id) q = q.eq("vehiculo_id", Number(req.query.vehiculo_id));

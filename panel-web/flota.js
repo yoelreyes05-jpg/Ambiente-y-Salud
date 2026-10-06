@@ -393,7 +393,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         { key: "items_mal", label: "Fallos" },
         { key: "apto_circular", label: "Apta", fmt: (c) => (c.apto_circular ? "Sí" : `<span class="estado-chip pendiente">NO</span>`) },
       ],
-      f.chequeos.map((c) => ({ ...c, _clickable: false })),
+      f.chequeos,
       "Sin partes registrados."
     ),
     fallas: () => tableHTML(
@@ -417,7 +417,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         { key: "monto", label: "Monto", fmt: (g) => MONEDA(g.monto) },
         { key: "suplidor", label: "Suplidor", fmt: (g) => esc(g.suplidor || "—") },
       ],
-      f.gastos.map((g) => ({ ...g, _clickable: false })),
+      f.gastos,
       "Sin gastos registrados."
     ),
     mant: () => `
@@ -452,6 +452,15 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
   const recargar = () => fichaVehiculo(id, contenedor, "mant");
   const pintar = (t) => {
     cf.innerHTML = vistas[t]();
+    // Tocar un parte o un gasto lo abre para corregirlo.
+    if (t === "partes") {
+      cf.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () =>
+        modalChequeo(f.chequeos.find((c) => String(c.id) === tr.dataset.id), () => fichaVehiculo(id, contenedor, "partes"))));
+    }
+    if (t === "gastos") {
+      cf.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () =>
+        modalGasto(f.gastos.find((g) => String(g.id) === tr.dataset.id), v.id, () => fichaVehiculo(id, contenedor, "gastos"))));
+    }
     if (t === "mant") {
       mantMarcarFilas($("#fm-ficha-tabla"), f.mantenimientos);
       $("#fm-plan-nuevo").addEventListener("click", () => modalPlanMant(null, v, recargar));
@@ -1019,6 +1028,57 @@ async function modalGasto(g, vehiculoId, onSaved) {
       else await apiFlota.patch(`/gastos/${g.id}`, cuerpo);
       closeModal();
       toast("Gasto guardado");
+      onSaved?.();
+    },
+  });
+}
+
+// Corregir un parte ya guardado: lo que el conductor pudo teclear mal. El
+// checklist y las fotos se quedan como llegaron.
+async function modalChequeo(c, onSaved) {
+  const conductores = (await apiFlota.get("/conductores?incluir_inactivos=1")).conductores || [];
+  const conductorGuardado = c.conductor_id && !conductores.some((x) => String(x.id) === String(c.conductor_id));
+
+  openModal({
+    title: `Editar parte · ${fmtDate(c.fecha)} ${c.turno}`,
+    large: true,
+    bodyHTML: `
+      <div class="form-grid">
+        <div class="form-group"><label>Fecha *</label><input name="fecha" type="date" required value="${esc(c.fecha || "")}" /></div>
+        <div class="form-group"><label>Turno *</label>
+          <select name="turno">${["SALIDA", "ENTRADA"].map((t) => `<option${c.turno === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>
+        <div class="form-group"><label>Conductor</label>
+          <select name="conductor_id">
+            <option value="">— Sin conductor —</option>
+            ${conductorGuardado ? `<option value="${esc(c.conductor_id)}" selected>${esc(c.conductor_nombre || "Conductor")}</option>` : ""}
+            ${conductores.map((x) => `<option value="${x.id}"${String(c.conductor_id) === String(x.id) ? " selected" : ""}>${esc(x.nombre)}${x.activo === false ? " (inactivo)" : ""}</option>`).join("")}
+          </select></div>
+        <div class="form-group"><label>Kilometraje</label><input name="km" type="number" step="any" min="0" value="${esc(c.km ?? "")}" /></div>
+        <div class="form-group"><label>Tanque</label>
+          <select name="combustible_octavos">
+            <option value="">—</option>
+            ${OCTAVOS.map((o, i) => `<option value="${i}"${c.combustible_octavos === i ? " selected" : ""}>${o}</option>`).join("")}
+          </select></div>
+        <div class="form-group"><label class="campo-check"><input type="checkbox" name="apto_circular" ${c.apto_circular !== false ? "checked" : ""} /> Apta para circular</label></div>
+        <div class="form-group full"><label>Observación</label><input name="observacion" value="${esc(c.observacion || "")}" /></div>
+      </div>
+      <div class="form-hint">
+        Si cambias el kilometraje, se recalcula lo recorrido de los partes de esta unidad
+        y, si hace falta, su último km. El checklist y las fotos no cambian.
+      </div>`,
+    async onSubmit(fd) {
+      const octavos = fd.get("combustible_octavos");
+      await apiFlota.patch(`/chequeos/${c.id}`, {
+        fecha: fd.get("fecha"),
+        turno: fd.get("turno"),
+        conductor_id: fd.get("conductor_id") ? Number(fd.get("conductor_id")) : null,
+        km: fd.get("km") === "" ? null : Number(fd.get("km")),
+        combustible_octavos: octavos === "" ? null : Number(octavos),
+        apto_circular: fd.get("apto_circular") === "on",
+        observacion: (fd.get("observacion") || "").trim() || null,
+      });
+      closeModal();
+      toast("Parte corregido");
       onSaved?.();
     },
   });
