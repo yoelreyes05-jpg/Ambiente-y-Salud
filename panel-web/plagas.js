@@ -150,7 +150,8 @@ async function viewPlagasEncontradas(content) {
               <div class="pl-n">${p.total}</div>
               <div class="pl-nombre">${esc(p.plaga)}</div>
               <div class="pl-sub">${p.registros} registro(s) · ${p.puntos} punto(s) · máx. ${p.maximo}
-                ${p.sobre_umbral ? ` · <span style="color:#b91c1c;font-weight:700">${p.sobre_umbral} sobre umbral</span>` : ""}</div>
+                ${p.sobre_umbral ? ` · <span style="color:#b91c1c;font-weight:700">${p.sobre_umbral} sobre umbral</span>` : ""}
+                ${p.sin_conteo ? `<br><span title="El técnico la marcó en el checklist sin poner cuántas: cada una cuenta como 1">${p.sin_conteo} marcada(s) sin número</span>` : ""}</div>
               <div class="fb-tend ${CLASE_TENDENCIA?.[p.tendencia] || ""}" style="text-align:left">
                 ${p.tendencia === "sube" ? "▲ Sube" : p.tendencia === "baja" ? "▼ Baja" : p.tendencia === "nueva" ? "• Nueva" : "= Estable"}
                 ${p.variacion_pct == null ? "" : ` ${p.variacion_pct > 0 ? "+" : ""}${p.variacion_pct}%`}
@@ -158,6 +159,8 @@ async function viewPlagasEncontradas(content) {
             </div>`).join("")}
         </div>
       </div>
+
+      ${d.registros_sin_conteo ? `<p class="text-muted" style="margin:-6px 0 14px">Incluye ${d.registros_sin_conteo} registro(s) del checklist donde el técnico marcó la plaga sin decir cuántas: cada uno cuenta como 1.</p>` : ""}
 
       <div class="card">
         <div class="card-head"><h2>Cantidad de plagas por ${d.agrupar === "mes" ? "mes" : d.agrupar === "semana" ? "semana" : "día"}</h2></div>

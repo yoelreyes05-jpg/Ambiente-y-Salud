@@ -590,9 +590,9 @@ table.data tbody tr.clickable{cursor:pointer}
 /* ── Pendientes por área y días anteriores ───────────────────────────────*/
 .kpi-card.r .val{color:var(--danger)}
 .estado-chip.aldia{background:#f3f9f3;color:var(--asa-verde);border:1px solid #cfe5d0}
-.estado-chip.norealizado{background:#fff;color:#b91c1c;border:1.5px dashed #ef4444}
+.estado-chip.norealizado{background:#fefce8;color:#a16207;border:1.5px dashed #eab308}
 .hab.aldia{background:#f6fbf6;border-color:#bcdcbe;color:var(--asa-verde)}
-.hab.norealizado{background:#fff5f5;border:1.5px dashed #ef4444;color:#b91c1c}
+.hab.norealizado{background:#fefce8;border:1.5px dashed #eab308;color:#a16207}
 .hab[data-insp]{cursor:pointer}
 .hab:not([data-insp]){cursor:default}
 .resumen-dia .leyenda{flex-wrap:wrap}

@@ -25,6 +25,86 @@ function cubetaDe(fecha, agrupar) {
   return String(fecha).slice(0, 10);
 }
 
+// ── Plagas escritas en el checklist ─────────────────────────────────────────
+//
+// Preguntas que pueden traer plagas: se filtran en la base por el texto de la
+// pregunta para no bajar todas las respuestas del período.
+const PREGUNTAS_DE_PLAGA = [
+  "plaga", "encontr", "observ", "evidencia", "conteo", "captura", "cantidad",
+  "insecto", "individuo", "mosca", "cucaracha", "roedor", "raton", "ratón",
+  "hormiga", "chinche", "mosquito",
+].map((t) => `pregunta_texto.ilike.*${t}*`).join(",");
+
+const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// Texto ("Moscas", "Cucaracha americana", "Capturas de roedor") → código de plaga
+function plagaDeTexto(texto) {
+  const t = sinAcentos(texto);
+  if (/chinche/.test(t)) return "chinche";
+  if (/cucaracha/.test(t)) return /americ/.test(t) ? "cucaracha_america" : "cucaracha_alemana";
+  if (/mosquito|zancudo/.test(t)) return "mosquito";
+  if (/mosca/.test(t)) return /fruta/.test(t) ? "mosca_fruta" : "mosca_domestica";
+  if (/hormiga/.test(t)) return "hormiga";
+  if (/\brata/.test(t)) return "roedor_rata";
+  if (/roedor|raton/.test(t)) return "roedor_raton";
+  if (/termita|comejen/.test(t)) return "termita";
+  return null;
+}
+
+// Un número sin plaga en la pregunta ("Conteo de insectos en la lámina") se
+// asigna por el tipo de punto: en una lámpara son moscas, en un cebadero roedores.
+function plagaDelTipoPunto(tipo) {
+  const t = sinAcentos(tipo);
+  if (/lampara|mosca/.test(t)) return "mosca_domestica";
+  if (/cebadero|roedor|estacion/.test(t)) return "roedor_raton";
+  return null;
+}
+
+const NO_ES_CONTEO = /cebo|gramo|%|porcentaje|carga|dosis|producto|temperatura|litro|ml\b/;
+
+function plagasDelChecklist(respuestas, plagaPorCodigo) {
+  // Por inspección: los números mandan; una plaga solo marcada (sin número)
+  // cuenta como 1 y queda señalada como "sin conteo".
+  const porInsp = new Map();
+  for (const r of respuestas) {
+    const insp = r.asa_inspecciones;
+    if (!insp) continue;
+    if (!porInsp.has(insp.id)) porInsp.set(insp.id, { insp, numeros: new Map(), vistas: new Set() });
+    const x = porInsp.get(insp.id);
+    const texto = sinAcentos(r.pregunta_texto);
+    const tipo = insp.asa_puntos_control?.asa_tipos_punto?.codigo;
+
+    const n = Number(r.valor_numero);
+    if (n > 0 && !NO_ES_CONTEO.test(texto) && /conteo|cuant|cantidad|captura|insecto|individuo|plaga|mosca|cucaracha|roedor|raton|hormiga|chinche|mosquito/.test(texto)) {
+      const codigo = plagaDeTexto(texto) || plagaDelTipoPunto(tipo) || "otro";
+      x.numeros.set(codigo, (x.numeros.get(codigo) || 0) + Math.round(n));
+      continue;
+    }
+    if (r.valor_bool === true && /captur/.test(texto) && /roedor|raton|rata/.test(texto)) {
+      x.vistas.add(plagaDeTexto(texto) || "roedor_raton");
+      continue;
+    }
+    if (/plaga|encontr|observ|evidencia|indicio/.test(texto) && !/condicion|favorec/.test(texto)) {
+      const opciones = Array.isArray(r.valor_opciones) ? r.valor_opciones : [];
+      for (const o of [...opciones, r.valor_texto].filter(Boolean)) {
+        const codigo = plagaDeTexto(o);
+        if (codigo) x.vistas.add(codigo);
+      }
+    }
+  }
+
+  const salida = [];
+  const fila = (codigo, cantidad, insp, sinConteo) => {
+    const p = plagaPorCodigo.get(codigo) || plagaPorCodigo.get("otro") || { codigo, nombre: "Otra plaga", grupo: "otra" };
+    salida.push({ cantidad, asa_plagas: p, asa_inspecciones: insp, sin_conteo: sinConteo });
+  };
+  for (const { insp, numeros, vistas } of porInsp.values()) {
+    for (const [codigo, n] of numeros) fila(codigo, n, insp, false);
+    for (const codigo of vistas) if (!numeros.has(codigo)) fila(codigo, 1, insp, true);
+  }
+  return salida;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Conteo de plagas según lo que reportó el técnico
 //
@@ -38,18 +118,14 @@ function cubetaDe(fecha, agrupar) {
 // el período tenga miles de inspecciones.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "semana", tecnico_id } = {}) {
-  const armar = () => {
-    let q = supabase
-      .from("asa_capturas")
-      .select(`
-        id, cantidad, plaga_id,
-        asa_plagas(codigo, nombre, grupo, color, umbral_alerta),
-        asa_inspecciones!inner(fecha_local, sitio_id, tecnico_id, area_id,
+  const EMBED_INSP = `asa_inspecciones!inner(id, fecha_local, sitio_id, tecnico_id, area_id, motivo_no_realizado,
           asa_empleados(nombre_completo), asa_areas(nombre), asa_sitios(nombre),
-          asa_puntos_control(codigo_visible, numero_habitacion))
-      `)
+          asa_puntos_control(codigo_visible, numero_habitacion, asa_tipos_punto(codigo)))`;
+  const filtrar = (q) => {
+    q = q
       .gte("asa_inspecciones.fecha_local", desde)
       .lte("asa_inspecciones.fecha_local", hasta)
+      .is("asa_inspecciones.motivo_no_realizado", null)
       .order("id");
     if (tecnico_id) q = q.eq("asa_inspecciones.tecnico_id", tecnico_id);
     return sitio_id
@@ -57,7 +133,36 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
       : filtrarPorSitio(q, req, "asa_inspecciones.sitio_id");
   };
 
-  const filas = await traerTodo(armar);
+  // 1. El contador de plagas de la app (asa_capturas)
+  const capturas = await traerTodo(() =>
+    filtrar(supabase.from("asa_capturas").select(`id, cantidad, plaga_id, asa_plagas(codigo, nombre, grupo, color, umbral_alerta), ${EMBED_INSP}`))
+  );
+
+  // 2. Lo que el técnico escribió en el checklist. Muchos puntos no tienen el
+  //    contador (su tipo no tiene plagas asignadas) y el técnico lo anota en
+  //    preguntas como "Conteo de insectos en la lámina", "Capturas
+  //    encontradas" o "Plagas observadas: Moscas, Cucarachas". Antes eso no
+  //    contaba en ningún lado. Solo se usa en inspecciones SIN conteo en el
+  //    contador, para no sumar dos veces lo mismo.
+  const [respuestas, catalogo] = await Promise.all([
+    traerTodo(() =>
+      filtrar(
+        supabase
+          .from("asa_inspeccion_respuestas")
+          .select(`id, pregunta_texto, valor_numero, valor_bool, valor_texto, valor_opciones, ${EMBED_INSP}`)
+          .or(PREGUNTAS_DE_PLAGA)
+      )
+    ),
+    supabase.from("asa_plagas").select("codigo, nombre, grupo, color, umbral_alerta"),
+  ]);
+  const plagaPorCodigo = new Map((catalogo.data || []).map((p) => [p.codigo, p]));
+  const conContador = new Set(capturas.map((c) => c.asa_inspecciones?.id));
+  const delChecklist = plagasDelChecklist(respuestas.filter((r) => !conContador.has(r.asa_inspecciones?.id)), plagaPorCodigo);
+
+  const filas = [
+    ...capturas.map((c) => ({ cantidad: c.cantidad, asa_plagas: c.asa_plagas, asa_inspecciones: c.asa_inspecciones, sin_conteo: false })),
+    ...delChecklist,
+  ];
 
   const porPlaga = new Map();
   const porPeriodo = new Map();
@@ -77,13 +182,14 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
         grupo: c.asa_plagas?.grupo || "otra",
         color: c.asa_plagas?.color || null,
         umbral: c.asa_plagas?.umbral_alerta ?? null,
-        total: 0, registros: 0, maximo: 0, sobre_umbral: 0, reciente: 0, previo: 0,
+        total: 0, registros: 0, maximo: 0, sobre_umbral: 0, reciente: 0, previo: 0, sin_conteo: 0,
         puntos: new Set(),
       });
     }
     const p = porPlaga.get(nombre);
     p.total += n;
     p.registros++;
+    if (c.sin_conteo) p.sin_conteo++;
     p.maximo = Math.max(p.maximo, n);
     if (p.umbral != null && p.umbral > 0 && n > p.umbral) p.sobre_umbral++;
     if (insp.fecha_local >= corte) p.reciente += n; else p.previo += n;
@@ -129,6 +235,8 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     agrupar,
     total_individuos: plagas.reduce((s, p) => s + p.total, 0),
     registros: filas.length,
+    // Plagas que el técnico marcó en el checklist sin decir cuántas: cuentan 1.
+    registros_sin_conteo: filas.filter((f) => f.sin_conteo).length,
     plagas,
     series,
     colores,

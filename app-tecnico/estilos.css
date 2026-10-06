@@ -563,3 +563,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 /* Cronograma (extras.js) */
 .semana-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .semana-nav .btn { width: auto; min-height: 44px; padding: 0 18px; margin: 0; }
+
+/* No se pudo hacer: amarillo, sigue pendiente (no es un hecho) */
+.punto.nopudo { border-left-color: #eab308; background: #fefce8; }
+.punto.nopudo .quien.alerta { color: #a16207; font-weight: 700; }

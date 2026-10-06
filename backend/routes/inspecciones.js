@@ -440,6 +440,18 @@ async function registrarInspeccion(req, cuerpo) {
     estadosPunto.find((e) => e.requiere_motivo && e.activo) ||
     estadosPunto.find((e) => e.requiere_motivo);
 
+  // "¿Se realizó el tratamiento / la aplicación?" = No, sin motivo: el técnico
+  // está diciendo que NO se hizo. Antes eso quedaba como servicio realizado (en
+  // verde) y el punto salía al día. Se guarda como no realizado ("otro") para
+  // que siga pendiente; la app nueva ya pide el motivo en ese caso.
+  const dijoQueNo = (respuestas || []).find(
+    (r) => r?.valor_bool === false && /se\s+realiz/i.test(String(r.pregunta_texto || ""))
+  );
+  if (!resto.motivo_no_realizado && dijoQueNo) {
+    resto.motivo_no_realizado = "otro";
+    resto.notas = [resto.notas, `Respondió "No" a: ${dijoQueNo.pregunta_texto}`].filter(Boolean).join(" · ");
+  }
+
   if (resto.motivo_no_realizado) {
     if (!MOTIVOS_NO_REALIZADO.includes(resto.motivo_no_realizado)) {
       return { error: true, codigo: 400, mensaje: `motivo_no_realizado no valido. Validos: ${MOTIVOS_NO_REALIZADO.join(", ")}` };
@@ -520,20 +532,41 @@ async function registrarInspeccion(req, cuerpo) {
   // Una fila por plaga encontrada. Las de cantidad 0 no se guardan: la ausencia
   // ya esta dicha por la inspeccion misma con nivel_actividad = 'ninguna', y
   // llenar la tabla de ceros arruina cualquier promedio.
-  const capturasValidas = (capturas || []).filter((c) => c?.plaga_id && Number(c.cantidad) > 0);
-  if (capturasValidas.length) {
-    const { error: errC } = await supabase.from("asa_capturas").upsert(
-      capturasValidas.map((c) => ({
+  //
+  // Antes esto era un upsert con onConflict "inspeccion_id,plaga_id,etapa". La
+  // unicidad de asa_capturas es un INDICE CON EXPRESION (coalesce(etapa,'')),
+  // que Postgres no acepta como destino de ON CONFLICT: la base rechazaba el
+  // insert entero, aqui solo quedaba un console.warn y el conteo que puso el
+  // tecnico se perdia sin que nadie se enterara. Por eso las plagas no salian
+  // en "Plagas encontradas" ni en el reporte.
+  //
+  // La inspeccion es nueva, asi que no hay nada con que chocar: se juntan las
+  // repetidas (misma plaga y etapa) y se inserta normal. Si falla, se avisa al
+  // tecnico en vez de callarlo.
+  const juntas = new Map();
+  for (const c of capturas || []) {
+    const n = Math.round(Number(c?.cantidad));
+    if (!c?.plaga_id || !(n > 0)) continue;
+    const k = `${c.plaga_id}|${c.etapa || ""}`;
+    if (!juntas.has(k)) {
+      juntas.set(k, {
         inspeccion_id: inspeccion.id,
         plaga_id: c.plaga_id,
-        cantidad: Math.round(Number(c.cantidad)),
-        metodo: c.metodo || "conteo",
-        etapa: c.etapa || null,
+        cantidad: 0,
+        metodo: ["conteo", "estimado", "presencia"].includes(c.metodo) ? c.metodo : "conteo",
+        etapa: ["adulto", "ninfa", "huevo", "indicios"].includes(c.etapa) ? c.etapa : null,
         observacion: c.observacion || null,
-      })),
-      { onConflict: "inspeccion_id,plaga_id,etapa", ignoreDuplicates: false }
-    );
-    if (errC) console.warn("[ASA][inspecciones] capturas no guardadas:", errC.message);
+      });
+    }
+    juntas.get(k).cantidad += n;
+  }
+  let avisoCapturas = null;
+  if (juntas.size) {
+    const { error: errC } = await supabase.from("asa_capturas").insert([...juntas.values()]);
+    if (errC) {
+      console.error("[ASA][inspecciones] capturas no guardadas:", errC.message);
+      avisoCapturas = `La inspección se guardó, pero el conteo de plagas no: ${errC.message}`;
+    }
   }
 
   await abrirHallazgosAutomaticos(inspeccion, punto, respuestas, estadoActual);
@@ -547,7 +580,7 @@ async function registrarInspeccion(req, cuerpo) {
       : `Inspección de ${punto.codigo_visible} — ${inspeccion.estado_punto}/${inspeccion.nivel_actividad}`,
   });
 
-  return { inspeccion };
+  return { inspeccion: avisoCapturas ? { ...inspeccion, aviso: avisoCapturas } : inspeccion };
 }
 
 // Una respuesta puede estar configurada para abrir un hallazgo sola

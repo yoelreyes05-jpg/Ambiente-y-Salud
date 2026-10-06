@@ -370,6 +370,7 @@ async function vistaPendientes(cuerpo) {
     <div class="leyenda-semaforo">
       <span><i class="punto-verde"></i> Hecho</span>
       <span><i class="punto-rojo"></i> Por hacer</span>
+      <span><i class="punto-amarillo"></i> No se pudo (sigue pendiente)</span>
     </div>
 
     ${areas.length
@@ -382,7 +383,7 @@ async function vistaPendientes(cuerpo) {
           </h2>
           <div class="semaforo">
             ${ps.map((p) => `
-              <div class="celda ${esVerde(p) ? "verde" : "rojo"}${p.inspeccion_id ? " clicable" : ""}"
+              <div class="celda ${esVerde(p) ? "verde" : p.estado === "no_realizado" ? "amarillo" : "rojo"}${p.inspeccion_id ? " clicable" : ""}"
                    title="${esc(detalle(p))}"
                    ${p.inspeccion_id ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
                 ${esc(p.numero_habitacion || p.codigo_visible)}
@@ -490,7 +491,7 @@ async function vistaHistorial(cuerpo) {
               <div>
                 <div class="punto">
                   ${esc(punto.numero_habitacion ? `Habitación ${punto.numero_habitacion}` : punto.codigo_visible || "Punto")}
-                  <span class="marca ${noHecho ? "mal" : nivel ? "alerta" : "ok"}">
+                  <span class="marca ${noHecho ? "nopudo" : nivel ? "alerta" : "ok"}">
                     ${esc(noHecho ? "No realizado" : nivel ? NIVEL_TEXTO[i.nivel_actividad] : "Conforme")}
                   </span>
                 </div>
@@ -630,7 +631,7 @@ function fichaServicioHTML(d) {
           <div class="fs-titulo">${esc(d.punto.nombre || d.punto.codigo)}</div>
           <div class="fs-sub">${esc(d.punto.codigo)} · ${esc(d.punto.tipo || "")}</div>
         </div>
-        <div class="fs-estado ${noHecho ? "rojo" : ""}">
+        <div class="fs-estado ${noHecho ? "amarillo" : ""}">
           ${esc(noHecho ? "NO REALIZADO" : ESTADO_TEXTO[d.estado_punto] || d.estado_punto)}
           <small>${esc(noHecho ? "" : NIVEL_TEXTO[d.nivel_actividad] || "")}</small>
         </div>

@@ -982,7 +982,7 @@ export async function construirReportePendientes(d, opciones = {}) {
 
   // 1. Intentados y no realizados
   if (d.no_realizados?.length) {
-    tituloSeccion(doc, "Servicios que el tecnico intento y no pudo realizar", C.rojo);
+    tituloSeccion(doc, "Servicios que el tecnico intento y no pudo realizar", "#A16207");
     parrafo(doc, "Con el motivo y quien lo informo: la responsabilidad no es la misma cuando el hotel no autoriza el acceso que cuando el equipo de ASA no llego.");
     doc.moveDown(0.3);
     tabla(doc,
@@ -1003,11 +1003,12 @@ export async function construirReportePendientes(d, opciones = {}) {
           n.impedido_por || "—",
           MOTIVOS_DEL_HOTEL.includes(n.motivo_no_realizado) ? "Hotel" : "ASA",
         ];
-        fila._fondo = C.rojoClaro;
-        fila._color = "#7F1D1D";
+        // Amarillo: no se pudo hacer y sigue pendiente (igual que en pantalla)
+        fila._fondo = "#FEF9C3";
+        fila._color = "#713F12";
         return fila;
       }),
-      { colorEncabezado: C.rojo, tam: 8 }
+      { colorEncabezado: "#A16207", tam: 8 }
     );
   }
 

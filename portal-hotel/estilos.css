@@ -371,3 +371,9 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .cr-item-p.cancelado{opacity:.55;text-decoration:line-through}
 .cr-item-p .h{font-weight:700}
 .cr-item-p .s,.cr-dia-p .s{color:var(--suave);font-size:12px}
+
+/* No se pudo hacer: amarillo y pendiente, no verde ni "hecho" */
+.celda.amarillo{background:#fefce8;border-color:#eab308;color:#a16207;border-style:dashed}
+.marca.nopudo{background:#fef9c3;color:#a16207}
+.fs-estado.amarillo{color:#a16207}
+.punto-amarillo{background:#eab308}

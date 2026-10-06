@@ -375,14 +375,20 @@ async function pantallaRuta() {
 
   // Los puntos hechos offline todavía no están en el servidor: se marcan aquí
   // para que el técnico no los vuelva a hacer.
+  // Un "no se pudo" guardado sin señal NO es un hecho: sigue pendiente, en
+  // amarillo, con su motivo.
   const cola = await BD.todos("cola").catch(() => []);
-  const hechosLocal = new Set(cola.map((c) => c.punto_id));
+  const hechosLocal = new Set(cola.filter((c) => !c.motivo_no_realizado).map((c) => c.punto_id));
+  const intentosLocal = new Map(cola.filter((c) => c.motivo_no_realizado).map((c) => [c.punto_id, c]));
 
   const realizados = avance.realizados.filter((p) => !hechosLocal.has(p.punto_id));
   const pendientes = [];
   for (const p of avance.pendientes) {
     if (hechosLocal.has(p.punto_id)) realizados.push({ ...p, _local: true });
-    else pendientes.push(p);
+    else if (intentosLocal.has(p.punto_id) && !p.intento) {
+      const c = intentosLocal.get(p.punto_id);
+      pendientes.push({ ...p, intento: { motivo_no_realizado: c.motivo_no_realizado, tecnico: `${USUARIO?.nombre || "Tú"} · por enviar` } });
+    } else pendientes.push(p);
   }
 
   const total = realizados.length + pendientes.length;
@@ -592,7 +598,8 @@ function listaDelDia(caja, pendientes, realizados) {
 
 function filaPunto(p, hecho) {
   const nombre = p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.tipo_nombre || "";
-  const clases = ["punto", hecho ? "hecho" : "", !hecho && (p.vencido || p.intento) ? "vencido" : ""].filter(Boolean).join(" ");
+  // No se pudo hacer = amarillo y pendiente. Le toca = rojo. Hecho = verde.
+  const clases = ["punto", hecho ? "hecho" : "", !hecho && p.intento ? "nopudo" : !hecho && p.vencido ? "vencido" : ""].filter(Boolean).join(" ");
   const marca = hecho ? (p._local ? "⏳" : "✓") : p.intento ? "⚠️" : "›";
 
   let linea2 = esc([nombre, p.area_nombre && !hecho ? null : p.area_nombre].filter(Boolean).join(" · "));
@@ -1099,12 +1106,21 @@ async function pantallaPunto(token) {
   // las que lleva su tipo), asi que no hay que pedirlas aparte y funcionan sin
   // senal. `catalogoPlagas()` queda solo para fichas viejas que se guardaron en
   // el telefono antes de este cambio y no traen el campo.
-  const plagas = Array.isArray(punto.plagas) ? punto.plagas : await catalogoPlagas();
+  // Si el tipo de punto no tiene plagas asignadas, el contador no salía y el
+  // técnico no tenía dónde poner cuántas moscas o cucarachas vio: lo dejaba en
+  // las notas y no contaba en ningún reporte. Ahora sale el catálogo completo,
+  // pero solo cuando marca que hubo actividad.
+  let plagas = Array.isArray(punto.plagas) ? punto.plagas : await catalogoPlagas();
+  let soloConActividad = false;
+  if (!plagas.length) {
+    plagas = await catalogoPlagas();
+    soloConActividad = true;
+  }
   const estados = await catalogoEstados();
-  pintarFormulario($("#form-inspeccion"), punto, plagas, estados);
+  pintarFormulario($("#form-inspeccion"), punto, plagas, estados, { soloConActividad });
 }
 
-function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) {
+function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO, opciones = {}) {
   const preguntas = punto.preguntas || [];
   const estadoPorDefecto = estados[0]?.codigo || "ok";
   const estadoDe = (codigo) => estados.find((e) => e.codigo === codigo) || null;
@@ -1154,7 +1170,7 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
             <button type="button" class="pl-btn" data-paso="1">+</button>
           </div>`).join("")}
       </div>
-      <small class="ayuda">Deja en cero lo que no encontraste. Solo se guarda lo que pasó de cero.</small>
+      <small class="ayuda">Deja en cero lo que no encontraste. Solo se guarda lo que pasó de cero. Lo que pongas aquí es lo que sale en el reporte de plagas.</small>
     </div>` : ""}
 
     ${preguntas.length ? `<div class="grupo-area">Checklist</div>` : ""}
@@ -1229,15 +1245,40 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
   // que ya no aplica (nivel de actividad y conteo de plagas de un punto al que
   // no se entro). Asi no quedan filas contradictorias.
   const grupoEstado = form.querySelector('[data-grupo="estado_punto"]');
+  const grupoNivel = form.querySelector('[data-grupo="nivel_actividad"]');
   const sincronizarCaras = () => {
     const noEntro = !!estadoDe(grupoEstado.dataset.valor)?.requiere_motivo;
     form.querySelector("#caja-motivo").style.display = noEntro ? "" : "none";
     form.querySelector("#caja-actividad").style.display = noEntro ? "none" : "";
     const cajaPlagas = form.querySelector("#caja-plagas");
-    if (cajaPlagas) cajaPlagas.style.display = noEntro ? "none" : "";
+    const hayActividad = (grupoNivel.dataset.valor && grupoNivel.dataset.valor !== "ninguna") || grupoEstado.dataset.valor === "actividad";
+    if (cajaPlagas) cajaPlagas.style.display = noEntro || (opciones.soloConActividad && !hayActividad) ? "none" : "";
   };
   grupoEstado.addEventListener("click", () => setTimeout(sincronizarCaras, 0));
+  grupoNivel.addEventListener("click", () => setTimeout(sincronizarCaras, 0));
   sincronizarCaras();
+
+  // "¿Se realizó el tratamiento / la aplicación?" → No. Antes el servicio se
+  // guardaba como hecho (verde) aunque el técnico dijera que no se hizo. Ahora
+  // esa respuesta pasa el punto a "no se pudo" y pide el motivo: queda en
+  // amarillo y sigue pendiente.
+  const estadoNoSePudo = estados.find((e) => e.requiere_motivo && e.activo !== false) || estados.find((e) => e.requiere_motivo);
+  for (const p of preguntas) {
+    if (p.tipo_respuesta !== "si_no" || !/se\s+realiz/i.test(p.texto || "")) continue;
+    form.querySelector(`[data-grupo="p_${p.id}"]`)?.addEventListener("click", (e) => {
+      const op = e.target.closest(".opcion");
+      if (!op || op.dataset.valor !== "false" || !estadoNoSePudo) return;
+      const boton = grupoEstado.querySelector(`.opcion[data-valor="${CSS.escape(estadoNoSePudo.codigo)}"]`);
+      if (boton) {
+        boton.click();
+        setTimeout(() => {
+          sincronizarCaras();
+          form.querySelector("#caja-motivo").scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 0);
+        aviso("Marcado como NO realizado: dime por qué no se pudo hacer");
+      }
+    });
+  }
 
   // Contadores de plagas: a toques, sin teclado. Un toque largo no hace falta;
   // para cantidades grandes (una lampara cargada de moscas) el paso sube solo.
@@ -1312,6 +1353,13 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
       .map((f) => ({ plaga_id: f.dataset.plaga, cantidad: Number(f.dataset.cant) || 0 }))
       .filter((c) => c.cantidad > 0);
 
+    const nivelMarcado = form.querySelector('[data-grupo="nivel_actividad"]').dataset.valor || "ninguna";
+    if (!noEntro && nivelMarcado !== "ninguna" && !capturas.length && form.querySelector("#caja-plagas")
+        && !confirm("Marcaste actividad pero no pusiste cuántas plagas encontraste. Sin ese número no sale en el reporte de plagas.\n\n¿Guardar así de todos modos?")) {
+      form.querySelector("#caja-plagas").scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
     const respuestas = [];
     let falta = null;
     for (const p of preguntas) {
@@ -1360,8 +1408,9 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO) 
 
     try {
       if (navigator.onLine) {
-        await POST("/inspecciones", inspeccion);
-        aviso(noEntro ? "Reportado como no realizado ✓" : "Inspección registrada ✓", "exito");
+        const guardada = await POST("/inspecciones", inspeccion);
+        if (guardada?.aviso) aviso(guardada.aviso, "error");
+        else aviso(noEntro ? "Reportado como no realizado ✓" : "Inspección registrada ✓", "exito");
       } else {
         await encolar(inspeccion);
         aviso("Guardada en el teléfono — se enviará al haber señal", "exito");
@@ -1569,7 +1618,8 @@ async function pantallaSolicitud(id) {
 
   // Lo hecho sin señal todavía no llegó al servidor: se marca aquí para no repetirlo.
   const cola = await BD.todos("cola").catch(() => []);
-  const enCola = new Set(cola.map((c) => c.punto_id));
+  // Solo lo HECHO sin señal se da por hecho; un "no se pudo" sigue pendiente.
+  const enCola = new Set(cola.filter((c) => !c.motivo_no_realizado).map((c) => c.punto_id));
 
   const abierta = ["solicitada", "agendada", "en_ruta", "en_sitio"].includes(o.estado);
   const porArea = {};
