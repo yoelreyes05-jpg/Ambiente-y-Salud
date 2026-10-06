@@ -125,3 +125,67 @@ async function vistaIncidencias(cuerpo) {
     }
   }));
 }
+
+// ── Certificado desde la orden (Solicitudes) ─────────────────────────────
+//
+// En una orden de chinche / código rosa: cuando la orden está completada o
+// cerrada y la verificación dio negativo, el hotel baja el certificado ahí
+// mismo, en español, en inglés o los dos juntos.
+function bloqueCertificadoOrden(o) {
+  const deChinche = o.tipo_solicitud === "plaga" && /chinche|rosa/i.test(o.tipo_plaga_reportada || "");
+  const inc = o.incidencia;
+  if (!deChinche && !inc) return "";
+
+  let cuerpo;
+  if (inc?.certificado) {
+    cuerpo = `
+      <p style="margin:0 0 10px">✅ La habitación <strong>${esc(inc.numero_habitacion)}</strong> se verificó y no tiene chinche.
+        Descarga el certificado:</p>
+      <div class="acciones" style="margin:0">
+        <button class="btn principal" data-cert-orden="${esc(o.id)}" data-hab="${esc(inc.numero_habitacion)}" data-idioma="es">Certificado (español)</button>
+        <button class="btn principal" data-cert-orden="${esc(o.id)}" data-hab="${esc(inc.numero_habitacion)}" data-idioma="en">Certificate (English)</button>
+        <button class="btn" data-cert-orden="${esc(o.id)}" data-hab="${esc(inc.numero_habitacion)}" data-idioma="ambos">Los dos idiomas (1 PDF)</button>
+      </div>`;
+  } else if (!inc) {
+    cuerpo = `<p style="margin:0;color:var(--suave)">Cuando el técnico verifique la habitación y la orden quede completada, aquí podrás descargar el certificado en español e inglés.</p>`;
+  } else if (inc.estado === "en_tratamiento") {
+    cuerpo = `<p style="margin:0">🔴 Se encontró chinche en la habitación <strong>${esc(inc.numero_habitacion)}</strong> y está en tratamiento (caso ${esc(inc.numero)}). El certificado sale cuando la verificación final dé negativo.</p>`;
+  } else if (["negativa", "cerrada"].includes(inc.estado)) {
+    cuerpo = `<p style="margin:0;color:var(--suave)">La verificación dio negativo. El certificado estará disponible cuando la orden quede completada o cerrada.</p>`;
+  } else if (inc.estado === "cancelada") {
+    cuerpo = `<p style="margin:0;color:var(--suave)">El caso ${esc(inc.numero)} fue cancelado.</p>`;
+  } else {
+    cuerpo = `<p style="margin:0;color:var(--suave)">El técnico todavía está verificando la habitación <strong>${esc(inc.numero_habitacion)}</strong> (caso ${esc(inc.numero)}).</p>`;
+  }
+  return `<div class="tarjeta"><h2>📄 Certificado de la habitación</h2>${cuerpo}</div>`;
+}
+
+function engancharCertificadoOrden(raiz) {
+  raiz.querySelectorAll("[data-cert-orden]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const original = b.textContent;
+      b.disabled = true; b.textContent = "Generando…";
+      try {
+        const res = await fetch(`${CONFIG.API_BASE}/solicitudes/${b.dataset.certOrden}/certificado?idioma=${b.dataset.idioma}`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        });
+        if (!res.ok) {
+          let m = `El servidor respondió ${res.status}`;
+          try { m = (await res.json()).mensaje || m; } catch {}
+          throw new Error(m);
+        }
+        // La cabecera con el nombre del archivo no llega entre dominios (CORS): se arma aquí.
+        const sufijo = { es: "espanol", en: "english", ambos: "es-en" }[b.dataset.idioma] || "es-en";
+        const nombre = `Certificado-${PLANTA.nombre.replace(/[^\w]+/g, "-")}-hab-${b.dataset.hab}-${sufijo}.pdf`;
+        const url = URL.createObjectURL(await res.blob());
+        const a = document.createElement("a");
+        a.href = url; a.download = nombre; a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert(`No se pudo generar el certificado: ${e.message}`);
+      } finally {
+        b.disabled = false; b.textContent = original;
+      }
+    })
+  );
+}

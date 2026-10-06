@@ -144,6 +144,15 @@ async function abrirSolicitud(id, alCambiar) {
           ${o.tipo_plaga_reportada ? `<p><strong>Plaga:</strong> ${esc(o.tipo_plaga_reportada)}
             ${/chinche|rosa/i.test(o.tipo_plaga_reportada) && typeof abrirIncidencia === "function"
               ? ` <button class="btn btn-sm btn-danger" id="sd-incidencia">🛏️ Protocolo de chinche</button>` : ""}</p>` : ""}
+          ${o.incidencia ? `<p class="text-muted">Caso ${esc(o.incidencia.numero)} · habitación ${esc(o.incidencia.numero_habitacion)} ·
+              ${o.incidencia.certificado ? "<strong style='color:#15803d'>certificado disponible para el hotel</strong>"
+                : o.incidencia.estado === "en_tratamiento" ? "en tratamiento"
+                : ["negativa", "cerrada"].includes(o.incidencia.estado) ? "negativo: el hotel podrá bajar el certificado al completar o cerrar la orden"
+                : "pendiente de verificación"}
+              ${o.incidencia.certificado ? `
+                <button class="btn btn-sm" data-cert-sol="es">PDF español</button>
+                <button class="btn btn-sm" data-cert-sol="en">PDF English</button>
+                <button class="btn btn-sm" data-cert-sol="ambos">Los dos</button>` : ""}</p>` : ""}
           ${o.descripcion_cliente ? `<p style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px">${esc(o.descripcion_cliente)}</p>` : ""}
 
           <div class="form-grid" style="margin:12px 0">
@@ -221,6 +230,12 @@ async function abrirSolicitud(id, alCambiar) {
 
   // Chinche / código rosa: abre el caso de esta orden, o lo crea si el hotel
   // no puso el número de habitación al reportar.
+  overlay.querySelectorAll("[data-cert-sol]").forEach((b) => b.addEventListener("click", () =>
+    descargarPdf(`/solicitudes/${o.id}/certificado?idioma=${b.dataset.certSol}`,
+      `Certificado-hab-${o.incidencia.numero_habitacion}-${b.dataset.certSol === "ambos" ? "es-en" : b.dataset.certSol}.pdf`)
+      .catch((e) => toast(e.message, true))
+  ));
+
   q("#sd-incidencia")?.addEventListener("click", async () => {
     const casos = await get(`/incidencias?sitio_id=${o.sitio_id}&estado=todas`).catch(() => []);
     const caso = casos.find((c) => c.orden_id === o.id);

@@ -1651,6 +1651,13 @@ async function pantallaSolicitud(id) {
       ${o.fecha_requerida ? `<p>Para el ${new Date(o.fecha_requerida + "T12:00:00").toLocaleDateString("es-DO", { weekday: "long", day: "numeric", month: "long" })}</p>` : ""}
       ${o.tipo_plaga_reportada ? `<p>Plaga: <strong>${esc(o.tipo_plaga_reportada)}</strong></p>` : ""}
       ${o.descripcion_cliente ? `<p style="margin-top:8px;color:var(--gris-900)">📝 ${esc(o.descripcion_cliente)}</p>` : ""}
+      ${o.incidencia ? `
+        <button class="btn ${["abierta", "en_tratamiento"].includes(o.incidencia.estado) ? "peligro" : "secundario"}" style="margin-top:12px"
+                onclick="location.hash='#/incidencia/${esc(o.incidencia.id)}'">
+          🛏️ ${["abierta", "en_tratamiento"].includes(o.incidencia.estado)
+            ? `Hacer la verificación de chinche · hab. ${esc(o.incidencia.numero_habitacion)}`
+            : `Ver verificación (${o.incidencia.estado === "en_tratamiento" ? "en tratamiento" : "sin chinche"})`}
+        </button>` : ""}
       ${!abierta ? `<p style="margin-top:8px"><strong>Esta solicitud ya está cerrada.</strong></p>` : ""}
     </div>
 

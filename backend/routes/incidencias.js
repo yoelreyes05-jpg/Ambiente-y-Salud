@@ -405,6 +405,36 @@ router.post("/:id/resultado", ESCRIBEN, async (req, res) => {
     .single();
   if (error) return error500(res, error);
   await bitacora(i.id, req, "Resultado", detalle);
+
+  // Negativo = el trabajo de la orden del hotel quedó hecho: la orden pasa a
+  // completada (ejecutada) y el hotel ya puede bajar el certificado desde
+  // Solicitudes. Positivo: la orden sigue abierta mientras dura el tratamiento.
+  if (["negativa", "cerrada"].includes(data.estado) && i.orden_id) {
+    const { data: orden } = await supabase.from("asa_ordenes_trabajo").select("id, estado").eq("id", i.orden_id).maybeSingle();
+    if (orden && ["solicitada", "agendada", "en_ruta", "en_sitio"].includes(orden.estado)) {
+      await supabase.from("asa_ordenes_trabajo")
+        .update({ estado: "ejecutada", fecha_ejecucion: ahora(), updated_at: ahora() })
+        .eq("id", orden.id);
+      await supabase.from("asa_ordenes_trabajo_log").insert([{
+        orden_id: orden.id,
+        estado_anterior: orden.estado,
+        estado_nuevo: "ejecutada",
+        usuario_id: req.usuario?.id || null,
+        usuario_nombre: req.usuario?.nombre || "Sistema",
+        motivo: `Verificación de chinche negativa (${i.numero}): certificado disponible`,
+      }]);
+    }
+  } else if (data.estado === "en_tratamiento" && i.orden_id) {
+    const { data: orden } = await supabase.from("asa_ordenes_trabajo").select("id, estado").eq("id", i.orden_id).maybeSingle();
+    if (orden && ["solicitada", "agendada", "en_ruta"].includes(orden.estado)) {
+      await supabase.from("asa_ordenes_trabajo").update({ estado: "en_sitio", updated_at: ahora() }).eq("id", orden.id);
+      await supabase.from("asa_ordenes_trabajo_log").insert([{
+        orden_id: orden.id, estado_anterior: orden.estado, estado_nuevo: "en_sitio",
+        usuario_id: req.usuario?.id || null, usuario_nombre: req.usuario?.nombre || "Sistema",
+        motivo: `Chinche confirmada (${i.numero}): habitación en tratamiento`,
+      }]);
+    }
+  }
   logAccion(req, { accion: "actualizar", modulo: "incidencias", registroId: i.id, descripcion: `${i.numero} · ${detalle}` });
   res.json(forma(data));
 });

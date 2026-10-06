@@ -21,7 +21,27 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
-import { crearIncidencia } from "./incidencias.js";
+import { crearIncidencia, leerProtocolo } from "./incidencias.js";
+import { construirCertificado } from "../lib/certificadoPdf.js";
+
+// Orden de chinche / código rosa terminada → el hotel descarga el certificado.
+const CERRADAS_OK = ["ejecutada", "cerrada"];
+const esDeChinche = (o) => o?.tipo_solicitud === "plaga" && /chinche|rosa/i.test(o?.tipo_plaga_reportada || "");
+
+// Lo que la orden necesita saber de su caso de chinche para pintar el botón.
+// `certificado`: true cuando la orden está terminada y la verificación dio negativo.
+function resumenIncidencia(orden, inc) {
+  if (!inc) return null;
+  const negativa = ["negativa", "cerrada"].includes(inc.estado);
+  return {
+    id: inc.id,
+    numero: inc.numero,
+    estado: inc.estado,
+    resultado: inc.resultado,
+    numero_habitacion: inc.numero_habitacion,
+    certificado: negativa && CERRADAS_OK.includes(orden.estado),
+  };
+}
 
 const router = express.Router();
 
@@ -112,12 +132,14 @@ router.get("/", async (req, res) => {
 
   const ids = ordenes.map((o) => o.id);
   const tecIds = [...new Set(ordenes.map((o) => o.tecnico_id).filter(Boolean))];
-  const [items, msgs, tecs] = await Promise.all([
+  const [items, msgs, tecs, incs] = await Promise.all([
     supabase.from("asa_orden_puntos").select("orden_id, estado").in("orden_id", ids),
     supabase.from("asa_orden_mensajes").select("orden_id, created_at, autor_rol").in("orden_id", ids),
     tecIds.length ? supabase.from("asa_empleados").select("id, nombre_completo").in("id", tecIds) : { data: [] },
+    supabase.from("asa_incidencias").select("id, numero, estado, resultado, numero_habitacion, orden_id").in("orden_id", ids),
   ]);
   if (items.error) return error500(res, items.error);
+  const incPorOrden = new Map((incs.data || []).map((i) => [i.orden_id, i]));
 
   const conteo = new Map();
   for (const it of items.data || []) {
@@ -148,6 +170,7 @@ router.get("/", async (req, res) => {
       puntos: conteo.get(o.id) || { total: 0, hechos: 0, no_realizados: 0, pendientes: 0 },
       mensajes_total: mensajes.get(o.id)?.total || 0,
       ultimo_mensaje_at: mensajes.get(o.id)?.ultimo || null,
+      incidencia: resumenIncidencia(o, incPorOrden.get(o.id)),
     }))
   );
 });
@@ -208,7 +231,7 @@ router.get("/:id", async (req, res) => {
     o.visto_admin_nombre = req.usuario?.nombre || null;
   }
 
-  const [items, msgs, log, tec] = await Promise.all([
+  const [items, msgs, log, tec, inc] = await Promise.all([
     supabase
       .from("asa_orden_puntos")
       .select(`
@@ -219,6 +242,7 @@ router.get("/:id", async (req, res) => {
     supabase.from("asa_orden_mensajes").select("*").eq("orden_id", o.id).order("created_at"),
     supabase.from("asa_ordenes_trabajo_log").select("*").eq("orden_id", o.id).order("created_at"),
     o.tecnico_id ? supabase.from("asa_empleados").select("nombre_completo").eq("id", o.tecnico_id).maybeSingle() : { data: null },
+    supabase.from("asa_incidencias").select("id, numero, estado, resultado, numero_habitacion, orden_id").eq("orden_id", o.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (items.error) return error500(res, items.error);
 
@@ -257,7 +281,71 @@ router.get("/:id", async (req, res) => {
     puntos,
     mensajes: msgs.data || [],
     historial: log.data || [],
+    incidencia: resumenIncidencia(o, inc.data),
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /solicitudes/:id/certificado?idioma=es|en|ambos
+//
+// El certificado de la habitación desde la misma orden que mandó el hotel. Solo
+// sale cuando la orden ya está completada o cerrada Y la verificación del
+// técnico dio negativo (no hay chinche). Si salió positivo, el certificado
+// llega cuando el tratamiento termina y la verificación final da negativo.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/:id/certificado", async (req, res) => {
+  const o = await ordenVisible(req, res, req.params.id, "*, asa_sitios(nombre)");
+  if (!o) return;
+  try {
+    const { data: i } = await supabase
+      .from("asa_incidencias")
+      .select("*")
+      .eq("orden_id", o.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!i) return res.status(409).json({ error: true, mensaje: "Esta orden no tiene verificación de chinche registrada." });
+    if (!CERRADAS_OK.includes(o.estado)) {
+      return res.status(409).json({ error: true, mensaje: "El certificado estará disponible cuando la orden esté completada o cerrada." });
+    }
+    if (!["negativa", "cerrada"].includes(i.estado)) {
+      return res.status(409).json({
+        error: true,
+        mensaje: i.estado === "en_tratamiento"
+          ? "La habitación todavía está en tratamiento: el certificado sale cuando la verificación final dé negativo."
+          : "La verificación de la habitación todavía no tiene resultado negativo.",
+      });
+    }
+
+    const plantilla = await leerProtocolo();
+    const idioma = ["es", "en", "ambos"].includes(req.query.idioma) ? req.query.idioma : "ambos";
+    const pdf = await construirCertificado({
+      habitacion: i.numero_habitacion,
+      hotel: i.hotel_nombre || o.asa_sitios?.nombre || "",
+      dirigido_a: i.dirigido_a || "",
+      fecha: i.fecha_cierre || i.fecha_verificacion || new Date().toISOString(),
+      tipo: i.tipo,
+      firma: plantilla.certificado,
+    }, idioma);
+
+    if (!i.certificado_at) {
+      await supabase.from("asa_incidencias").update({ certificado_at: new Date().toISOString() }).eq("id", i.id);
+    }
+    await supabase.from("asa_incidencias_log").insert([{
+      incidencia_id: i.id,
+      usuario_nombre: req.usuario?.nombre || "Sistema",
+      accion: "Certificado descargado",
+      detalle: `Desde la orden ${o.numero_orden || ""} · ${idioma === "ambos" ? "español e inglés" : idioma === "en" ? "inglés" : "español"}`,
+    }]);
+
+    const sufijo = idioma === "ambos" ? "es-en" : idioma;
+    const nombre = `Certificado-${(i.hotel_nombre || o.asa_sitios?.nombre || "hotel").replace(/[^\w]+/g, "-")}-hab-${String(i.numero_habitacion).replace(/[^\w]+/g, "")}-${sufijo}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+    res.send(pdf);
+  } catch (e) {
+    error500(res, e);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

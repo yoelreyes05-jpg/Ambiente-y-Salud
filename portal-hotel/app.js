@@ -952,6 +952,7 @@ function filaSolicitud(o) {
             <div class="barra-sol"><span style="width:${pct}%"></span></div>` : ""}
           ${o.tipo_plaga_reportada || o.descripcion_cliente ? `<div class="meta">${esc([o.tipo_plaga_reportada, o.descripcion_cliente].filter(Boolean).join(" · "))}</div>` : ""}
           ${o.recibido_tecnico_nombre ? `<div class="meta">✓ Recibida por ${esc(o.recibido_tecnico_nombre)}</div>` : ""}
+          ${o.incidencia?.certificado ? `<div class="meta"><span class="marca ok">📄 Certificado listo — ábrela para descargarlo</span></div>` : ""}
         </div>
         <div class="fecha">
           ${fechaHora(o.created_at)}
@@ -1023,6 +1024,8 @@ async function detalleSolicitud(cuerpo, id, silencioso = false) {
       ${o.descripcion_cliente ? `<p style="margin:10px 0 0">${esc(o.descripcion_cliente)}</p>` : ""}
     </div>
 
+    ${typeof bloqueCertificadoOrden === "function" ? bloqueCertificadoOrden(o) : ""}
+
     ${o.puntos.length ? `
       <div class="kpis">
         <div class="kpi ok"><div class="n">${hechos.length}</div><div class="t">Hechas</div></div>
@@ -1061,6 +1064,7 @@ async function detalleSolicitud(cuerpo, id, silencioso = false) {
 
   $("#sol-texto").value = borrador;
   $("#sol-volver").addEventListener("click", () => vistaOrdenes(cuerpo));
+  if (typeof engancharCertificadoOrden === "function") engancharCertificadoOrden(cuerpo);
   $("#sol-agregar")?.addEventListener("click", () => formularioHabitaciones(o));
   $("#sol-cancelar")?.addEventListener("click", async () => {
     const motivo = prompt("¿Por qué se cancela? (opcional)");
