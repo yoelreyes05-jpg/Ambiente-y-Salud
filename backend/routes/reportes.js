@@ -168,6 +168,9 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
   const porPeriodo = new Map();
   const porTecnico = new Map();
   const porArea = new Map();
+  // Estacionalidad: enero con enero, febrero con febrero… de todos los años del
+  // período. Es lo que dice en qué mes del año hay más plagas.
+  const porMesAnio = Array.from({ length: 12 }, () => ({ total: 0, plagas: {}, anios: new Set() }));
   const corte = mitadPeriodo(desde, hasta);
 
   for (const c of filas) {
@@ -200,6 +203,14 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     if (!porPeriodo.has(k)) porPeriodo.set(k, {});
     porPeriodo.get(k)[nombre] = (porPeriodo.get(k)[nombre] || 0) + n;
 
+    const mesIdx = Number(String(insp.fecha_local).slice(5, 7)) - 1;
+    if (mesIdx >= 0 && mesIdx < 12) {
+      const m = porMesAnio[mesIdx];
+      m.total += n;
+      m.plagas[nombre] = (m.plagas[nombre] || 0) + n;
+      m.anios.add(String(insp.fecha_local).slice(0, 4));
+    }
+
     const tec = insp.asa_empleados?.nombre_completo || "Sin técnico registrado";
     if (!porTecnico.has(tec)) porTecnico.set(tec, { tecnico: tec, total: 0, registros: 0, plagas: {} });
     const t = porTecnico.get(tec);
@@ -229,6 +240,25 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
   const series = plagas.map((p) => p.plaga);
   const colores = Object.fromEntries(plagas.filter((p) => p.color).map((p) => [p.plaga, p.color]));
 
+  // Mes del año (1–12) con su total, el promedio por año con datos y el
+  // desglose por plaga. `mes_pico` de cada plaga: el mes en que más aparece.
+  const meses = porMesAnio.map((m, i) => ({
+    mes: i + 1,
+    periodo: String(i + 1).padStart(2, "0"),
+    total: m.total,
+    anios: m.anios.size,
+    promedio_anual: m.anios.size ? Math.round((m.total / m.anios.size) * 10) / 10 : 0,
+    ...Object.fromEntries(series.map((s) => [s, m.plagas[s] || 0])),
+  }));
+  const conDatos = meses.filter((m) => m.total > 0);
+  const mesPico = conDatos.length ? conDatos.reduce((a, b) => (b.total > a.total ? b : a)) : null;
+  const mesBajo = conDatos.length > 1 ? conDatos.reduce((a, b) => (b.total < a.total ? b : a)) : null;
+  for (const p of plagas) {
+    const mejor = meses.reduce((a, b) => ((b[p.plaga] || 0) > (a[p.plaga] || 0) ? b : a), meses[0]);
+    p.mes_pico = mejor[p.plaga] ? mejor.mes : null;
+    p.mes_pico_total = mejor[p.plaga] || 0;
+  }
+
   return {
     desde,
     hasta,
@@ -245,6 +275,12 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
       total: Object.values(porPeriodo.get(k)).reduce((s, v) => s + v, 0),
       ...Object.fromEntries(series.map((s) => [s, porPeriodo.get(k)[s] || 0])),
     })),
+    estacionalidad: {
+      meses,
+      mes_pico: mesPico ? mesPico.mes : null,
+      mes_bajo: mesBajo ? mesBajo.mes : null,
+      anios: [...new Set(porMesAnio.flatMap((m) => [...m.anios]))].sort(),
+    },
     por_tecnico: [...porTecnico.values()].sort((a, b) => b.total - a.total),
     por_area: [...porArea.values()].sort((a, b) => b.total - a.total),
   };

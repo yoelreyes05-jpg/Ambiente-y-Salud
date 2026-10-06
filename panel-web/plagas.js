@@ -16,9 +16,11 @@ const MODULOS_EXTRA_8 = [
 
 const PALETA_PLAGAS = ["#32539C", "#B45309", "#4A7D4D", "#B91C1C", "#0E7490", "#7C3AED", "#CA8A04", "#DB2777", "#475569", "#15803D", "#9A3412"];
 const MESES_CORTOS_PL = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const MESES_PL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 function rotuloPeriodoPl(periodo, agrupar) {
   const t = String(periodo);
+  if (t.length === 2) return MESES_CORTOS_PL[Number(t) - 1];   // mes del año (estacionalidad)
   if (t.length === 7) return `${MESES_CORTOS_PL[Number(t.slice(5, 7)) - 1]} ${t.slice(0, 4)}`;
   const dm = `${t.slice(8, 10)}/${t.slice(5, 7)}`;
   return agrupar === "semana" ? `sem ${dm}` : dm;
@@ -82,6 +84,13 @@ async function viewPlagasEncontradas(content) {
     <div class="toolbar">
       <select id="pl-sitio"><option value="">Todas las plantas</option></select>
       <select id="pl-tecnico"><option value="">Todos los técnicos</option></select>
+      <select id="pl-rango" title="Período rápido">
+        <option value="90">Últimos 90 días</option>
+        <option value="365">Últimos 12 meses</option>
+        <option value="anio">Este año</option>
+        <option value="todo">Todo el historial</option>
+        <option value="">Fechas a mano</option>
+      </select>
       <input type="date" id="pl-desde" value="${hace(90)}" />
       <input type="date" id="pl-hasta" value="${hoyLocal()}" />
       <select id="pl-agrupar">
@@ -129,6 +138,10 @@ async function viewPlagasEncontradas(content) {
       return;
     }
 
+    const est = d.estacionalidad;
+    const nombreMes = (m) => (m ? MESES_PL[m - 1] : "—");
+    const anioTxt = est.anios.length > 1 ? `${est.anios[0]}–${est.anios[est.anios.length - 1]}` : est.anios[0] || "";
+
     const principal = d.plagas[0];
     const sube = d.plagas.filter((p) => p.tendencia === "sube");
     const principales = d.plagas.slice(0, 6).map((p) => p.plaga);
@@ -139,6 +152,8 @@ async function viewPlagasEncontradas(content) {
         <div class="kpi-card"><div class="lbl">Plagas reportadas</div><div class="val">${d.total_individuos}</div><div class="kpi-sub">individuos contados</div></div>
         <div class="kpi-card c"><div class="lbl">Tipos de plaga</div><div class="val">${d.plagas.length}</div></div>
         <div class="kpi-card w"><div class="lbl">La que más aparece</div><div class="val kpi-nombre">${esc(principal.plaga)}</div><div class="kpi-sub">${principal.total} individuos en ${principal.puntos} punto(s)</div></div>
+        <div class="kpi-card r"><div class="lbl">Mes con más plagas</div><div class="val kpi-nombre" style="text-transform:capitalize">${nombreMes(est.mes_pico)}</div>
+          <div class="kpi-sub">${est.mes_pico ? `${est.meses[est.mes_pico - 1].total} individuos${est.anios.length > 1 ? ` (${est.anios.length} años)` : ""}` : ""}</div></div>
         <div class="kpi-card ${sube.length ? "r" : "g"}"><div class="lbl">Subiendo</div><div class="val">${sube.length}</div><div class="kpi-sub">${sube.length ? esc(sube.map((p) => p.plaga).join(", ")) : "Ninguna plaga en aumento"}</div></div>
       </div>
 
@@ -168,6 +183,32 @@ async function viewPlagasEncontradas(content) {
       </div>
 
       <div class="card">
+        <div class="card-head"><h2>¿En qué mes hay más plagas?${anioTxt ? ` <span class="text-muted" style="font-size:13px;font-weight:400">${esc(anioTxt)}</span>` : ""}</h2></div>
+        <p class="text-muted" style="margin:0 0 10px">
+          Suma cada mes del año con el mismo mes de los otros años del período (todos los eneros juntos, todos los febreros…).
+          Con más meses de datos, más clara se ve la temporada. Para verlo completo, elige “Todo el historial” o “Últimos 12 meses”.
+        </p>
+        ${barrasPlagasHTML(est.meses, d.series, d.colores, "mes_anio")}
+        ${tableHTML(
+          [
+            { label: "Mes", fmt: (m) => `<strong style="text-transform:capitalize">${MESES_PL[m.mes - 1]}</strong>${m.mes === est.mes_pico ? ` <span class="estado-chip pendiente">pico</span>` : m.mes === est.mes_bajo ? ` <span class="text-muted">(más bajo)</span>` : ""}` },
+            ...principales.map((n) => ({ label: n, fmt: (m) => m[n] || 0 })),
+            ...(hayOtras ? [{ label: "Otras", fmt: (m) => d.series.filter((s) => !principales.includes(s)).reduce((t, s) => t + (m[s] || 0), 0) }] : []),
+            { label: "Total", fmt: (m) => `<strong>${m.total}</strong>` },
+            ...(est.anios.length > 1 ? [{ label: "Promedio por año", fmt: (m) => m.anios ? m.promedio_anual : "—" }] : []),
+          ],
+          est.meses.map((m) => ({ ...m, id: m.mes, _clickable: false }))
+        )}
+        <div class="pl-tarjetas" style="margin-top:12px">
+          ${d.plagas.filter((p) => p.mes_pico).slice(0, 12).map((p) => `
+            <div class="pl-tarjeta" style="border-left-color:${colorDePlaga(p.plaga, d.colores, d.series)}">
+              <div class="pl-nombre">${esc(p.plaga)}</div>
+              <div class="pl-sub">Más en <strong style="text-transform:capitalize">${MESES_PL[p.mes_pico - 1]}</strong> · ${p.mes_pico_total} de ${p.total}</div>
+            </div>`).join("")}
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><h2>Por técnico</h2></div>
         ${tableHTML(
           [
@@ -194,6 +235,17 @@ async function viewPlagasEncontradas(content) {
       </div>`;
   }
 
+  // Período rápido: llena las fechas y, para rangos largos, agrupa por mes.
+  $("#pl-rango").addEventListener("change", () => {
+    const r = $("#pl-rango").value;
+    if (!r) return;
+    const hoy = hoyLocal();
+    $("#pl-hasta").value = hoy;
+    $("#pl-desde").value = r === "anio" ? `${hoy.slice(0, 4)}-01-01` : r === "todo" ? "2000-01-01" : hace(Number(r));
+    if (r !== "90") $("#pl-agrupar").value = "mes";
+    cargar();
+  });
+  ["#pl-desde", "#pl-hasta"].forEach((s) => $(s).addEventListener("change", () => { $("#pl-rango").value = ""; }));
   ["#pl-sitio", "#pl-tecnico", "#pl-desde", "#pl-hasta", "#pl-agrupar"].forEach((s) => $(s).addEventListener("change", cargar));
   $("#pl-actualizar").addEventListener("click", cargar);
   $("#pl-pdf").addEventListener("click", () => modalReporte($("#pl-sitio").value || null));
