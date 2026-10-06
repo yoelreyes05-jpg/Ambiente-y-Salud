@@ -25,7 +25,7 @@ import { crearIncidencia, leerProtocolo } from "./incidencias.js";
 import { construirCertificado } from "../lib/certificadoPdf.js";
 
 // Orden de chinche / código rosa terminada → el hotel descarga el certificado.
-const CERRADAS_OK = ["ejecutada", "cerrada"];
+const CERRADAS_OK = ["ejecutada", "control_calidad", "facturada", "cerrada"];
 const esDeChinche = (o) => o?.tipo_solicitud === "plaga" && /chinche|rosa/i.test(o?.tipo_plaga_reportada || "");
 
 // Lo que la orden necesita saber de su caso de chinche para pintar el botón.

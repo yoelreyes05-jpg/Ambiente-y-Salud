@@ -1656,7 +1656,7 @@ async function pantallaSolicitud(id) {
                 onclick="location.hash='#/incidencia/${esc(o.incidencia.id)}'">
           🛏️ ${["abierta", "en_tratamiento"].includes(o.incidencia.estado)
             ? `Hacer la verificación de chinche · hab. ${esc(o.incidencia.numero_habitacion)}`
-            : `Ver verificación (${o.incidencia.estado === "en_tratamiento" ? "en tratamiento" : "sin chinche"})`}
+            : `Ver verificación (${o.incidencia.estado === "cancelada" ? "caso cancelado" : "sin chinche"})`}
         </button>` : ""}
       ${!abierta ? `<p style="margin-top:8px"><strong>Esta solicitud ya está cerrada.</strong></p>` : ""}
     </div>
