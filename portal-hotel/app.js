@@ -432,6 +432,7 @@ async function vistaPendientes(cuerpo) {
 // ── Historial ────────────────────────────────────────────────────────────
 async function vistaHistorial(cuerpo) {
   cuerpo.innerHTML = `
+    <div id="pl-estadisticas"></div>
     <div class="acciones">
       <select class="btn" id="dias">
         <option value="1">Solo hoy</option>
@@ -453,6 +454,9 @@ async function vistaHistorial(cuerpo) {
   $("#btn-pdf").addEventListener("click", () => descargarReportePdf());
   $("#btn-pdf-pend").addEventListener("click", () => descargarReportePdf("pendientes"));
   $("#dias").addEventListener("change", cargar);
+
+  // Estadísticas de plagas arriba (plagas.js); cargan aparte de la lista.
+  if (typeof montarEstadisticasPlagas === "function") montarEstadisticasPlagas($("#pl-estadisticas")).catch(() => {});
 
   async function cargar() {
     const dias = Number($("#dias").value);

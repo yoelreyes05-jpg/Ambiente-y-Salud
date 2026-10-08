@@ -5,7 +5,7 @@
 import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
-import { exigirSitioPermitido, filtrarPorSitio, requireRol } from "../middleware/auth.js";
+import { exigirSitioPermitido, filtrarPorSitio, requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { construirReporte, construirReportePendientes } from "../lib/reportePdf.js";
 import { logAccion } from "../lib/auditoria.js";
 import { leerEstadosPunto } from "./configuracion.js";
@@ -291,13 +291,19 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
 // Cuántas plagas de cada tipo reportaron los técnicos, y en qué período.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/plagas", async (req, res) => {
-  const { sitio_id, tecnico_id } = req.query;
+  const { sitio_id } = req.query;
   if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+  // El portal del hotel ve sus plagas, pero no quién del personal de ASA las
+  // encontró: ni el filtro por técnico ni el desglose por técnico.
+  const externo = ROLES_EXTERNOS.includes(req.usuario?.rol);
+  const tecnico_id = externo ? undefined : req.query.tecnico_id;
   const agrupar = ["dia", "semana", "mes"].includes(req.query.agrupar) ? req.query.agrupar : "semana";
   const desde = req.query.desde || haceDias(30);
   const hasta = req.query.hasta || hoyRD();
   try {
-    res.json(await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id }));
+    const conteo = await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id });
+    if (externo) delete conteo.por_tecnico;
+    res.json(conteo);
   } catch (e) {
     res.status(500).json({ error: true, mensaje: e.message });
   }
