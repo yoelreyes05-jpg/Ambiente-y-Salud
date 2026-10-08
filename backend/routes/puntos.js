@@ -1090,6 +1090,77 @@ router.post("/masivo", requireRol("operaciones"), async (req, res) => {
   res.status(201).json({ creados: data.length, puntos: data.map((p) => ({ ...p, url_qr: urlQR(p.qr_token) })) });
 });
 
+// POST /puntos/masivo-areas — varios tipos × varias áreas de una vez
+// Body: { sitio_id, tipos: [tipo_punto_id], areas: [area_id], cantidad (por área y tipo), frecuencia? }
+//
+// Crea puntos SEPARADOS: uno (o `cantidad`) por cada combinación área × tipo.
+// El código es <código del área>-<prefijo del tipo>-NNN, o <prefijo del tipo>-NNN
+// si el área no tiene código, y sigue la numeración que ya exista con ese
+// prefijo en la planta, así nunca choca con puntos creados antes.
+router.post("/masivo-areas", requireRol("operaciones"), async (req, res) => {
+  const { sitio_id, frecuencia } = req.body || {};
+  const tiposIds = [...new Set((req.body?.tipos || []).filter(Boolean))];
+  const areasIds = [...new Set((req.body?.areas || []).filter(Boolean))];
+  const cantidad = Math.max(1, Math.min(Number(req.body?.cantidad) || 1, 200));
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  if (!tiposIds.length || !areasIds.length) return res.status(400).json({ error: true, mensaje: "Elige al menos un tipo y un área" });
+  if (tiposIds.length * areasIds.length * cantidad > 2000) {
+    return res.status(400).json({ error: true, mensaje: "Son más de 2000 puntos de una vez. Divídelo en varias cargas." });
+  }
+
+  const [{ data: tipos }, { data: areas }, existentes] = await Promise.all([
+    supabase.from("asa_tipos_punto").select("id, codigo, nombre, prefijo_codigo, frecuencia_default").in("id", tiposIds),
+    supabase.from("asa_areas").select("id, nombre, codigo, sitio_id").in("id", areasIds),
+    traerTodo(() => supabase.from("asa_puntos_control").select("codigo_visible").eq("sitio_id", sitio_id).order("id")),
+  ]);
+  if (!tipos?.length) return res.status(400).json({ error: true, mensaje: "Tipo de punto no válido" });
+  const areasDeLaPlanta = (areas || []).filter((a) => a.sitio_id === sitio_id);
+  if (!areasDeLaPlanta.length) return res.status(400).json({ error: true, mensaje: "Esas áreas no son de esta planta" });
+
+  // Último número usado por prefijo en la planta
+  const ultimo = new Map();
+  for (const p of existentes) {
+    const m = /^(.*)-(\d+)$/.exec(p.codigo_visible || "");
+    if (m) ultimo.set(m[1], Math.max(ultimo.get(m[1]) || 0, Number(m[2])));
+  }
+
+  const filas = [];
+  for (const area of areasDeLaPlanta) {
+    for (const tipo of tipos) {
+      const preTipo = tipo.prefijo_codigo || "PC";
+      const pre = area.codigo ? `${area.codigo}-${preTipo}` : preTipo;
+      for (let i = 0; i < cantidad; i++) {
+        const n = (ultimo.get(pre) || 0) + 1;
+        ultimo.set(pre, n);
+        filas.push({
+          sitio_id,
+          area_id: area.id,
+          tipo_punto_id: tipo.id,
+          codigo_visible: `${pre}-${String(n).padStart(3, "0")}`,
+          numero_habitacion: null,
+          frecuencia: frecuencia || tipo.frecuencia_default,
+        });
+      }
+    }
+  }
+
+  const creados = [];
+  for (let i = 0; i < filas.length; i += 500) {
+    const { data, error } = await supabase.from("asa_puntos_control").insert(filas.slice(i, i + 500)).select("id");
+    if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error), creados: creados.length });
+    creados.push(...(data || []));
+  }
+
+  logAccion(req, {
+    accion: "crear",
+    modulo: "puntos",
+    registroId: sitio_id,
+    descripcion: `${creados.length} puntos por áreas: ${tipos.map((t) => t.nombre).join(", ")} en ${areasDeLaPlanta.length} área(s)`,
+  });
+  res.status(201).json({ creados: creados.length, areas: areasDeLaPlanta.length, tipos: tipos.length });
+});
+
 // POST /puntos/importar — carga desde el Excel que ya tienes
 //
 // Body: { sitio_id, archivo_base64, hoja?, simular?, prefijo_area? }

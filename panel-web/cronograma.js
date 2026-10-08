@@ -59,6 +59,7 @@ async function viewCronograma(content) {
         <option value="lista">Lista (editar / borrar varios)</option>
       </select>
       <span class="toolbar-sep"></span>
+      <button class="btn btn-sm" id="cr-copiar-ant" title="Trae a esta semana lo de la semana anterior, mismo día y hora">⤵ Copiar semana anterior</button>
       <button class="btn btn-sm" id="cr-repetir">Repetir semana…</button>
       <button class="btn btn-sm" id="cr-nuevo">+ Servicio</button>
       <button class="btn btn-sm btn-primary" id="cr-excel">Subir Excel</button>
@@ -80,6 +81,7 @@ async function viewCronograma(content) {
   $("#cr-nuevo").addEventListener("click", () => modalServicioCrono(null));
   $("#cr-excel").addEventListener("click", modalImportarCrono);
   $("#cr-repetir").addEventListener("click", modalRepetirCrono);
+  $("#cr-copiar-ant").addEventListener("click", copiarSemanaAnterior);
   await pintarCronograma();
 }
 
@@ -104,7 +106,10 @@ async function pintarCronograma() {
   if (!filas.length) {
     cuerpo.innerHTML = `<div class="card"><div class="center-msg">
       No hay servicios programados esta semana${CRONO.sitio ? " para esta planta" : ""}.
-      Sube el Excel de la programación o agrega un servicio.</div></div>`;
+      Sube el Excel de la programación, agrega un servicio o trae lo de la semana anterior.
+      <div style="margin-top:12px"><button class="btn btn-primary" id="cr-copiar-vacia">⤵ Copiar la semana anterior aquí</button></div>
+    </div></div>`;
+    $("#cr-copiar-vacia").addEventListener("click", copiarSemanaAnterior);
     return;
   }
 
@@ -232,6 +237,16 @@ function modalServicioCrono(f) {
         <div class="form-group full"><label>Equipo de trabajo</label><input name="equipo" value="${esc(f?.equipo || "")}" placeholder="Santo Liranzo, Eduard Paniagua…" /></div>
         <div class="form-group"><label>Contrato</label><input name="contrato" value="${esc(f?.contrato || "")}" /></div>
       </div>
+      ${f ? `<div class="form-group full" style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px">
+        <label>Aplicar el horario a</label>
+        <select name="alcance_horario">
+          <option value="solo">Solo este servicio</option>
+          <option value="dia_semana">Todos los ${CRONO_DIAS[(new Date(fecha + "T12:00:00Z").getUTCDay() + 6) % 7].toLowerCase()} de este servicio, de aquí en adelante</option>
+          <option value="semana">Toda esta semana (lunes a domingo) de este servicio</option>
+          <option value="todo">Todos los días de este servicio, de aquí en adelante</option>
+        </select>
+        <small class="text-muted">“Este servicio” = misma planta, mismo título y misma hora de inicio (${horaRDc(f.fecha_inicio)}). Solo cambia la hora; las fechas y lo demás quedan igual.</small>
+      </div>` : ""}
       ${f ? `<p class="text-muted">Origen: ${esc(f.origen)}${f.creado_por ? ` · ${esc(f.creado_por)}` : ""}. Si la hora de fin es menor que la de inicio, termina al día siguiente.</p>` : ""}
       ${f ? `<button type="button" class="btn btn-danger btn-sm" id="cr-borrar">Borrar este servicio</button>` : ""}`,
     submitLabel: nuevo ? "Agregar" : "Guardar cambios",
@@ -246,14 +261,42 @@ function modalServicioCrono(f) {
     },
     async onSubmit(fd) {
       const cuerpo = Object.fromEntries(fd.entries());
+      const alcance = cuerpo.alcance_horario || "solo";
+      delete cuerpo.alcance_horario;
+      let extra = "";
       if (nuevo) await post("/cronograma", cuerpo);
-      else await put(`/cronograma/${f.id}`, cuerpo);
+      else {
+        await put(`/cronograma/${f.id}`, cuerpo);
+        if (alcance !== "solo") {
+          const r = await post(`/cronograma/${f.id}/horario-masivo`, {
+            hora_inicio: cuerpo.hora_inicio,
+            hora_fin: cuerpo.hora_fin || "",
+            alcance,
+            hora_original: horaRDc(f.fecha_inicio),
+          });
+          extra = ` · horario aplicado a ${r.cambiados} servicio(s)`;
+        }
+      }
       closeModal();
-      toast(nuevo ? "Servicio agregado" : "Cambios guardados");
+      toast((nuevo ? "Servicio agregado" : "Cambios guardados") + extra);
       if (nuevo) CRONO.semana = lunesDe(cuerpo.fecha);
       pintarCronograma();
     },
   });
+}
+
+// La semana anterior, mismo día y hora, en la semana que se está viendo. Es
+// /repetir con la semana de antes y una sola repetición: lo que ya esté no se duplica.
+async function copiarSemanaAnterior() {
+  const anterior = sumarDiasC(CRONO.semana, -7);
+  const planta = CRONO.sitio && CRONO.sitio !== "sin_planta" ? CRONO.sitio : null;
+  const nombre = planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre : "todas las plantas";
+  if (!confirm(`¿Copiar a esta semana los servicios de la semana del ${fechaCortaC(anterior)} (${nombre}), mismo día y hora?`)) return;
+  try {
+    const r = await post("/cronograma/repetir", { semana: anterior, semanas: 1, sitio_id: planta });
+    toast(`${r.creadas} servicio(s) copiados${r.saltadas ? ` · ${r.saltadas} ya estaban` : ""}`);
+    pintarCronograma();
+  } catch (e) { toast(e.message, true); }
 }
 
 function modalRepetirCrono() {

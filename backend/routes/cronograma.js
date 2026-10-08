@@ -251,6 +251,67 @@ router.put("/:id", OFICINA, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /cronograma/:id/horario-masivo
+//   { hora_inicio, hora_fin?, alcance: "dia_semana" | "semana" | "todo", hora_original? }
+//
+// Cambia la hora de este servicio Y de sus "iguales": misma planta, mismo
+// título y misma hora de inicio que tenía (así un servicio de la mañana no
+// arrastra al de la noche). La fecha de cada uno no cambia, solo la hora.
+//   dia_semana — el mismo día de la semana, de esta fecha en adelante (todos los lunes)
+//   semana     — todos los días de esta semana (lunes a domingo)
+//   todo       — todos los días, de esta fecha en adelante
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/:id/horario-masivo", OFICINA, async (req, res) => {
+  const { hora_inicio, hora_fin, alcance } = req.body || {};
+  if (!/^\d{2}:\d{2}$/.test(hora_inicio || "")) return res.status(400).json({ error: true, mensaje: "Hora de inicio no válida" });
+  if (!["dia_semana", "semana", "todo"].includes(alcance)) return res.status(400).json({ error: true, mensaje: "Alcance no válido" });
+  try {
+    const { data: base, error } = await supabase.from("asa_cronograma").select("*").eq("id", req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!base) return res.status(404).json({ error: true, mensaje: "Servicio no encontrado" });
+
+    const horaRD = (iso) => new Date(iso).toLocaleTimeString("en-GB", { timeZone: "America/Santo_Domingo", hour: "2-digit", minute: "2-digit" });
+    const fechaBase = fechaRD(base.fecha_inicio);
+    const horaOriginal = /^\d{2}:\d{2}$/.test(req.body?.hora_original || "") ? req.body.hora_original : horaRD(base.fecha_inicio);
+    const diaSemana = (f) => new Date(f + "T12:00:00Z").getUTCDay();
+    const lunes = sumarDias(fechaBase, -((diaSemana(fechaBase) + 6) % 7));
+
+    const desde = alcance === "semana" ? lunes : fechaBase;
+    let q = supabase
+      .from("asa_cronograma")
+      .select("id, sitio_id, titulo, fecha_inicio")
+      .gte("fecha_inicio", aISO(desde))
+      .neq("estado", "cancelado")
+      .order("fecha_inicio");
+    if (alcance === "semana") q = q.lt("fecha_inicio", aISO(sumarDias(lunes, 7)));
+    q = base.sitio_id ? q.eq("sitio_id", base.sitio_id) : q.is("sitio_id", null);
+    const { data: candidatos, error: e2 } = await q.limit(2000);
+    if (e2) throw e2;
+
+    const iguales = (candidatos || []).filter((c) =>
+      normal(c.titulo) === normal(base.titulo) &&
+      (c.id === base.id || horaRD(c.fecha_inicio) === horaOriginal) &&
+      (alcance !== "dia_semana" || diaSemana(fechaRD(c.fecha_inicio)) === diaSemana(fechaBase))
+    );
+    if (!iguales.some((c) => c.id === base.id)) iguales.push(base);
+
+    let cambiados = 0;
+    for (const c of iguales) {
+      const f = fechaRD(c.fecha_inicio);
+      const cambios = { fecha_inicio: aISO(f, hora_inicio), updated_at: new Date().toISOString() };
+      if (/^\d{2}:\d{2}$/.test(hora_fin || "")) cambios.fecha_fin = aISO(hora_fin < hora_inicio ? sumarDias(f, 1) : f, hora_fin);
+      else if (hora_fin === "" || hora_fin === null) cambios.fecha_fin = null;
+      const { error: e3 } = await supabase.from("asa_cronograma").update(cambios).eq("id", c.id);
+      if (e3) throw e3;
+      cambiados++;
+    }
+    const texto = { dia_semana: "mismo día de la semana en adelante", semana: "toda la semana", todo: "todos los días en adelante" }[alcance];
+    logAccion(req, { accion: "actualizar", modulo: "cronograma", registroId: base.id, descripcion: `Horario ${hora_inicio}${hora_fin ? `–${hora_fin}` : ""} aplicado a ${cambiados} servicio(s) (${texto}): ${base.titulo}` });
+    res.json({ ok: true, cambiados });
+  } catch (e) { error500(res, e); }
+});
+
 // El técnico puede marcar como realizado lo de su planta (no editarlo).
 router.patch("/:id/estado", requireRol("tecnico_plagas", "operaciones", "comercial"), async (req, res) => {
   const estado = req.body?.estado;

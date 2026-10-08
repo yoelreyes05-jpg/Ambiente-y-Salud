@@ -863,6 +863,71 @@ function modalPuntosMasivo(sitioId, areas, tipos, onSaved) {
   });
 }
 
+// Crear por áreas: marcas uno o varios tipos y una o varias áreas (o todas) y
+// se crea un punto SEPARADO por cada combinación área × tipo, cada uno con su QR.
+function modalPuntosPorAreas(sitioId, areas, tipos, onSaved) {
+  if (!areas.length) return toast("Esta planta todavía no tiene áreas. Créalas primero en la pestaña Áreas.", true);
+  const cuenta = (overlay) => {
+    const nT = overlay.querySelectorAll("[data-pa-tipo]:checked").length;
+    const nA = overlay.querySelectorAll("[data-pa-area]:checked").length;
+    const c = Math.max(1, Number(overlay.querySelector('[name="cantidad"]').value) || 1);
+    overlay.querySelector("#pa-total").textContent = nT && nA
+      ? `Se crearán ${nT * nA * c} punto(s): ${nT} tipo(s) × ${nA} área(s)${c > 1 ? ` × ${c}` : ""}.`
+      : "Marca al menos un tipo y un área.";
+  };
+  openModal({
+    title: "Crear puntos por áreas",
+    large: true,
+    submitLabel: "Crear puntos",
+    bodyHTML: `
+      <p class="text-muted">Cada combinación de área y tipo se crea como un punto de control aparte, con su propio QR.
+        El código toma el código del área y el prefijo del tipo (ej. COC-CR-001) y sigue la numeración que ya exista.</p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Tipos de control</label>
+          <div class="pa-lista">${tipos.map((t) => `
+            <label class="campo-check"><input type="checkbox" data-pa-tipo="${esc(t.id)}" /> ${esc(t.icono || "")} ${esc(t.nombre)}</label>`).join("")}</div>
+        </div>
+        <div class="form-group">
+          <label>Áreas <button type="button" class="btn btn-sm" id="pa-todas" style="margin-left:8px">Todas</button>
+            <button type="button" class="btn btn-sm" id="pa-ninguna">Ninguna</button></label>
+          <div class="pa-lista">${areas.map((a) => `
+            <label class="campo-check"><input type="checkbox" data-pa-area="${esc(a.id)}" /> ${esc(a.nombre)}${a.codigo ? ` <small class="text-muted">(${esc(a.codigo)})</small>` : ""}</label>`).join("")}</div>
+        </div>
+        <div class="form-group"><label>Puntos por área y tipo</label><input name="cantidad" type="number" min="1" max="200" value="1" /></div>
+        <div class="form-group"><label>Frecuencia</label><select name="frecuencia"><option value="">La del tipo</option>${opcionesFrecuencia("")}</select></div>
+      </div>
+      <p id="pa-total" class="text-muted" style="font-weight:600"></p>`,
+    onMount(overlay) {
+      overlay.querySelector("#pa-todas").addEventListener("click", () => { overlay.querySelectorAll("[data-pa-area]").forEach((c) => (c.checked = true)); cuenta(overlay); });
+      overlay.querySelector("#pa-ninguna").addEventListener("click", () => { overlay.querySelectorAll("[data-pa-area]").forEach((c) => (c.checked = false)); cuenta(overlay); });
+      overlay.addEventListener("change", () => cuenta(overlay));
+      overlay.addEventListener("input", () => cuenta(overlay));
+      cuenta(overlay);
+    },
+    async onSubmit(fd, overlay) {
+      const tiposSel = [...overlay.querySelectorAll("[data-pa-tipo]:checked")].map((c) => c.dataset.paTipo);
+      const areasSel = [...overlay.querySelectorAll("[data-pa-area]:checked")].map((c) => c.dataset.paArea);
+      if (!tiposSel.length || !areasSel.length) throw new Error("Marca al menos un tipo y un área");
+      const total = tiposSel.length * areasSel.length * (Number(fd.get("cantidad")) || 1);
+      if (total > 50 && !confirm(`Se van a crear ${total} puntos de control. ¿Seguir?`)) {
+        overlay.querySelector("#asa-modal-submit").disabled = false;
+        return;
+      }
+      const r = await post("/puntos/masivo-areas", {
+        sitio_id: sitioId,
+        tipos: tiposSel,
+        areas: areasSel,
+        cantidad: Number(fd.get("cantidad")) || 1,
+        frecuencia: fd.get("frecuencia") || undefined,
+      });
+      closeModal();
+      toast(`${r.creados} punto(s) creados en ${r.areas} área(s)`);
+      onSaved?.();
+    },
+  });
+}
+
 // Importación desde Excel, con pasada en seco antes de escribir nada
 function modalImportarPuntos(sitioId, onSaved) {
   openModal({

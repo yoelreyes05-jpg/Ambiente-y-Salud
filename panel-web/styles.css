@@ -735,3 +735,7 @@ tr.sem-fila-amarillo{background:#fefce8}
 .plaga-sugeridas{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px;background:#fbfcfe}
 .plaga-sugeridas h5{margin:10px 0 4px}
 .plaga-sug-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 10px}
+
+/* Crear puntos por áreas */
+.pa-lista{max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fbfcfe}
+.pa-lista .campo-check{display:block;margin:4px 0}

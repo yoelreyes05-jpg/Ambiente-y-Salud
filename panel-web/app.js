@@ -1715,6 +1715,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <span class="toolbar-sep"></span>
       <button class="btn btn-primary btn-sm" id="pt-nuevo">+ Punto</button>
       <button class="btn btn-sm" id="pt-masivo">Crear en masa</button>
+      <button class="btn btn-sm" id="pt-por-areas" title="Elige tipos y áreas: se crea un punto separado por cada combinación">Crear por áreas</button>
       <button class="btn btn-sm" id="pt-importar">Importar Excel</button>
       <button class="btn btn-sm" id="pt-exportar" title="Descarga los puntos de esta planta (respeta el filtro de tipo y área)">⬇ Exportar Excel</button>
       <button class="btn btn-sm" id="pt-frecuencia">Frecuencia en masa</button>
@@ -1784,6 +1785,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
 
   $("#pt-nuevo").addEventListener("click", () => modalPunto(sitioId, null, areas, tipos, cargar));
   $("#pt-masivo").addEventListener("click", () => modalPuntosMasivo(sitioId, areas, tipos, cargar));
+  $("#pt-por-areas").addEventListener("click", () => modalPuntosPorAreas(sitioId, areas, tipos, cargar));
   $("#pt-importar").addEventListener("click", () => modalImportarPuntos(sitioId, cargar));
   $("#pt-exportar").addEventListener("click", (e) =>
     exportarPuntosExcel({ sitio_id: sitioId, tipo: $("#f-tipo").value, area_id: $("#f-area").value }, e.currentTarget)
