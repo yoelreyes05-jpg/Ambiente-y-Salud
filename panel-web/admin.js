@@ -1038,8 +1038,16 @@ async function imprimirEtiquetas(sitioId, areaId) {
 // ═════════════════════════════════════════════════════════════════════════
 // PLANTAS Y CLIENTES
 // ═════════════════════════════════════════════════════════════════════════
+// Los tipos que acepta la base (check de asa_sitios.tipo_sitio).
+const TIPOS_SITIO = {
+  hotel: "Hotel", restaurante: "Restaurante", comercial: "Comercial", industrial: "Industrial",
+  alimentos: "Alimentos", residencial: "Residencial", apartamento: "Apartamento", casa: "Casa",
+  gobierno: "Gobierno", otro: "Otro",
+};
+
 function modalPlanta(clientes, planta, onSaved) {
   const esNueva = !planta;
+  const tipoActual = planta?.tipo_sitio || "hotel";
   openModal({
     title: esNueva ? "Nueva planta" : `Editar ${planta.nombre}`,
     large: true,
@@ -1049,6 +1057,9 @@ function modalPlanta(clientes, planta, onSaved) {
         </select>`) +
       campo("Nombre de la planta", `<input name="nombre" required value="${esc(planta?.nombre || "")}" />`) +
       campo("Dirección", `<input name="direccion" required value="${esc(planta?.direccion || "")}" />`) +
+      campo("Tipo de planta", `<select name="tipo_sitio">
+          ${Object.entries(TIPOS_SITIO).map(([k, v]) => `<option value="${k}"${k === tipoActual ? " selected" : ""}>${v}</option>`).join("")}
+        </select>`) +
       campo("Código interno", `<input name="codigo" value="${esc(planta?.codigo || "")}" />`) +
       campo("Contacto de calidad del hotel", `<input name="contacto_calidad" value="${esc(planta?.contacto_calidad || "")}" />`) +
       campo("Teléfono de calidad", `<input name="telefono_calidad" value="${esc(planta?.telefono_calidad || "")}" />`) +
@@ -1062,7 +1073,7 @@ function modalPlanta(clientes, planta, onSaved) {
         contacto_calidad: (fd.get("contacto_calidad") || "").trim() || null,
         telefono_calidad: (fd.get("telefono_calidad") || "").trim() || null,
         email_calidad: (fd.get("email_calidad") || "").trim() || null,
-        tipo_sitio: "hotel",
+        tipo_sitio: fd.get("tipo_sitio") || "hotel",
       };
       if (esNueva) await post("/sitios", { ...cuerpo, cliente_id: fd.get("cliente_id") });
       else await put(`/sitios/${planta.id}`, cuerpo);

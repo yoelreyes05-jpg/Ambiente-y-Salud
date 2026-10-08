@@ -579,7 +579,7 @@ async function abrirDetalleCliente(id) {
     bodyHTML: `
       <p class="muted">${esc(c.telefono || "Sin teléfono")} · ${esc(c.email || "Sin correo")} · ${esc(c.direccion || "Sin dirección")}</p>
       <h4>Sitios (línea de plagas)</h4>
-      ${tableHTML([{ key: "nombre", label: "Nombre" }, { key: "direccion", label: "Dirección" }, { key: "tipo_sitio", label: "Tipo", fmt: (r) => badge(r.tipo_sitio) }], c.sitios, "Sin sitios registrados.")}
+      ${tableHTML([{ key: "nombre", label: "Nombre" }, { key: "direccion", label: "Dirección" }, { key: "tipo_sitio", label: "Tipo", fmt: (r) => `<span class="chip">${esc(etiquetaTipoSitio(r.tipo_sitio))}</span>` }], c.sitios, "Sin sitios registrados.")}
       <h4 style="margin-top:16px">Mascotas</h4>
       ${tableHTML([{ key: "nombre", label: "Nombre" }, { key: "especie", label: "Especie" }, { key: "raza", label: "Raza" }], c.mascotas, "Sin mascotas registradas.")}
       <div class="actions" style="margin-top:18px">
@@ -1550,7 +1550,7 @@ async function viewPlantas(content) {
             <div class="planta-nombre">${esc(p.nombre)}</div>
             <div class="planta-cliente">${cli}</div>
             <div class="planta-meta">
-              <span class="chip">${esc(p.tipo_sitio || "hotel")}</span>
+              <span class="chip">${esc(etiquetaTipoSitio(p.tipo_sitio))}</span>
               ${habs}
             </div>
             <div class="planta-dir">${esc(p.direccion || "")}</div>
@@ -1575,6 +1575,12 @@ async function viewPlantas(content) {
     clearTimeout(t);
     t = setTimeout(() => pintar(e.target.value.trim()), 250);
   });
+}
+
+// "hotel" → "Hotel". Usa la lista de admin.js si está; si no, solo la inicial en mayúscula.
+function etiquetaTipoSitio(tipo) {
+  const t = tipo || "hotel";
+  return (typeof TIPOS_SITIO !== "undefined" && TIPOS_SITIO[t]) || t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 // ── Ficha de una planta ──────────────────────────────────────────────────
