@@ -1020,11 +1020,7 @@ async function imprimirEtiquetas(sitioId, areaId, tipos = null) {
       (e) => `
       <div class="etq">
         <div class="qr">${svgDe(e.url_qr)}</div>
-        <div class="txt">
-          <div class="cod">${esc(e.habitacion || e.codigo)}</div>
-          <div class="nom">${esc(e.nombre || "")}</div>
-          <div class="are">${esc(e.area || "")}</div>
-        </div>
+        <div class="cod">${esc(e.habitacion || e.codigo)}</div>
       </div>`
     )
     .join("");
@@ -1042,14 +1038,13 @@ async function imprimirEtiquetas(sitioId, areaId, tipos = null) {
   @page { size: letter; margin: 10mm; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin:0; padding:10mm; }
   h1 { font-size:14px; margin:0 0 10px; color:#24407C }
-  .hoja { display:grid; grid-template-columns:repeat(3,1fr); gap:6mm; }
-  .etq { border:1px solid #BAC9E1; border-radius:3mm; padding:4mm;
-         display:flex; gap:3mm; align-items:center; break-inside:avoid; }
-  .qr svg { width:24mm; height:24mm; display:block }
-  .txt { min-width:0 }
-  .cod { font-weight:700; font-size:13px; color:#24407C }
-  .nom { font-size:10px; color:#333; margin-top:1mm }
-  .are { font-size:9px; color:#777; margin-top:1mm }
+  /* Etiqueta chica y pegada: el QR con su código debajo, sin recuadro. 18 mm
+     es lo mínimo que el celular del técnico lee sin acercarse demasiado. */
+  .hoja { display:grid; grid-template-columns:repeat(auto-fill, 22mm); gap:2mm 1.5mm; justify-content:start; }
+  .etq { display:flex; flex-direction:column; align-items:center; break-inside:avoid; page-break-inside:avoid; }
+  .qr svg { width:18mm; height:18mm; display:block }
+  .cod { font-weight:700; font-size:7.5pt; color:#000; margin-top:0.8mm; text-align:center;
+         max-width:22mm; overflow-wrap:anywhere; line-height:1.1 }
   .aviso { background:#EAF0F8; border:1px solid #BAC9E1; padding:12px 14px;
            border-radius:6px; margin-bottom:14px; font-size:12.5px; color:#24407C;
            display:flex; align-items:center; justify-content:space-between; gap:14px }
