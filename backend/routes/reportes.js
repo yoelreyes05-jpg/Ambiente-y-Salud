@@ -168,6 +168,7 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
   const porPeriodo = new Map();
   const porTecnico = new Map();
   const porArea = new Map();
+  const porAreaNombre = new Map();
   // Estacionalidad: enero con enero, febrero con febrero… de todos los años del
   // período. Es lo que dice en qué mes del año hay más plagas.
   const porMesAnio = Array.from({ length: 12 }, () => ({ total: 0, plagas: {}, anios: new Set() }));
@@ -224,6 +225,13 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     const a = porArea.get(area);
     a.total += n;
     a.plagas[nombre] = (a.plagas[nombre] || 0) + n;
+
+    // Por nombre de área sola (sin la planta), como la agrupa el PDF.
+    const soloArea = insp.asa_areas?.nombre || "Sin area";
+    if (!porAreaNombre.has(soloArea)) porAreaNombre.set(soloArea, { area: soloArea, total: 0, plagas: {} });
+    const an = porAreaNombre.get(soloArea);
+    an.total += n;
+    an.plagas[nombre] = (an.plagas[nombre] || 0) + n;
   }
 
   const plagas = [...porPlaga.values()]
@@ -283,6 +291,7 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     },
     por_tecnico: [...porTecnico.values()].sort((a, b) => b.total - a.total),
     por_area: [...porArea.values()].sort((a, b) => b.total - a.total),
+    por_area_nombre: [...porAreaNombre.values()].sort((a, b) => b.total - a.total),
   };
 }
 
@@ -1000,7 +1009,15 @@ async function juntarEvidencia(req) {
       a.servicios++;
       if (x.nivel_actividad && x.nivel_actividad !== "ninguna") a.con_actividad++;
     }
-    a.plagas += x.plagas_total || 0;
+  }
+  // Los individuos por área salen del mismo conteo que las barras y el tablero
+  // del hotel (contador de capturas + plagas anotadas en el checklist). Antes
+  // se sumaba solo el contador de cada servicio y las áreas salían en 0.
+  for (const c of conteo.por_area_nombre) {
+    if (!porArea.has(c.area)) porArea.set(c.area, { area: c.area, nivel: null, servicios: 0, con_actividad: 0, no_realizados: 0, plagas: 0 });
+    const a = porArea.get(c.area);
+    a.plagas = c.total;
+    a.detalle_plagas = c.plagas;
   }
 
   const programables = (puntos.data || []).filter((p) => p.frecuencia !== "por_orden");

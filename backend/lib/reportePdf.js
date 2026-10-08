@@ -701,9 +701,34 @@ export async function construirReporte(d, opciones = {}) {
         { titulo: "Individuos", ancho: 60, alineacion: "right" },
       ],
       d.por_area
-        .filter((a) => a.servicios > 0)
+        .filter((a) => a.servicios > 0 || a.plagas > 0)
         .map((a) => [a.area || "Sin area", a.nivel || "—", a.servicios, a.con_actividad, a.plagas])
     );
+
+    // Cuántas de cada plaga en cada área: las 4 plagas que más aparecen + otras.
+    const conPlagas = d.por_area.filter((a) => a.plagas > 0).sort((a, b) => b.plagas - a.plagas);
+    if (conPlagas.length) {
+      const principales = (d.plagas || []).filter((p) => p.total > 0).slice(0, 4).map((p) => p.plaga);
+      const hayOtras = (d.plagas || []).filter((p) => p.total > 0).length > principales.length;
+      tituloSeccion(doc, "Plagas por area");
+      tabla(doc,
+        [
+          { titulo: "Area", ancho: 150, negrita: true },
+          ...principales.map((n) => ({ titulo: n, ancho: 64, alineacion: "right" })),
+          ...(hayOtras ? [{ titulo: "Otras", ancho: 50, alineacion: "right" }] : []),
+          { titulo: "Total", ancho: 50, alineacion: "right" },
+        ],
+        conPlagas.map((a) => {
+          const det = a.detalle_plagas || {};
+          return [
+            a.area || "Sin area",
+            ...principales.map((n) => det[n] || 0),
+            ...(hayOtras ? [Object.entries(det).filter(([k]) => !principales.includes(k)).reduce((s, [, v]) => s + v, 0)] : []),
+            a.plagas,
+          ];
+        })
+      );
+    }
   }
 
   // ── Hallazgos ─────────────────────────────────────────────────────────────
