@@ -314,7 +314,7 @@ async function vistaPendientes(cuerpo) {
   let [e, d] = await Promise.all([GET(`/puntos/estado?${qs}`), GET(`/inspecciones/dia?sitio_id=${PLANTA.id}`)]);
 
   if (!e.tipos.length) {
-    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">📍</span>Esta planta todavía no tiene puntos de control cargados.</div>`;
+    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">📍</span>Todavía no hay puntos de control para mostrar en esta planta.</div>`;
     return;
   }
   // El tipo elegido puede no existir en otra planta: se vuelve a elegir.
@@ -790,7 +790,8 @@ async function vistaMapa(cuerpo) {
 
   const estadoDe = new Map((estado?.puntos || []).map((p) => [p.id, p]));
   const verde = (e) => e === "hecho_hoy" || e === "al_dia";
-  const pins = plano.puntos.filter((p) => p.plano_x != null && p.plano_y != null);
+  // Solo los puntos de los tipos que ASA deja ver al hotel (vienen en `estado`).
+  const pins = plano.puntos.filter((p) => p.plano_x != null && p.plano_y != null && (!estado || estadoDe.has(p.id)));
   const nVerde = pins.filter((p) => verde(estadoDe.get(p.id)?.estado)).length;
 
   cuerpo.innerHTML = `

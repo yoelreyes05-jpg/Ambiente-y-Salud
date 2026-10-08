@@ -1604,6 +1604,7 @@ async function abrirPlanta(sitioId) {
         </div>
         <div class="actions">
           <button class="btn" id="btn-editar-planta">Editar planta</button>
+          <button class="btn" id="btn-portal-visible" title="Qué tipos de punto ve el hotel en su portal">👁 Qué ve el hotel</button>
           <button class="btn btn-primary" id="btn-reporte">Generar reporte</button>
           <button class="btn" id="btn-excel">Excel</button>
         </div>
@@ -1627,6 +1628,8 @@ async function abrirPlanta(sitioId) {
     const clientes = await get("/clientes");
     modalPlanta(clientes, sitio, () => abrirPlanta(sitioId));
   });
+
+  $("#btn-portal-visible").addEventListener("click", () => modalPortalVisible(sitioId, sitio.nombre));
 
   const cuerpo = $("#tab-cuerpo");
   const pintores = {
@@ -1654,6 +1657,46 @@ async function abrirPlanta(sitioId) {
     })
   );
   await pintores.servicios();
+}
+
+// ── Qué ve el hotel en su portal ─────────────────────────────────────────
+// Elige qué tipos de punto (habitaciones, cebaderos, recorridos…) le salen al
+// hotel en "Por hacer", en el mapa y en lo no realizado. El servidor aplica el
+// filtro; una planta sin configurar ve solo habitaciones.
+async function modalPortalVisible(sitioId, nombre) {
+  const [cfg, estado] = await Promise.all([
+    get("/config/portal_tipos_visibles").catch(() => null),
+    get(`/puntos/estado?sitio_id=${sitioId}`),
+  ]);
+  const todo = cfg && typeof cfg === "object" ? cfg : {};
+  const actuales = Array.isArray(todo[sitioId]) ? todo[sitioId] : ["habitacion"];
+  const tipos = estado.tipos || [];
+
+  openModal({
+    title: `Qué ve ${nombre} en su portal`,
+    bodyHTML: `
+      <p class="text-muted">
+        Marca los tipos de punto que el hotel puede ver en <strong>Por hacer</strong>,
+        en el <strong>mapa</strong> y en lo que <strong>no se pudo hacer</strong>.
+        Lo que no marques es solo para ASA. Los servicios ya hechos y el reporte PDF no cambian.
+      </p>
+      ${tipos.length ? tipos.map((t) => `
+        <label class="campo-check lista-check">
+          <input type="checkbox" data-tipo-portal="${esc(t.codigo)}" ${actuales.includes(t.codigo) ? "checked" : ""} />
+          <span>${esc(t.icono || "")} <strong>${esc(t.nombre || t.codigo)}</strong> <small>· ${t.total} punto(s)</small></span>
+        </label>`).join("")
+        : `<p class="text-muted">Esta planta todavía no tiene puntos de control.</p>`}`,
+    async onSubmit(fd, overlay) {
+      const marcados = [...overlay.querySelectorAll("[data-tipo-portal]")].filter((c) => c.checked).map((c) => c.dataset.tipoPortal);
+      // Se relee justo antes de guardar para no pisar lo que otra persona
+      // haya cambiado en otra planta mientras este cuadro estaba abierto.
+      const fresco = await get("/config/portal_tipos_visibles").catch(() => null);
+      const valor = { ...(fresco && typeof fresco === "object" ? fresco : {}), [sitioId]: marcados };
+      await put("/config/portal_tipos_visibles", { valor });
+      closeModal();
+      toast(marcados.length ? "Listo: el hotel verá solo lo marcado" : "Listo: el hotel no verá puntos por hacer");
+    },
+  });
 }
 
 // ── Pestaña: puntos de control ───────────────────────────────────────────

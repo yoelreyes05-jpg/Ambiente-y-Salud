@@ -9,7 +9,7 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
-import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio } from "../middleware/auth.js";
+import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
 
 const router = express.Router();
@@ -243,6 +243,17 @@ router.get("/", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // traerTodo vive en lib/paginar.js (PostgREST corta en 1000 filas).
 
+// ── Qué tipos de punto ve el hotel en su portal ─────────────────────────────
+// asa_config_sistema, clave "portal_tipos_visibles": { "<sitio_id>": ["habitacion", …] }.
+// Una planta sin configurar ve solo habitaciones: lo demás (cebaderos,
+// recorridos, lámparas) es trabajo interno de ASA y se abre planta por planta.
+const TIPOS_PORTAL_DEFECTO = ["habitacion"];
+export async function tiposVisiblesPortal(sitioId) {
+  const { data } = await supabase.from("asa_config_sistema").select("valor").eq("clave", "portal_tipos_visibles").maybeSingle();
+  const lista = data?.valor && typeof data.valor === "object" ? data.valor[sitioId] : undefined;
+  return Array.isArray(lista) ? lista : TIPOS_PORTAL_DEFECTO;
+}
+
 router.get("/estado", async (req, res) => {
   const { sitio_id, tipo, area_id } = req.query;
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
@@ -269,6 +280,12 @@ router.get("/estado", async (req, res) => {
     ]);
   } catch (e) {
     return res.status(500).json({ error: true, mensaje: e.message });
+  }
+
+  // Cuentas del hotel: solo los tipos de punto que ASA le dejó ver.
+  if (ROLES_EXTERNOS.includes(req.usuario?.rol)) {
+    const permitidos = new Set(await tiposVisiblesPortal(sitio_id));
+    puntos = puntos.filter((p) => permitidos.has(p.tipo_codigo || "otro"));
   }
 
   // Por punto: el último realizado de hoy manda sobre un no realizado de hoy

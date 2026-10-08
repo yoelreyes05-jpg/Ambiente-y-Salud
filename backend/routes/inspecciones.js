@@ -6,7 +6,8 @@
 import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
-import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio } from "../middleware/auth.js";
+import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
+import { tiposVisiblesPortal } from "./puntos.js";
 import { guardarFotos } from "../lib/evidencias.js";
 import { leerEstadosPunto } from "./configuracion.js";
 import { traerTodoComoRespuesta } from "../lib/paginar.js";
@@ -92,7 +93,16 @@ router.get("/dia", async (req, res) => {
 
   const S = servicios.data || [];
   const realizados = S.filter((x) => !x.no_realizado);
-  const noRealizados = S.filter((x) => x.no_realizado);
+  let noRealizados = S.filter((x) => x.no_realizado);
+
+  // Cuentas del hotel: lo pendiente y lo no realizado solo de los tipos de
+  // punto que ASA le dejó ver (lo hecho se sigue mostrando completo).
+  let tipoVisible = () => true;
+  if (ROLES_EXTERNOS.includes(req.usuario?.rol)) {
+    const permitidos = new Set(await tiposVisiblesPortal(sitio_id));
+    tipoVisible = (codigo) => permitidos.has(codigo || "otro");
+    noRealizados = noRealizados.filter((x) => tipoVisible(x.tipo_codigo));
+  }
 
   // Pendiente = punto programable que hoy no tiene ningun registro (ni hecho ni
   // intentado) Y que ademas ya esta fuera de su frecuencia. Un cebadero mensual
@@ -100,7 +110,7 @@ router.get("/dia", async (req, res) => {
   const conRegistro = new Set(S.map((x) => x.punto_id));
   const pendientes = (puntos.data || [])
     .filter((p) => p.frecuencia !== "por_orden" && !conRegistro.has(p.id) && p.vencido)
-    .filter((p) => !tipo || p.tipo_codigo === tipo)
+    .filter((p) => (!tipo || p.tipo_codigo === tipo) && tipoVisible(p.tipo_codigo))
     .map((p) => ({
       punto_id: p.id,
       codigo_visible: p.codigo_visible,
@@ -126,7 +136,7 @@ router.get("/dia", async (req, res) => {
       porTipo.set(k, { tipo_codigo: k, tipo_nombre: x.tipo_nombre, tipo_icono: x.tipo_icono, hechos: 0, no_realizados: 0, plagas: 0, fotos: 0 });
     }
     const t = porTipo.get(k);
-    if (x.no_realizado) t.no_realizados++;
+    if (x.no_realizado) { if (tipoVisible(x.tipo_codigo)) t.no_realizados++; }
     else t.hechos++;
     t.plagas += x.plagas_total || 0;
     t.fotos += x.fotos_total || 0;
