@@ -398,6 +398,44 @@ async function viewTiposPunto(content) {
 // sueltas se lee peor que tres bloques de tres.
 const GRUPO_PLAGA = { voladora: "Voladoras", rastrera: "Rastreras", roedor: "Roedores", otra: "Otras" };
 
+// Plagas comunes en hoteles y comercios de RD. Al elegirlas de la lista se
+// crean en el catálogo (o se reactivan si ya existían dadas de baja).
+const PLAGAS_SUGERIDAS = [
+  ["Mosca doméstica", "voladora", "🪰"], ["Mosca de la fruta", "voladora", "🪰"], ["Mosquito", "voladora", "🦟"],
+  ["Mosca de drenaje", "voladora", "🪰"], ["Mosca verde (moscarda)", "voladora", "🪰"], ["Jején", "voladora", "🦟"],
+  ["Polilla", "voladora", "🦋"], ["Avispa", "voladora", "🐝"], ["Abeja", "voladora", "🐝"],
+  ["Paloma", "voladora", "🕊️"], ["Murciélago", "voladora", "🦇"], ["Gorrión", "voladora", "🐦"],
+  ["Cucaracha alemana", "rastrera", "🪳"], ["Cucaracha americana", "rastrera", "🪳"], ["Cucaracha oriental", "rastrera", "🪳"],
+  ["Cucaracha de banda marrón", "rastrera", "🪳"], ["Chinche de cama", "rastrera", "🛏️"], ["Hormiga", "rastrera", "🐜"],
+  ["Hormiga faraón", "rastrera", "🐜"], ["Hormiga de fuego", "rastrera", "🐜"], ["Hormiga carpintera", "rastrera", "🐜"],
+  ["Pececillo de plata", "rastrera", "🐛"], ["Tijereta", "rastrera", "🐛"], ["Ciempiés", "rastrera", "🐛"],
+  ["Milpiés", "rastrera", "🐛"], ["Grillo", "rastrera", "🦗"], ["Araña", "rastrera", "🕷️"], ["Alacrán", "rastrera", "🦂"],
+  ["Pulga", "rastrera", "🐜"], ["Garrapata", "rastrera", "🕷️"], ["Gorgojo", "rastrera", "🐞"],
+  ["Escarabajo de despensa", "rastrera", "🐞"], ["Babosa / caracol", "rastrera", "🐌"],
+  ["Ratón", "roedor", "🐁"], ["Rata", "roedor", "🐀"], ["Rata de techo", "roedor", "🐀"], ["Rata de alcantarilla", "roedor", "🐀"],
+  ["Termita (comején)", "otra", "🐜"], ["Lagartija", "otra", "🦎"], ["Sapo / rana", "otra", "🐸"],
+  ["Culebra", "otra", "🐍"], ["Gato callejero", "otra", "🐈"], ["Otra plaga", "otra", "❓"],
+];
+
+const normalizarPlaga = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const codigoPlaga = (nombre) => normalizarPlaga(nombre).replace(/ /g, "_").slice(0, 40) || `plaga_${Date.now()}`;
+
+// Crea la plaga en el catálogo, o reactiva/reutiliza la que ya tenga ese nombre.
+async function asegurarPlaga({ nombre, grupo, icono }, catalogoCompleto) {
+  const clave = normalizarPlaga(nombre);
+  const existente = catalogoCompleto.find((p) => normalizarPlaga(p.nombre) === clave);
+  if (existente) {
+    if (existente.activo === false) return patch(`/plagas/catalogo/${existente.id}`, { activo: true });
+    return existente;
+  }
+  let codigo = codigoPlaga(nombre);
+  if (catalogoCompleto.some((p) => p.codigo === codigo)) codigo = `${codigo}_${Date.now().toString(36)}`;
+  const orden = 10 + Math.max(0, ...catalogoCompleto.map((p) => Number(p.orden) || 0));
+  const creada = await post("/plagas/catalogo", { codigo, nombre, grupo, icono: icono || null, orden });
+  catalogoCompleto.push(creada);
+  return creada;
+}
+
 async function modalTipoPunto(tipo, onSaved) {
   const esNuevo = !tipo;
 
@@ -439,30 +477,170 @@ async function modalTipoPunto(tipo, onSaved) {
       </div>`;
   };
 
-  const bloquePlagas = () => {
-    if (!cfg) return "";
+  const gridPlagas = () => {
     const porGrupo = {};
     for (const p of cfg.plagas) (porGrupo[p.grupo] = porGrupo[p.grupo] || []).push(p);
-
-    const grupos = Object.entries(porGrupo).map(([g, lista]) => `
+    return Object.keys(GRUPO_PLAGA).filter((g) => porGrupo[g]).map((g) => `
       <div class="grupo-plagas">
         <h5>${esc(GRUPO_PLAGA[g] || g)}</h5>
-        ${lista.map((p) => `
-          <label class="campo-check lista-check">
-            <input type="checkbox" data-plaga="${esc(p.id)}" ${p.ligada ? "checked" : ""} />
-            <span>${esc(p.icono || "")} ${esc(p.nombre)}</span>
-          </label>`).join("")}
+        ${porGrupo[g].map((p) => `
+          <div class="plaga-fila" data-fila-plaga="${esc(p.id)}">
+            <label class="campo-check lista-check">
+              <input type="checkbox" data-plaga="${esc(p.id)}" ${p.ligada ? "checked" : ""} />
+              <span>${esc(p.icono || "")} ${esc(p.nombre)}</span>
+            </label>
+            <button type="button" class="btn-icono" data-editar-plaga="${esc(p.id)}" title="Editar nombre, grupo o icono">✏️</button>
+          </div>`).join("")}
       </div>`).join("");
+  };
 
+  const bloquePlagas = () => {
+    if (!cfg) return "";
     return `
       <div class="bloque-config">
         <h4>Plagas que se cuentan en este tipo</h4>
         <p class="text-muted">
           Son los contadores de + y − que le salen al técnico. Si no marcas
-          ninguna, el bloque no aparece para este tipo de punto.
+          ninguna, el bloque no aparece para este tipo de punto. Con ✏️ cambias
+          el nombre de una plaga (cambia en todos los tipos de punto).
         </p>
-        <div class="plagas-grid">${grupos}</div>
+        <div class="plagas-acciones">
+          <button type="button" class="btn btn-sm" id="tp-plaga-lista">📋 Elegir de una lista</button>
+          <button type="button" class="btn btn-sm" id="tp-plaga-nueva">+ Nueva plaga</button>
+        </div>
+        <div id="tp-plaga-panel"></div>
+        <div class="plagas-grid" id="tp-plagas">${gridPlagas()}</div>
       </div>`;
+  };
+
+  // Guarda lo marcado antes de volver a pintar, para no perder la selección.
+  const recordarMarcadas = (overlay) => {
+    for (const c of overlay.querySelectorAll("[data-plaga]")) {
+      const p = cfg.plagas.find((x) => String(x.id) === c.dataset.plaga);
+      if (p) p.ligada = c.checked;
+    }
+  };
+  const repintarPlagas = (overlay) => {
+    recordarMarcadas(overlay);
+    overlay.querySelector("#tp-plagas").innerHTML = gridPlagas();
+  };
+  const sumarAlTipo = (plaga) => {
+    const ya = cfg.plagas.find((x) => x.id === plaga.id);
+    if (ya) { Object.assign(ya, plaga); ya.ligada = true; }
+    else cfg.plagas.push({ ...plaga, ligada: true });
+  };
+  let catalogoCompleto = null;
+  const traerCatalogo = async () => (catalogoCompleto ||= await get("/plagas/catalogo?todas=true"));
+
+  const montarPlagas = (overlay) => {
+    if (!cfg) return;
+    const panel = overlay.querySelector("#tp-plaga-panel");
+    const opcionesGrupo = (sel) => Object.entries(GRUPO_PLAGA)
+      .map(([k, v]) => `<option value="${k}"${k === sel ? " selected" : ""}>${v}</option>`).join("");
+
+    // Nueva plaga a mano
+    overlay.querySelector("#tp-plaga-nueva").addEventListener("click", () => {
+      panel.innerHTML = `
+        <div class="plaga-editor">
+          <input id="tp-n-nombre" placeholder="Nombre de la plaga" />
+          <select id="tp-n-grupo">${opcionesGrupo("rastrera")}</select>
+          <input id="tp-n-icono" placeholder="Icono 🐜" style="max-width:90px" />
+          <button type="button" class="btn btn-sm btn-primary" id="tp-n-ok">Agregar</button>
+          <button type="button" class="btn btn-sm" id="tp-n-no">Cancelar</button>
+        </div>`;
+      panel.querySelector("#tp-n-nombre").focus();
+      panel.querySelector("#tp-n-no").addEventListener("click", () => { panel.innerHTML = ""; });
+      panel.querySelector("#tp-n-ok").addEventListener("click", async (ev) => {
+        const nombre = panel.querySelector("#tp-n-nombre").value.trim();
+        if (!nombre) return toast("Escribe el nombre de la plaga", true);
+        ev.target.disabled = true;
+        try {
+          const p = await asegurarPlaga({
+            nombre,
+            grupo: panel.querySelector("#tp-n-grupo").value,
+            icono: panel.querySelector("#tp-n-icono").value.trim(),
+          }, await traerCatalogo());
+          recordarMarcadas(overlay);
+          sumarAlTipo(p);
+          repintarPlagas(overlay);
+          panel.innerHTML = "";
+          toast(`${p.nombre} agregada y marcada`);
+        } catch (e) { toast(e.message, true); ev.target.disabled = false; }
+      });
+    });
+
+    // Elegir varias de la lista sugerida
+    overlay.querySelector("#tp-plaga-lista").addEventListener("click", async () => {
+      const yaEstan = new Set(cfg.plagas.map((p) => normalizarPlaga(p.nombre)));
+      const faltan = PLAGAS_SUGERIDAS.filter(([n]) => !yaEstan.has(normalizarPlaga(n)));
+      if (!faltan.length) { panel.innerHTML = `<p class="text-muted">Ya tienes todas las plagas de la lista. Usa “+ Nueva plaga” para otra.</p>`; return; }
+      panel.innerHTML = `
+        <div class="plaga-sugeridas">
+          <p class="text-muted" style="margin:0 0 8px">Marca las que quieras agregar al catálogo. Quedan marcadas también en este tipo.</p>
+          ${Object.keys(GRUPO_PLAGA).map((g) => {
+            const lista = faltan.filter((x) => x[1] === g);
+            return lista.length ? `<h5>${GRUPO_PLAGA[g]}</h5><div class="plaga-sug-grid">${lista.map(([n, , ic]) => `
+              <label class="campo-check"><input type="checkbox" data-sugerida="${esc(n)}" /> ${esc(ic)} ${esc(n)}</label>`).join("")}</div>` : "";
+          }).join("")}
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button type="button" class="btn btn-sm btn-primary" id="tp-s-ok">Agregar las marcadas</button>
+            <button type="button" class="btn btn-sm" id="tp-s-no">Cerrar</button>
+          </div>
+        </div>`;
+      panel.querySelector("#tp-s-no").addEventListener("click", () => { panel.innerHTML = ""; });
+      panel.querySelector("#tp-s-ok").addEventListener("click", async (ev) => {
+        const elegidas = [...panel.querySelectorAll("[data-sugerida]")].filter((c) => c.checked).map((c) => c.dataset.sugerida);
+        if (!elegidas.length) return toast("Marca al menos una plaga", true);
+        ev.target.disabled = true;
+        try {
+          const catalogo = await traerCatalogo();
+          recordarMarcadas(overlay);
+          for (const n of elegidas) {
+            const [nombre, grupo, icono] = PLAGAS_SUGERIDAS.find((x) => x[0] === n);
+            sumarAlTipo(await asegurarPlaga({ nombre, grupo, icono }, catalogo));
+          }
+          repintarPlagas(overlay);
+          panel.innerHTML = "";
+          toast(`${elegidas.length} plaga(s) agregada(s). Toca Guardar para dejarlas en este tipo.`);
+        } catch (e) { toast(e.message, true); ev.target.disabled = false; }
+      });
+    });
+
+    // Editar nombre, grupo e icono de una plaga
+    overlay.querySelector("#tp-plagas").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-editar-plaga]");
+      if (!b) return;
+      const p = cfg.plagas.find((x) => String(x.id) === b.dataset.editarPlaga);
+      if (!p) return;
+      recordarMarcadas(overlay);
+      const fila = overlay.querySelector(`[data-fila-plaga="${CSS.escape(String(p.id))}"]`);
+      fila.innerHTML = `
+        <div class="plaga-editor">
+          <input data-e="nombre" value="${esc(p.nombre)}" />
+          <select data-e="grupo">${opcionesGrupo(p.grupo)}</select>
+          <input data-e="icono" value="${esc(p.icono || "")}" style="max-width:70px" />
+          <button type="button" class="btn btn-sm btn-primary" data-e="ok">✓</button>
+          <button type="button" class="btn btn-sm" data-e="no">✕</button>
+        </div>`;
+      fila.querySelector('[data-e="nombre"]').focus();
+      fila.querySelector('[data-e="no"]').addEventListener("click", () => repintarPlagas(overlay));
+      fila.querySelector('[data-e="ok"]').addEventListener("click", async (e2) => {
+        const nombre = fila.querySelector('[data-e="nombre"]').value.trim();
+        if (!nombre) return toast("El nombre no puede quedar vacío", true);
+        e2.target.disabled = true;
+        try {
+          const act = await patch(`/plagas/catalogo/${p.id}`, {
+            nombre,
+            grupo: fila.querySelector('[data-e="grupo"]').value,
+            icono: fila.querySelector('[data-e="icono"]').value.trim() || null,
+          });
+          Object.assign(p, { nombre: act.nombre, grupo: act.grupo, icono: act.icono });
+          if (catalogoCompleto) Object.assign(catalogoCompleto.find((x) => x.id === p.id) || {}, act);
+          overlay.querySelector("#tp-plagas").innerHTML = gridPlagas();
+          toast("Plaga actualizada");
+        } catch (e) { toast(e.message, true); e2.target.disabled = false; }
+      });
+    });
   };
 
   openModal({
@@ -484,6 +662,7 @@ async function modalTipoPunto(tipo, onSaved) {
              plagas. Un tipo nuevo no hereda las de ningún otro.
            </p>`
         : ""),
+    onMount: (overlay) => montarPlagas(overlay),
     async onSubmit(fd, overlay) {
       const cuerpo = {
         nombre: (fd.get("nombre") || "").trim(),
