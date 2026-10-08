@@ -1353,14 +1353,17 @@ router.get("/etiquetas/imprimir", async (req, res) => {
   const { sitio_id, area_id } = req.query;
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
   if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  // ?tipos=habitacion,cebadero — solo esos tipos de punto (sin el parámetro, todos).
+  const tipos = String(req.query.tipos || "").split(",").map((t) => t.trim()).filter(Boolean);
 
   let q = supabase
     .from("asa_puntos_control")
-    .select("id, qr_token, codigo_visible, nombre, numero_habitacion, asa_areas(nombre), asa_tipos_punto(nombre, icono)")
+    .select(`id, qr_token, codigo_visible, nombre, numero_habitacion, asa_areas(nombre), asa_tipos_punto${tipos.length ? "!inner" : ""}(codigo, nombre, icono)`)
     .eq("sitio_id", sitio_id)
     .eq("activo", true)
     .order("codigo_visible");
   if (area_id) q = q.eq("area_id", area_id);
+  if (tipos.length) q = q.in("asa_tipos_punto.codigo", tipos);
 
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: true, mensaje: error.message });

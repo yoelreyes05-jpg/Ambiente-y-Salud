@@ -1790,7 +1790,7 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
   );
   $("#pt-frecuencia").addEventListener("click", () => modalFrecuenciaMasiva(sitioId, areas, tipos, cargar));
   $("#pt-etiquetas").addEventListener("click", () =>
-    imprimirEtiquetas(sitioId, $("#f-area").value || null)
+    elegirTiposEtiquetas(sitioId, $("#f-area").value || null, tipos, $("#f-tipo").value || null)
   );
   $("#pt-baja").addEventListener("click", () => modalEliminarPuntos(sitioId, areas, tipos, cargar));
   $("#pt-qr-impresos").addEventListener("click", () => modalEtiquetasQR(sitioId, cargar));

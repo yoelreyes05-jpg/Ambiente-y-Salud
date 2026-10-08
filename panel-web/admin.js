@@ -955,7 +955,40 @@ function modalFrecuenciaMasiva(sitioId, areas, tipos, onSaved) {
 // vendorizada en vendor/qrcode.js, así que no depende de internet ni de
 // ningún servicio externo.
 // ═════════════════════════════════════════════════════════════════════════
-async function imprimirEtiquetas(sitioId, areaId) {
+// Antes de imprimir se eligen los tipos de punto: imprimir las 600 etiquetas
+// de un hotel para reponer solo las de los cebaderos es papel tirado.
+function elegirTiposEtiquetas(sitioId, areaId, tipos, tipoPreferido) {
+  if (!tipos?.length) return imprimirEtiquetas(sitioId, areaId);
+  openModal({
+    title: "Imprimir etiquetas QR",
+    submitLabel: "Imprimir",
+    bodyHTML: `
+      <p class="text-muted">Marca los tipos de punto cuyas etiquetas quieres imprimir${areaId ? " (solo del área elegida en el filtro)" : ""}.</p>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button type="button" class="btn btn-sm" id="et-todos">Marcar todos</button>
+        <button type="button" class="btn btn-sm" id="et-ninguno">Quitar todos</button>
+      </div>
+      ${tipos.map((t) => `
+        <label class="campo-check lista-check">
+          <input type="checkbox" data-tipo-et="${esc(t.codigo)}" ${!tipoPreferido || tipoPreferido === t.codigo ? "checked" : ""} />
+          <span>${esc(t.icono || "")} <strong>${esc(t.nombre || t.codigo)}</strong>${t.total != null ? ` <small>· ${t.total} punto(s)</small>` : ""}</span>
+        </label>`).join("")}`,
+    onMount(overlay) {
+      const marcar = (v) => overlay.querySelectorAll("[data-tipo-et]").forEach((c) => { c.checked = v; });
+      overlay.querySelector("#et-todos").addEventListener("click", () => marcar(true));
+      overlay.querySelector("#et-ninguno").addEventListener("click", () => marcar(false));
+    },
+    async onSubmit(fd, overlay) {
+      const todas = [...overlay.querySelectorAll("[data-tipo-et]")];
+      const marcados = todas.filter((c) => c.checked).map((c) => c.dataset.tipoEt);
+      if (!marcados.length) throw new Error("Marca al menos un tipo de punto");
+      closeModal();
+      await imprimirEtiquetas(sitioId, areaId, marcados.length === todas.length ? null : marcados);
+    },
+  });
+}
+
+async function imprimirEtiquetas(sitioId, areaId, tipos = null) {
   if (typeof qrcode !== "function") {
     toast("No se cargó el generador de QR (vendor/qrcode.js).", true);
     return;
@@ -963,6 +996,7 @@ async function imprimirEtiquetas(sitioId, areaId) {
 
   const qs = new URLSearchParams({ sitio_id: sitioId });
   if (areaId) qs.set("area_id", areaId);
+  if (tipos?.length) qs.set("tipos", tipos.join(","));
   const r = await get(`/puntos/etiquetas/imprimir?${qs}`);
 
   if (!r.total) {
