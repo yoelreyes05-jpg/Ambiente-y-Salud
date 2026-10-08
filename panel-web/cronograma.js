@@ -60,7 +60,7 @@ async function viewCronograma(content) {
       </select>
       <span class="toolbar-sep"></span>
       <button class="btn btn-sm" id="cr-copiar-ant" title="Trae a esta semana lo de la semana anterior, mismo día y hora">⤵ Copiar semana anterior</button>
-      <button class="btn btn-sm" id="cr-repetir">Repetir semana…</button>
+      <button class="btn btn-sm" id="cr-repetir">Copiar semana a las siguientes…</button>
       <button class="btn btn-sm" id="cr-nuevo">+ Servicio</button>
       <button class="btn btn-sm btn-primary" id="cr-excel">Subir Excel</button>
     </div>
@@ -300,22 +300,29 @@ async function copiarSemanaAnterior() {
 }
 
 function modalRepetirCrono() {
+  const planta = CRONO.sitio && CRONO.sitio !== "sin_planta" ? CRONO.sitio : null;
+  const nombre = planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre || "" : "todas las plantas";
   openModal({
-    title: "Repetir la semana en las siguientes",
+    title: "Copiar una semana en las siguientes",
     bodyHTML: `
-      <p class="text-muted">Toma los días y horas de los servicios de la semana del <strong>${fechaCortaC(CRONO.semana)}</strong>
-        ${CRONO.sitio && CRONO.sitio !== "sin_planta" ? `de <strong>${esc(CRONO.sitios.find((s) => s.id === CRONO.sitio)?.nombre || "")}</strong>` : "de <strong>todas las plantas</strong>"}
-        y los copia, el mismo día de la semana y a la misma hora, en las semanas que siguen. Lo que ya exista igual no se duplica.</p>
-      <div class="form-group"><label>¿Cuántas semanas?</label><input type="number" name="semanas" min="1" max="26" value="4" /></div>`,
-    submitLabel: "Repetir",
+      <p class="text-muted">Copia los servicios de la semana elegida (<strong>${esc(nombre)}</strong>) en cada semana siguiente,
+        el mismo día y a la misma hora, hasta la fecha que pongas. Lo que ya exista igual no se duplica.</p>
+      <div class="form-grid">
+        <div class="form-group"><label>Semana a copiar (cualquier día de esa semana)</label>
+          <input type="date" name="semana" required value="${CRONO.semana}" /></div>
+        <div class="form-group"><label>Copiar hasta</label>
+          <input type="date" name="hasta" required value="${sumarDiasC(CRONO.semana, 7 * 4 + 6)}" /></div>
+      </div>
+      <p class="text-muted" style="font-size:12px">Máximo un año. Para cambiar de planta, usa el filtro de arriba antes de abrir este cuadro.</p>`,
+    submitLabel: "Copiar",
     async onSubmit(fd) {
-      const r = await post("/cronograma/repetir", {
-        semana: CRONO.semana,
-        semanas: Number(fd.get("semanas")) || 1,
-        sitio_id: CRONO.sitio && CRONO.sitio !== "sin_planta" ? CRONO.sitio : null,
-      });
+      const r = await post("/cronograma/repetir", { semana: fd.get("semana"), hasta: fd.get("hasta"), sitio_id: planta });
       closeModal();
-      toast(`${r.creadas} servicio(s) creados${r.saltadas ? ` · ${r.saltadas} ya existían` : ""}`);
+      const msg = r.creadas
+        ? `${r.creadas} servicio(s) copiados en ${r.semanas} semana(s) (del ${fechaCortaC(r.desde)} al ${fechaCortaC(r.hasta)})`
+        : `No se copió nada: los ${r.base} servicio(s) ya estaban en esas ${r.semanas} semana(s)`;
+      toast(msg + (r.creadas && r.saltadas ? ` · ${r.saltadas} ya estaban` : ""));
+      pintarCronograma();
     },
   });
 }

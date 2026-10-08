@@ -464,22 +464,37 @@ router.post("/importar", OFICINA, async (req, res) => {
 // existe el mismo servicio (planta, título y hora de inicio) se salta.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/repetir", OFICINA, async (req, res) => {
-  const { semana, sitio_id } = req.body || {};
-  const semanas = Math.min(Math.max(Number(req.body?.semanas) || 1, 1), 26);
+  let { semana, sitio_id } = req.body || {};
   if (!/^\d{4}-\d{2}-\d{2}$/.test(semana || "")) return res.status(400).json({ error: true, mensaje: "Semana no válida" });
+  // Siempre desde el lunes de la semana elegida, aunque llegue otro día.
+  const dSem = new Date(semana + "T12:00:00Z").getUTCDay();
+  semana = sumarDias(semana, -((dSem + 6) % 7));
+  // `hasta` (una fecha) manda sobre `semanas`: copia en todas las semanas
+  // hasta esa fecha. Tope de un año.
+  let semanas = Number(req.body?.semanas) || 1;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(req.body?.hasta || "")) {
+    const dias = Math.round((Date.parse(req.body.hasta + "T12:00:00Z") - Date.parse(semana + "T12:00:00Z")) / 86400000);
+    semanas = Math.floor(dias / 7);
+    if (semanas < 1) return res.status(400).json({ error: true, mensaje: "La fecha hasta debe ser al menos una semana después de la semana que se copia." });
+  }
+  semanas = Math.min(Math.max(semanas, 1), 52);
   if (sitio_id && !puedeVerSitio(req, sitio_id)) return res.status(403).json({ error: true, mensaje: "Sin acceso a esa planta" });
 
   try {
-    let q = supabase
-      .from("asa_cronograma")
-      .select("*")
-      .gte("fecha_inicio", aISO(semana))
-      .lt("fecha_inicio", aISO(sumarDias(semana, 7)))
-      .neq("estado", "cancelado");
-    if (sitio_id) q = q.eq("sitio_id", sitio_id);
-    const { data: base, error } = await q;
-    if (error) throw error;
-    if (!base?.length) return res.status(400).json({ error: true, mensaje: "Esa semana no tiene servicios para repetir." });
+    // Por páginas: una semana del Excel puede pasar de las 1000 filas que
+    // devuelve Supabase de una vez.
+    const base = await traerTodo(() => {
+      const q = supabase
+        .from("asa_cronograma")
+        .select("*")
+        .gte("fecha_inicio", aISO(semana))
+        .lt("fecha_inicio", aISO(sumarDias(semana, 7)))
+        .neq("estado", "cancelado")
+        .order("fecha_inicio")
+        .order("id");
+      return sitio_id ? q.eq("sitio_id", sitio_id) : q;
+    });
+    if (!base.length) return res.status(400).json({ error: true, mensaje: `La semana del ${semana} no tiene servicios para copiar${sitio_id ? " en esa planta" : ""}.` });
 
     const hastaTotal = sumarDias(semana, 7 * (semanas + 1));
     // traerTodo necesita una consulta nueva por página: un builder no se reusa.
@@ -515,7 +530,7 @@ router.post("/repetir", OFICINA, async (req, res) => {
       if (eI) throw eI;
     }
     logAccion(req, { accion: "crear", modulo: "cronograma", descripcion: `Semana del ${semana} repetida ${semanas} vez/veces: ${nuevas.length} servicios` });
-    res.json({ ok: true, creadas: nuevas.length, saltadas: base.length * semanas - nuevas.length });
+    res.json({ ok: true, creadas: nuevas.length, saltadas: base.length * semanas - nuevas.length, semanas, base: base.length, desde: sumarDias(semana, 7), hasta: sumarDias(semana, 7 * semanas + 6) });
   } catch (e) { error500(res, e); }
 });
 
