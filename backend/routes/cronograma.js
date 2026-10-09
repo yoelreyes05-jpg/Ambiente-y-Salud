@@ -349,6 +349,44 @@ router.post("/eliminar", OFICINA, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /cronograma/borrar-rango { desde, hasta, sitio_id?, solo_pendientes? }
+//
+// Borra lo programado entre dos fechas (inclusive): una semana, un mes o lo
+// que se elija. Con solo_pendientes (por defecto) no toca lo ya realizado,
+// que es historial del servicio.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/borrar-rango", OFICINA, async (req, res) => {
+  const { desde, hasta, sitio_id } = req.body || {};
+  const soloPendientes = req.body?.solo_pendientes !== false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde || "") || !/^\d{4}-\d{2}-\d{2}$/.test(hasta || "") || hasta < desde) {
+    return res.status(400).json({ error: true, mensaje: "Rango de fechas no válido" });
+  }
+  if (sitio_id && sitio_id !== "sin_planta" && !puedeVerSitio(req, sitio_id)) return res.status(403).json({ error: true, mensaje: "Sin acceso a esa planta" });
+  try {
+    const filas = await traerTodo(() => {
+      let q = supabase
+        .from("asa_cronograma")
+        .select("id")
+        .gte("fecha_inicio", aISO(desde))
+        .lt("fecha_inicio", aISO(sumarDias(hasta, 1)))
+        .order("id");
+      if (soloPendientes) q = q.neq("estado", "realizado");
+      if (sitio_id === "sin_planta") return q.is("sitio_id", null);
+      return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+    });
+    const ids = filas.map((f) => f.id);
+    let borradas = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from("asa_cronograma").delete().in("id", ids.slice(i, i + 200)).select("id");
+      if (error) throw error;
+      borradas += (data || []).length;
+    }
+    logAccion(req, { accion: "eliminar", modulo: "cronograma", descripcion: `Cronograma del ${desde} al ${hasta} borrado: ${borradas} servicio(s)${soloPendientes ? " (sin tocar realizados)" : ""}` });
+    res.json({ ok: true, borradas });
+  } catch (e) { error500(res, e); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /cronograma/importar
 //   { archivo: base64, vista_previa: true }                → qué trae el Excel
 //   { archivo: base64, mapeo: {texto: sitio_id}, reemplazar } → lo guarda

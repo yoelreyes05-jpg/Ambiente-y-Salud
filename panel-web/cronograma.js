@@ -61,6 +61,7 @@ async function viewCronograma(content) {
       <span class="toolbar-sep"></span>
       <button class="btn btn-sm" id="cr-copiar-ant" title="Trae a esta semana lo de la semana anterior, mismo día y hora">⤵ Copiar semana anterior</button>
       <button class="btn btn-sm" id="cr-repetir">Copiar semana a las siguientes…</button>
+      <button class="btn btn-sm btn-danger" id="cr-borrar-rango">Borrar semana / mes…</button>
       <button class="btn btn-sm" id="cr-nuevo">+ Servicio</button>
       <button class="btn btn-sm btn-primary" id="cr-excel">Subir Excel</button>
     </div>
@@ -82,6 +83,7 @@ async function viewCronograma(content) {
   $("#cr-excel").addEventListener("click", modalImportarCrono);
   $("#cr-repetir").addEventListener("click", modalRepetirCrono);
   $("#cr-copiar-ant").addEventListener("click", copiarSemanaAnterior);
+  $("#cr-borrar-rango").addEventListener("click", modalBorrarRangoCrono);
   await pintarCronograma();
 }
 
@@ -299,6 +301,55 @@ async function copiarSemanaAnterior() {
   } catch (e) { toast(e.message, true); }
 }
 
+// Borrar lo programado de una semana, un mes o un rango. Por defecto respeta
+// lo ya realizado.
+function modalBorrarRangoCrono() {
+  const planta = CRONO.sitio || "";
+  const nombre = planta === "sin_planta" ? "sin planta asignada" : planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre || "" : "todas las plantas";
+  const lunes = CRONO.semana;
+  const [y, m] = lunes.split("-").map(Number);
+  const iniMes = `${y}-${String(m).padStart(2, "0")}-01`;
+  const finMes = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  openModal({
+    title: "Borrar del cronograma",
+    bodyHTML: `
+      <p class="text-muted">Planta: <strong>${esc(nombre)}</strong> (cámbiala con el filtro de arriba).</p>
+      <div class="form-group"><label>¿Qué borrar?</label>
+        <select name="rango" id="br-rango">
+          <option value="semana">Esta semana (${fechaCortaC(lunes)} al ${fechaCortaC(sumarDiasC(lunes, 6))})</option>
+          <option value="mes">Todo el mes (${fechaCortaC(iniMes)} al ${fechaCortaC(finMes)}/${y})</option>
+          <option value="otro">Otro rango de fechas</option>
+        </select></div>
+      <div class="form-grid" id="br-fechas" style="display:none">
+        <div class="form-group"><label>Desde</label><input type="date" name="desde" value="${lunes}" /></div>
+        <div class="form-group"><label>Hasta</label><input type="date" name="hasta" value="${sumarDiasC(lunes, 6)}" /></div>
+      </div>
+      <label class="campo-check"><input type="checkbox" name="solo_pendientes" checked /> No borrar lo que ya está marcado como realizado</label>
+      <p class="text-muted" style="font-size:12px;margin-top:8px">No se puede deshacer.</p>`,
+    submitLabel: "Borrar",
+    onMount(overlay) {
+      const sel = overlay.querySelector("#br-rango");
+      sel.addEventListener("change", () => { overlay.querySelector("#br-fechas").style.display = sel.value === "otro" ? "" : "none"; });
+    },
+    async onSubmit(fd, overlay) {
+      const r = fd.get("rango");
+      const desde = r === "semana" ? lunes : r === "mes" ? iniMes : fd.get("desde");
+      const hasta = r === "semana" ? sumarDiasC(lunes, 6) : r === "mes" ? finMes : fd.get("hasta");
+      if (!desde || !hasta || hasta < desde) throw new Error("Revisa las fechas");
+      if (!confirm(`¿Borrar el cronograma de ${nombre} del ${fechaCortaC(desde)} al ${fechaCortaC(hasta)}?`)) {
+        overlay.querySelector("#asa-modal-submit").disabled = false;
+        return;
+      }
+      const res = await post("/cronograma/borrar-rango", {
+        desde, hasta, sitio_id: planta || null, solo_pendientes: fd.get("solo_pendientes") === "on",
+      });
+      closeModal();
+      toast(`${res.borradas} servicio(s) borrados`);
+      pintarCronograma();
+    },
+  });
+}
+
 function modalRepetirCrono() {
   const planta = CRONO.sitio && CRONO.sitio !== "sin_planta" ? CRONO.sitio : null;
   const nombre = planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre || "" : "todas las plantas";
@@ -313,7 +364,23 @@ function modalRepetirCrono() {
         <div class="form-group"><label>Copiar hasta</label>
           <input type="date" name="hasta" required value="${sumarDiasC(CRONO.semana, 7 * 4 + 6)}" /></div>
       </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 8px">
+        <span class="text-muted" style="font-size:12px;align-self:center">Hasta:</span>
+        <button type="button" class="btn btn-sm" data-hasta="mes">Fin de este mes</button>
+        <button type="button" class="btn btn-sm" data-hasta="3m">3 meses</button>
+        <button type="button" class="btn btn-sm" data-hasta="anio">Fin de año</button>
+        <button type="button" class="btn btn-sm" data-hasta="12m">12 meses</button>
+      </div>
       <p class="text-muted" style="font-size:12px">Máximo un año. Para cambiar de planta, usa el filtro de arriba antes de abrir este cuadro.</p>`,
+    onMount(overlay) {
+      overlay.querySelectorAll("[data-hasta]").forEach((b) => b.addEventListener("click", () => {
+        const base = overlay.querySelector('[name="semana"]').value || CRONO.semana;
+        const [y, m] = base.split("-").map(Number);
+        const finMes = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10); // mm 1-12
+        const v = { mes: finMes(y, m), "3m": finMes(y, m + 3), anio: `${y}-12-31`, "12m": sumarDiasC(base, 364) }[b.dataset.hasta];
+        overlay.querySelector('[name="hasta"]').value = v;
+      }));
+    },
     submitLabel: "Copiar",
     async onSubmit(fd) {
       const r = await post("/cronograma/repetir", { semana: fd.get("semana"), hasta: fd.get("hasta"), sitio_id: planta });
