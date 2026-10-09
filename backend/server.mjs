@@ -73,6 +73,7 @@ import auditoriaRouter from "./routes/auditoria.js";
 import flotaRouter, { publico as flotaPublico } from "./routes/flota.js";
 import documentosRouter from "./routes/documentos.js";
 import limpiezaRouter from "./routes/limpieza.js";
+import respaldoRouter from "./routes/respaldo.js";
 import incidenciasRouter from "./routes/incidencias.js";
 import cronogramaRouter from "./routes/cronograma.js";
 
@@ -123,6 +124,7 @@ app.use("/inventario", inventarioRouter);
 app.use("/documentos", documentosRouter);
 // Borrar datos de prueba — solo administrador (el router lo exige)
 app.use("/limpieza", limpiezaRouter);
+app.use("/respaldo", respaldoRouter);
 app.use("/incidencias", incidenciasRouter);   // chinche / código rosa: protocolo y certificado
 app.use("/cronograma", cronogramaRouter);     // programación de servicios (Excel)
 app.use("/notificaciones", notificacionesRouter);

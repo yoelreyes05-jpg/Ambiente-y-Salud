@@ -62,6 +62,7 @@ async function viewCronograma(content) {
       <button class="btn btn-sm" id="cr-copiar-ant" title="Trae a esta semana lo de la semana anterior, mismo día y hora">⤵ Copiar semana anterior</button>
       <button class="btn btn-sm" id="cr-repetir">Copiar semana a las siguientes…</button>
       <button class="btn btn-sm" id="cr-imprimir">🖨 Imprimir…</button>
+      <button class="btn btn-sm" id="cr-bajar-excel" title="Mismo formato que Subir Excel: se edita y se sube para otro hotel">⬇ Excel…</button>
       <button class="btn btn-sm btn-danger" id="cr-borrar-rango">Borrar semana / mes…</button>
       <button class="btn btn-sm" id="cr-nuevo">+ Servicio</button>
       <button class="btn btn-sm btn-primary" id="cr-excel">Subir Excel</button>
@@ -86,6 +87,7 @@ async function viewCronograma(content) {
   $("#cr-copiar-ant").addEventListener("click", copiarSemanaAnterior);
   $("#cr-borrar-rango").addEventListener("click", modalBorrarRangoCrono);
   $("#cr-imprimir").addEventListener("click", modalImprimirCrono);
+  $("#cr-bajar-excel").addEventListener("click", modalBajarExcelCrono);
   await pintarCronograma();
 }
 
@@ -301,6 +303,52 @@ async function copiarSemanaAnterior() {
     toast(`${r.creadas} servicio(s) copiados${r.saltadas ? ` · ${r.saltadas} ya estaban` : ""}`);
     pintarCronograma();
   } catch (e) { toast(e.message, true); }
+}
+
+// ── Bajar el cronograma en Excel ─────────────────────────────────────────
+// Mismo formato que lee "Subir Excel": se baja, se cambia la PLANTA (u otra
+// cosa) y se sube para otro hotel.
+function modalBajarExcelCrono() {
+  const planta = CRONO.sitio || "";
+  const nombre = planta === "sin_planta" ? "Sin planta asignada" : planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre || "" : "Todas las plantas";
+  const lunes = CRONO.semana;
+  const [y, m] = lunes.split("-").map(Number);
+  const iniMes = `${y}-${String(m).padStart(2, "0")}-01`;
+  const finMes = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  openModal({
+    title: "Bajar cronograma en Excel",
+    bodyHTML: `
+      <p class="text-muted">Planta: <strong>${esc(nombre)}</strong> (cámbiala con el filtro de arriba).
+        El archivo tiene las mismas columnas que <strong>Subir Excel</strong>: para usarlo en otro hotel, cambia la columna PLANTA y súbelo.</p>
+      <div class="form-group"><label>¿Qué bajar?</label>
+        <select name="rango" id="bx-rango">
+          <option value="semana">Esta semana (${fechaCortaC(lunes)} al ${fechaCortaC(sumarDiasC(lunes, 6))})</option>
+          <option value="mes">El mes (${fechaCortaC(iniMes)} al ${fechaCortaC(finMes)}/${y})</option>
+          <option value="otro">Otro rango de fechas</option>
+          <option value="todo">Todo el cronograma</option>
+        </select></div>
+      <div class="form-grid" id="bx-fechas" style="display:none">
+        <div class="form-group"><label>Desde</label><input type="date" name="desde" value="${lunes}" /></div>
+        <div class="form-group"><label>Hasta</label><input type="date" name="hasta" value="${sumarDiasC(lunes, 27)}" /></div>
+      </div>`,
+    submitLabel: "Bajar Excel",
+    onMount(overlay) {
+      const sel = overlay.querySelector("#bx-rango");
+      sel.addEventListener("change", () => { overlay.querySelector("#bx-fechas").style.display = sel.value === "otro" ? "" : "none"; });
+    },
+    async onSubmit(fd) {
+      const r = fd.get("rango");
+      const desde = { semana: lunes, mes: iniMes, todo: "2000-01-01" }[r] || fd.get("desde");
+      const hasta = { semana: sumarDiasC(lunes, 6), mes: finMes, todo: "2099-12-31" }[r] || fd.get("hasta");
+      if (!desde || !hasta || hasta < desde) throw new Error("Revisa las fechas");
+      const qs = new URLSearchParams({ desde, hasta });
+      if (planta) qs.set("sitio_id", planta);
+      const sufijo = (nombre || "plantas").replace(/[^\w]+/g, "-").toLowerCase();
+      await descargarPdf(`/cronograma/excel?${qs}`, r === "todo" ? `cronograma-${sufijo}-completo.xlsx` : `cronograma-${sufijo}-${desde}-a-${hasta}.xlsx`);
+      closeModal();
+      toast("Excel descargado");
+    },
+  });
 }
 
 // ── Imprimir el cronograma ───────────────────────────────────────────────

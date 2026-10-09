@@ -245,6 +245,7 @@ if (typeof MODULOS_EXTRA_8 !== "undefined") MODULES.push(...MODULOS_EXTRA_8);
 if (typeof MODULOS_EXTRA_9 !== "undefined") MODULES.push(...MODULOS_EXTRA_9);
 // cronograma.js aporta Cronograma (programación de servicios desde Excel).
 if (typeof MODULOS_EXTRA_10 !== "undefined") MODULES.push(...MODULOS_EXTRA_10);
+if (typeof MODULOS_EXTRA_11 !== "undefined") MODULES.push(...MODULOS_EXTRA_11);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:

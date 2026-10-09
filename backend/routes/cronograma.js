@@ -194,6 +194,82 @@ router.get("/", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /cronograma/excel?desde=&hasta=&sitio_id=  (solo oficina)
+//
+// El cronograma en el MISMO formato que lee "Subir Excel" (PLANTA, CLIENTE,
+// CONTRATO, PROG. SERVICIO, TITULO, FECHA INICIO, FECHA FIN, ESTADO, EQUIPO DE
+// TRABAJO, NOTAS). Se baja, se cambia la PLANTA (o lo que haga falta) y se
+// sube para otro hotel.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/excel", OFICINA, async (req, res) => {
+  const { sitio_id } = req.query;
+  if (sitio_id && sitio_id !== "sin_planta" && !exigirSitioPermitido(req, res, sitio_id)) return;
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || "") ? req.query.desde : "2000-01-01";
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || "") ? req.query.hasta : "2099-12-31";
+  try {
+    const filas = await traerTodo(() => {
+      const q = supabase
+        .from("asa_cronograma")
+        .select("*, asa_sitios(nombre, asa_clientes(razon_social, nombre_contacto))")
+        .gte("fecha_inicio", aISO(desde))
+        .lt("fecha_inicio", aISO(sumarDias(hasta, 1)))
+        .order("fecha_inicio")
+        .order("id");
+      if (sitio_id === "sin_planta") return q.is("sitio_id", null);
+      return sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+    });
+
+    const enRD = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const f = d.toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+      const h = d.toLocaleTimeString("en-GB", { timeZone: "America/Santo_Domingo", hour: "2-digit", minute: "2-digit" });
+      return `${f} ${h}`;
+    };
+    const ESTADO_TXT = { pendiente: "PENDIENTE", realizado: "REALIZADO", cancelado: "CANCELADO", reprogramado: "REPROGRAMADO" };
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Cronograma");
+    ws.columns = [
+      { header: "PLANTA", key: "planta", width: 32 },
+      { header: "CLIENTE", key: "cliente", width: 28 },
+      { header: "CONTRATO", key: "contrato", width: 16 },
+      { header: "PROG. SERVICIO", key: "tipo", width: 14 },
+      { header: "TITULO", key: "titulo", width: 38 },
+      { header: "FECHA INICIO", key: "inicio", width: 18 },
+      { header: "FECHA FIN", key: "fin", width: 18 },
+      { header: "ESTADO", key: "estado", width: 14 },
+      { header: "EQUIPO DE TRABAJO", key: "equipo", width: 34 },
+      { header: "NOTAS", key: "notas", width: 50 },
+    ];
+    for (const f of filas) {
+      ws.addRow({
+        planta: f.asa_sitios?.nombre || f.planta_texto || "",
+        cliente: f.asa_sitios?.asa_clientes?.razon_social || f.asa_sitios?.asa_clientes?.nombre_contacto || f.cliente_texto || "",
+        contrato: f.contrato || "",
+        tipo: f.tipo || "SERVICIO",
+        titulo: f.titulo || "",
+        inicio: enRD(f.fecha_inicio),
+        fin: enRD(f.fecha_fin),
+        estado: ESTADO_TXT[f.estado] || "PENDIENTE",
+        equipo: f.equipo || "",
+        notas: f.notas || "",
+      });
+    }
+    ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF32539C" } };
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.autoFilter = { from: "A1", to: "J1" };
+    ws.getColumn("notas").alignment = { wrapText: true, vertical: "top" };
+
+    const buf = await wb.xlsx.writeBuffer();
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="cronograma-${desde}-a-${hasta}.xlsx"`);
+    res.send(Buffer.from(buf));
+  } catch (e) { error500(res, e); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Alta, edición y borrado
 // ─────────────────────────────────────────────────────────────────────────────
 function validar(b, parcial = false) {
