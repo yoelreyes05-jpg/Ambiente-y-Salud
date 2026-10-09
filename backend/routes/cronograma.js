@@ -199,8 +199,9 @@ router.get("/", async (req, res) => {
 function validar(b, parcial = false) {
   const out = {};
   if (!parcial || "titulo" in b) {
-    const t = String(b.titulo || "").trim();
-    if (!t) throw Object.assign(new Error("El título es requerido"), { status: 400 });
+    // El título es opcional: si viene vacío se usa lo que se hace (notas) o
+    // "Servicio". La columna no admite vacío.
+    const t = String(b.titulo || "").trim() || String(b.notas || "").trim().split("\n")[0] || "Servicio";
     out.titulo = t.slice(0, 300);
   }
   if (!parcial || "fecha" in b || "hora_inicio" in b) {

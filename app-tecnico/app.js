@@ -318,7 +318,10 @@ function abrirMenu() {
     ["📅 Cronograma de la semana", () => { location.hash = "#/cronograma"; }],
     ["🛏️ Chinche / código rosa", () => { location.hash = "#/incidencias"; }],
     ["🚐 Chequeo del vehículo", () => { location.hash = "#/chequeo"; }],
-    ["🏨 Cambiar de hotel", () => { location.hash = ""; elegirHotel(); }],
+    // Una sola vía: la ruta #/hoteles. Antes se vaciaba el hash Y se llamaba a
+    // elegirHotel(): el hashchange pintaba la ruta de puntos encima de la
+    // lista de hoteles y había que tocar dos veces.
+    ["🏨 Cambiar de hotel", () => { if (location.hash === "#/hoteles") elegirHotel(); else location.hash = "#/hoteles"; }],
     ["↻ Sincronizar ahora", () => sincronizar(false)],
     ["🚪 Cerrar sesión", () => cerrarSesion()],
   ];

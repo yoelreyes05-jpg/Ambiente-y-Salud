@@ -61,6 +61,7 @@ async function viewCronograma(content) {
       <span class="toolbar-sep"></span>
       <button class="btn btn-sm" id="cr-copiar-ant" title="Trae a esta semana lo de la semana anterior, mismo día y hora">⤵ Copiar semana anterior</button>
       <button class="btn btn-sm" id="cr-repetir">Copiar semana a las siguientes…</button>
+      <button class="btn btn-sm" id="cr-imprimir">🖨 Imprimir…</button>
       <button class="btn btn-sm btn-danger" id="cr-borrar-rango">Borrar semana / mes…</button>
       <button class="btn btn-sm" id="cr-nuevo">+ Servicio</button>
       <button class="btn btn-sm btn-primary" id="cr-excel">Subir Excel</button>
@@ -84,6 +85,7 @@ async function viewCronograma(content) {
   $("#cr-repetir").addEventListener("click", modalRepetirCrono);
   $("#cr-copiar-ant").addEventListener("click", copiarSemanaAnterior);
   $("#cr-borrar-rango").addEventListener("click", modalBorrarRangoCrono);
+  $("#cr-imprimir").addEventListener("click", modalImprimirCrono);
   await pintarCronograma();
 }
 
@@ -169,7 +171,7 @@ async function pintarCronograma() {
       <div class="cr-hora">${horaRDc(f.fecha_inicio)}${f.fecha_fin ? ` – ${horaRDc(f.fecha_fin)}` : ""}</div>
       ${CRONO.vista === "semana" && !CRONO.sitio ? `<div class="cr-planta" style="color:${colorPlanta(f.planta)}">${esc(f.planta)}</div>` : ""}
       <div class="cr-tit">${esc(f.notas || f.titulo)}</div>
-      ${f.notas ? `<div class="cr-sub">${esc(f.titulo)}</div>` : ""}
+      ${f.notas && f.titulo !== f.notas ? `<div class="cr-sub">${esc(f.titulo)}</div>` : ""}
       ${f.estado !== "pendiente" ? `<div>${chipCrono(f.estado)}</div>` : ""}
     </div>`;
 
@@ -234,7 +236,7 @@ function modalServicioCrono(f) {
           <div style="flex:1"><label>Hora inicio</label><input type="time" name="hora_inicio" value="${f ? horaRDc(f.fecha_inicio) : "09:00"}" /></div>
           <div style="flex:1"><label>Hora fin</label><input type="time" name="hora_fin" value="${f?.fecha_fin ? horaRDc(f.fecha_fin) : ""}" /></div>
         </div>
-        <div class="form-group full"><label>Título *</label><input name="titulo" required value="${esc(f?.titulo || "")}" placeholder="IJ001 - MANEJO INTEGRADO DE PLAGAS" /></div>
+        <div class="form-group full"><label>Título (opcional)</label><input name="titulo" value="${esc(f?.titulo || "")}" placeholder="IJ001 - MANEJO INTEGRADO DE PLAGAS" /></div>
         <div class="form-group full"><label>Qué se hace (notas)</label><textarea name="notas" rows="2" placeholder="Recorrido diario / inspección de áreas, monitoreo de lámparas…">${esc(f?.notas || "")}</textarea></div>
         <div class="form-group full"><label>Equipo de trabajo</label><input name="equipo" value="${esc(f?.equipo || "")}" placeholder="Santo Liranzo, Eduard Paniagua…" /></div>
         <div class="form-group"><label>Contrato</label><input name="contrato" value="${esc(f?.contrato || "")}" /></div>
@@ -299,6 +301,138 @@ async function copiarSemanaAnterior() {
     toast(`${r.creadas} servicio(s) copiados${r.saltadas ? ` · ${r.saltadas} ya estaban` : ""}`);
     pintarCronograma();
   } catch (e) { toast(e.message, true); }
+}
+
+// ── Imprimir el cronograma ───────────────────────────────────────────────
+// Semana, mes, rango o todo lo programado, de la planta del filtro. Se abre
+// una hoja lista para imprimir o guardar como PDF, agrupada por semana y día.
+function modalImprimirCrono() {
+  const planta = CRONO.sitio || "";
+  const nombre = planta === "sin_planta" ? "Sin planta asignada" : planta ? CRONO.sitios.find((s) => s.id === planta)?.nombre || "" : "Todas las plantas";
+  const lunes = CRONO.semana;
+  const [y, m] = lunes.split("-").map(Number);
+  const iniMes = `${y}-${String(m).padStart(2, "0")}-01`;
+  const finMes = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  openModal({
+    title: "Imprimir cronograma",
+    bodyHTML: `
+      <p class="text-muted">Planta: <strong>${esc(nombre)}</strong> (cámbiala con el filtro de arriba).</p>
+      <div class="form-group"><label>¿Qué imprimir?</label>
+        <select name="rango" id="ip-rango">
+          <option value="semana">Esta semana (${fechaCortaC(lunes)} al ${fechaCortaC(sumarDiasC(lunes, 6))})</option>
+          <option value="mes">El mes (${fechaCortaC(iniMes)} al ${fechaCortaC(finMes)}/${y})</option>
+          <option value="otro">Otro rango de fechas</option>
+          <option value="todo">Todo lo programado</option>
+        </select></div>
+      <div class="form-grid" id="ip-fechas" style="display:none">
+        <div class="form-group"><label>Desde</label><input type="date" name="desde" value="${lunes}" /></div>
+        <div class="form-group"><label>Hasta</label><input type="date" name="hasta" value="${sumarDiasC(lunes, 27)}" /></div>
+      </div>
+      <label class="campo-check"><input type="checkbox" name="con_equipo" checked /> Incluir el equipo de trabajo</label>
+      <label class="campo-check"><input type="checkbox" name="con_estado" /> Incluir el estado (pendiente / realizado)</label>`,
+    submitLabel: "Imprimir",
+    onMount(overlay) {
+      const sel = overlay.querySelector("#ip-rango");
+      sel.addEventListener("change", () => { overlay.querySelector("#ip-fechas").style.display = sel.value === "otro" ? "" : "none"; });
+    },
+    async onSubmit(fd) {
+      const r = fd.get("rango");
+      const desde = { semana: lunes, mes: iniMes, todo: "2000-01-01" }[r] || fd.get("desde");
+      const hasta = { semana: sumarDiasC(lunes, 6), mes: finMes, todo: "2099-12-31" }[r] || fd.get("hasta");
+      if (!desde || !hasta || hasta < desde) throw new Error("Revisa las fechas");
+      // La ventana se abre antes de pedir los datos: si se abre después de un
+      // await, el navegador la toma como emergente y la bloquea.
+      const ventana = window.open("", "_blank");
+      if (!ventana) throw new Error("El navegador bloqueó la ventana. Permite las ventanas emergentes de este sitio.");
+      ventana.document.write("<p style='font-family:sans-serif;padding:20px'>Preparando el cronograma…</p>");
+      const qs = new URLSearchParams({ desde, hasta });
+      if (planta) qs.set("sitio_id", planta);
+      let datos;
+      try { datos = await get(`/cronograma?${qs}`); } catch (e) { ventana.close(); throw e; }
+      closeModal();
+      escribirCronogramaImprimible(ventana, datos.filas, {
+        nombre, desde: r === "todo" ? null : desde, hasta: r === "todo" ? null : hasta,
+        conEquipo: fd.get("con_equipo") === "on", conEstado: fd.get("con_estado") === "on", variasPlantas: !planta,
+      });
+    },
+  });
+}
+
+function escribirCronogramaImprimible(ventana, filas, o) {
+  const fechaLarga = (f) => {
+    const t = new Date(f + "T12:00:00Z").toLocaleDateString("es-DO", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  const porSemana = new Map();
+  for (const f of filas) {
+    const dia = fechaRDc(f.fecha_inicio);
+    const sem = lunesDe(dia);
+    if (!porSemana.has(sem)) porSemana.set(sem, new Map());
+    const dias = porSemana.get(sem);
+    if (!dias.has(dia)) dias.set(dia, []);
+    dias.get(dia).push(f);
+  }
+  const estadoTxt = Object.fromEntries(CRONO_ESTADOS);
+  const columnas = ["Hora", ...(o.variasPlantas ? ["Planta"] : []), "Servicio", ...(o.conEquipo ? ["Equipo"] : []), ...(o.conEstado ? ["Estado"] : [])];
+  const semanas = [...porSemana.keys()].sort().map((sem) => `
+    <section class="semana">
+      <h2>Semana del ${fechaCortaC(sem)} al ${fechaCortaC(sumarDiasC(sem, 6))}/${sumarDiasC(sem, 6).slice(0, 4)}</h2>
+      <table>
+        <thead><tr>${columnas.map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+        ${[...porSemana.get(sem).keys()].sort().map((dia) => `
+          <tbody>
+            <tr class="dia"><td colspan="${columnas.length}">${esc(fechaLarga(dia))}</td></tr>
+            ${porSemana.get(sem).get(dia).map((f) => `
+              <tr>
+                <td class="hora">${horaRDc(f.fecha_inicio)}${f.fecha_fin ? `–${horaRDc(f.fecha_fin)}` : ""}</td>
+                ${o.variasPlantas ? `<td>${esc(f.planta)}</td>` : ""}
+                <td><strong>${esc(f.notas || f.titulo)}</strong>${f.notas && f.titulo !== f.notas ? `<div class="sub">${esc(f.titulo)}</div>` : ""}</td>
+                ${o.conEquipo ? `<td>${esc(f.equipo || "")}</td>` : ""}
+                ${o.conEstado ? `<td>${esc(estadoTxt[f.estado] || f.estado)}</td>` : ""}
+              </tr>`).join("")}
+          </tbody>`).join("")}
+      </table>
+    </section>`).join("");
+
+  const periodo = o.desde ? `Del ${fechaCortaC(o.desde)}/${o.desde.slice(0, 4)} al ${fechaCortaC(o.hasta)}/${o.hasta.slice(0, 4)}` : "Todo lo programado";
+  const logo = new URL("assets/logo-asa.png", location.href).href;
+  ventana.document.open();
+  ventana.document.write(`<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8" />
+<title>Cronograma de trabajo — ${esc(o.nombre)}</title>
+<style>
+  @page { size: letter; margin: 12mm; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color:#1c2433; margin:0; padding:12mm; font-size:11px }
+  .cab { display:flex; justify-content:space-between; align-items:center; border-bottom:3px solid #4A7D4D; padding-bottom:8px; margin-bottom:12px }
+  .cab img { height:42px }
+  .cab .t { text-align:right }
+  .cab h1 { margin:0; font-size:17px; color:#24407C }
+  .cab p { margin:2px 0 0; color:#555 }
+  .semana { margin-bottom:14px }
+  h2 { font-size:13px; color:#fff; background:#32539C; padding:5px 8px; margin:0; border-radius:4px 4px 0 0 }
+  table { width:100%; border-collapse:collapse }
+  th { text-align:left; font-size:10px; color:#555; border-bottom:1px solid #BAC9E1; padding:4px 6px; background:#EAF0F8 }
+  td { padding:4px 6px; border-bottom:1px solid #e3e8ef; vertical-align:top }
+  tr.dia td { background:#f5f7fa; font-weight:700; color:#24407C }
+  td.hora { white-space:nowrap; width:80px; font-variant-numeric:tabular-nums }
+  .sub { color:#777; font-size:10px }
+  tbody { break-inside:avoid }
+  .vacio { padding:30px; text-align:center; color:#777 }
+  .aviso { background:#EAF0F8; border:1px solid #BAC9E1; padding:10px 12px; border-radius:6px; margin-bottom:12px;
+           display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:12px }
+  .aviso button { background:#32539C; color:#fff; border:0; border-radius:6px; padding:8px 14px; font-weight:700; cursor:pointer }
+  @media print { .aviso { display:none } body { padding:0 } }
+</style></head>
+<body>
+  <div class="aviso"><span><strong>${filas.length} servicio(s).</strong> En el diálogo de impresión puedes elegir <em>Guardar como PDF</em>.</span>
+    <button onclick="window.print()">Imprimir / Guardar PDF</button></div>
+  <div class="cab">
+    <img src="${esc(logo)}" alt="Ambiente y Salud" />
+    <div class="t"><h1>Cronograma de trabajo</h1><p><strong>${esc(o.nombre)}</strong></p><p>${esc(periodo)}</p></div>
+  </div>
+  ${semanas || `<div class="vacio">No hay servicios programados en ese período.</div>`}
+</body></html>`);
+  ventana.document.close();
 }
 
 // Borrar lo programado de una semana, un mes o un rango. Por defecto respeta
