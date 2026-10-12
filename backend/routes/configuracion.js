@@ -108,6 +108,7 @@ const POR_DEFECTO = {
     telefono: "",
     telefono_alterno: "",
     email: "",
+    email_alterno: "",
     web: "",
     direccion: "",
     licencia_sanitaria: "",

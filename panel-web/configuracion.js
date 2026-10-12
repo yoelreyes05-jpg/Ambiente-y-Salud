@@ -54,6 +54,7 @@ const CAMPOS_EMPRESA = [
   ["telefono", "Teléfono principal", "+1 (829) 260-5444"],
   ["telefono_alterno", "Teléfono alterno", ""],
   ["email", "Correo", "info@ambienteysaludrd.com"],
+  ["email_alterno", "Correo alterno", ""],
   ["web", "Página web", "ambienteysalud.online"],
   ["direccion", "Dirección", "Av. Prof. Juan Bosch, Santo Domingo Este"],
   ["licencia_sanitaria", "Licencia sanitaria", "Número que exige Salud Pública"],

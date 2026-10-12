@@ -536,17 +536,32 @@ function abrirDocumento(d, { titulo, tituloInfo }) {
   const x0 = doc.page.margins.left;
   const ancho = ANCHO_UTIL(doc);
 
-  doc.rect(0, 0, doc.page.width, 106).fill(C.azul);
+  // Debajo del nombre, en este orden: dirección; teléfonos y RNC; correos y
+  // página web. Cada línea sale solo si tiene algo, y la franja azul crece
+  // con lo que haya (una dirección larga puede ocupar dos renglones).
+  const telefonos = [e.telefono, e.telefono_alterno].filter(Boolean).join(" / ");
+  const lineas = [
+    e.direccion,
+    [telefonos ? `Tel.: ${telefonos}` : null, e.rnc ? `RNC: ${e.rnc}` : null].filter(Boolean).join("  ·  "),
+    [[e.email, e.email_alterno].filter(Boolean).join(" / "), e.web].filter(Boolean).join("  ·  "),
+  ].filter(Boolean).map(limpiar);
+  doc.font("Helvetica").fontSize(8.6);
+  const altoLineas = lineas.reduce((h, l) => h + doc.heightOfString(l, { width: ancho }) + 2, 0);
+  const altoFranja = Math.max(106, 52 + altoLineas + 26);
+
+  doc.rect(0, 0, doc.page.width, altoFranja).fill(C.azul);
   doc.fillColor("#FFFFFF").font("Helvetica-Bold").fontSize(20)
      .text(limpiar(e.nombre || "Ambiente y Salud RD"), x0, 26, { width: ancho - 150 });
-  doc.font("Helvetica").fontSize(8.6).fillColor(C.azulClaro)
-     .text(limpiar([e.razon_social, e.rnc ? `RNC ${e.rnc}` : null].filter(Boolean).join(" · ")), x0, 52)
-     .text(limpiar([e.telefono, e.email, e.web].filter(Boolean).join(" · ")), x0, 64)
-     .text(limpiar(e.direccion), x0, 76, { width: ancho - 150 });
+  doc.font("Helvetica").fontSize(8.6).fillColor(C.azulClaro);
+  let yLinea = 52;
+  for (const l of lineas) {
+    doc.text(l, x0, yLinea, { width: ancho });
+    yLinea = doc.y + 2;
+  }
   doc.font("Helvetica-Bold").fontSize(8.4).fillColor("#FFFFFF")
-     .text("CONTROL INTEGRADO DE PLAGAS", x0, 90);
+     .text("CONTROL INTEGRADO DE PLAGAS", x0, altoFranja - 16);
 
-  doc.y = 124;
+  doc.y = altoFranja + 18;
   doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(17)
      .text(limpiar(titulo), x0, doc.y, { width: ancho });
   doc.font("Helvetica").fontSize(11).fillColor(C.suave)
