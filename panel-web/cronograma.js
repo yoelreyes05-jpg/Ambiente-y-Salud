@@ -22,7 +22,52 @@ let CRONO = { semana: null, sitio: "", vista: "semana", sitios: [] };
 
 const tz = { timeZone: "America/Santo_Domingo" };
 const fechaRDc = (iso) => new Date(iso).toLocaleDateString("en-CA", tz);
-const horaRDc = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { ...tz, hour: "2-digit", minute: "2-digit" }) : "");
+// 24 h ("18:30"): para los cálculos y lo que se manda al backend
+const hora24C = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { ...tz, hour: "2-digit", minute: "2-digit" }) : "");
+// 12 h ("6:30 p. m."): lo que se ve en pantalla y en lo impreso
+const a12C = (hhmm) => {
+  if (!hhmm) return "";
+  const [h, m] = hhmm.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "a. m." : "p. m."}`;
+};
+const horaRDc = (iso) => a12C(hora24C(iso));
+
+// La jornada empieza a las 9:00 a. m.: una hora de 9 a 11 es de la mañana, y
+// de 12 a 8 es de la tarde o la noche ("de 6 a 7" = 6:00 a 7:00 p. m.). La
+// excepción es el fin de un nocturno: si empezó de 9 p. m. en adelante, un
+// fin de 1 a 8 es de la madrugada (10:30 p. m. a 2:00 a. m.).
+const meridianoSugerido = (h12, inicio24 = null) => {
+  if (inicio24 && Number(inicio24.slice(0, 2)) >= 21 && h12 >= 1 && h12 <= 8) return "am";
+  return h12 >= 9 && h12 <= 11 ? "am" : "pm";
+};
+
+// Selector de hora en 12 h: hora, minutos y a. m. / p. m.
+function selectorHora12(pre, valor24, opcional = false) {
+  const [h, m] = valor24 ? valor24.split(":").map(Number) : [null, 0];
+  const h12 = h == null ? null : h % 12 || 12;
+  const minutos = [...new Set([...Array(12)].map((_, i) => i * 5).concat(m || 0))].sort((a, b) => a - b);
+  return `<div style="display:flex;gap:4px">
+    <select name="${pre}_h" data-hora12="${pre}" style="flex:1">
+      ${opcional ? `<option value=""${h12 == null ? " selected" : ""}>—</option>` : ""}
+      ${[...Array(12)].map((_, i) => i + 1).map((x) => `<option value="${x}"${x === h12 ? " selected" : ""}>${x}</option>`).join("")}
+    </select>
+    <select name="${pre}_m" style="flex:1">${minutos.map((x) => `<option value="${x}"${x === (m || 0) ? " selected" : ""}>${String(x).padStart(2, "0")}</option>`).join("")}</select>
+    <select name="${pre}_ap" style="flex:1">
+      <option value="am"${h != null && h < 12 ? " selected" : ""}>a. m.</option>
+      <option value="pm"${h == null || h >= 12 ? " selected" : ""}>p. m.</option>
+    </select>
+  </div>`;
+}
+// Lee el selector y devuelve "HH:MM" en 24 h ("" si no se eligió hora)
+function leerHora12(cuerpo, pre) {
+  const h = Number(cuerpo[`${pre}_h`]);
+  const m = Number(cuerpo[`${pre}_m`]) || 0;
+  const ap = cuerpo[`${pre}_ap`];
+  delete cuerpo[`${pre}_h`]; delete cuerpo[`${pre}_m`]; delete cuerpo[`${pre}_ap`];
+  if (!h) return "";
+  const h24 = (h % 12) + (ap === "pm" ? 12 : 0);
+  return `${String(h24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 const sumarDiasC = (f, n) => {
   const d = new Date(f + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -235,8 +280,8 @@ function modalServicioCrono(f) {
         </div>
         <div class="form-group"><label>Fecha *</label><input type="date" name="fecha" required value="${fecha}" /></div>
         <div class="form-group" style="display:flex;gap:8px">
-          <div style="flex:1"><label>Hora inicio</label><input type="time" name="hora_inicio" value="${f ? horaRDc(f.fecha_inicio) : "09:00"}" /></div>
-          <div style="flex:1"><label>Hora fin</label><input type="time" name="hora_fin" value="${f?.fecha_fin ? horaRDc(f.fecha_fin) : ""}" /></div>
+          <div style="flex:1"><label>Hora inicio</label>${selectorHora12("hi", f ? hora24C(f.fecha_inicio) : "09:00")}</div>
+          <div style="flex:1"><label>Hora fin</label>${selectorHora12("hf", f?.fecha_fin ? hora24C(f.fecha_fin) : "", true)}</div>
         </div>
         <div class="form-group full"><label>Título (opcional)</label><input name="titulo" value="${esc(f?.titulo || "")}" placeholder="IJ001 - MANEJO INTEGRADO DE PLAGAS" /></div>
         <div class="form-group full"><label>Qué se hace (notas)</label><textarea name="notas" rows="2" placeholder="Recorrido diario / inspección de áreas, monitoreo de lámparas…">${esc(f?.notas || "")}</textarea></div>
@@ -256,7 +301,23 @@ function modalServicioCrono(f) {
       ${f ? `<p class="text-muted">Origen: ${esc(f.origen)}${f.creado_por ? ` · ${esc(f.creado_por)}` : ""}. Si la hora de fin es menor que la de inicio, termina al día siguiente.</p>` : ""}
       ${f ? `<button type="button" class="btn btn-danger btn-sm" id="cr-borrar">Borrar este servicio</button>` : ""}`,
     submitLabel: nuevo ? "Agregar" : "Guardar cambios",
-    onMount() {
+    onMount(overlay) {
+      // Al elegir la hora se pone sola a. m. o p. m. según la jornada (se puede cambiar)
+      const raiz = overlay || document;
+      raiz.querySelectorAll("[data-hora12]").forEach((sel) => {
+        sel.addEventListener("change", () => {
+          const pre = sel.dataset.hora12;
+          const h12 = Number(sel.value);
+          if (!h12) return;
+          const ap = raiz.querySelector(`[name="${pre}_ap"]`);
+          let inicio24 = null;
+          if (pre === "hf") {
+            const c = Object.fromEntries(["hi_h", "hi_m", "hi_ap"].map((n) => [n, raiz.querySelector(`[name="${n}"]`)?.value]));
+            inicio24 = leerHora12(c, "hi");
+          }
+          ap.value = meridianoSugerido(h12, inicio24);
+        });
+      });
       $("#cr-borrar")?.addEventListener("click", async () => {
         if (!confirm("¿Borrar este servicio del cronograma?")) return;
         await api(`/cronograma/${f.id}`, { method: "DELETE" });
@@ -267,6 +328,8 @@ function modalServicioCrono(f) {
     },
     async onSubmit(fd) {
       const cuerpo = Object.fromEntries(fd.entries());
+      cuerpo.hora_inicio = leerHora12(cuerpo, "hi") || "09:00";
+      cuerpo.hora_fin = leerHora12(cuerpo, "hf");
       const alcance = cuerpo.alcance_horario || "solo";
       delete cuerpo.alcance_horario;
       let extra = "";
@@ -278,7 +341,7 @@ function modalServicioCrono(f) {
             hora_inicio: cuerpo.hora_inicio,
             hora_fin: cuerpo.hora_fin || "",
             alcance,
-            hora_original: horaRDc(f.fecha_inicio),
+            hora_original: hora24C(f.fecha_inicio),
           });
           extra = ` · horario aplicado a ${r.cambiados} servicio(s)`;
         }
@@ -462,7 +525,7 @@ function escribirCronogramaImprimible(ventana, filas, o) {
   th { text-align:left; font-size:10px; color:#555; border-bottom:1px solid #BAC9E1; padding:4px 6px; background:#EAF0F8 }
   td { padding:4px 6px; border-bottom:1px solid #e3e8ef; vertical-align:top }
   tr.dia td { background:#f5f7fa; font-weight:700; color:#24407C }
-  td.hora { white-space:nowrap; width:80px; font-variant-numeric:tabular-nums }
+  td.hora { white-space:nowrap; width:150px; font-variant-numeric:tabular-nums }
   .sub { color:#777; font-size:10px }
   tbody { break-inside:avoid }
   .vacio { padding:30px; text-align:center; color:#777 }

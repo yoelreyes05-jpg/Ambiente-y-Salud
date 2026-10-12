@@ -11,7 +11,12 @@
 const TZ_P = { timeZone: "America/Santo_Domingo" };
 const DIAS_P = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const fechaRDp = (iso) => new Date(iso).toLocaleDateString("en-CA", TZ_P);
-const horaRDp = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { ...TZ_P, hour: "2-digit", minute: "2-digit" }) : "");
+// Hora en 12 h, como se trabaja en el campo: "6:30 p. m."
+const horaRDp = (iso) => {
+  if (!iso) return "";
+  const [h, m] = new Date(iso).toLocaleTimeString("en-GB", { ...TZ_P, hour: "2-digit", minute: "2-digit" }).split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "a. m." : "p. m."}`;
+};
 const masDiasP = (f, n) => {
   const d = new Date(f + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -145,7 +150,7 @@ async function imprimirCronogramaP(rango, desdeSel, hastaSel, conEstado) {
   th { text-align:left; font-size:10px; color:#555; border-bottom:1px solid #BAC9E1; padding:4px 6px; background:#EAF0F8 }
   td { padding:4px 6px; border-bottom:1px solid #e3e8ef; vertical-align:top }
   tr.dia td { background:#f5f7fa; font-weight:700; color:#24407C }
-  td.hora { white-space:nowrap; width:80px } .sub { color:#777; font-size:10px }
+  td.hora { white-space:nowrap; width:150px } .sub { color:#777; font-size:10px }
   tbody { break-inside:avoid } .vacio { padding:30px; text-align:center; color:#777 }
   .aviso { background:#EAF0F8; border:1px solid #BAC9E1; padding:10px 12px; border-radius:6px; margin-bottom:12px;
            display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:12px }

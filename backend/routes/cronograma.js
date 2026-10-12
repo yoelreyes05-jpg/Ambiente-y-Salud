@@ -51,13 +51,30 @@ function leerFechaCelda(v) {
     return leerFechaCelda(new Date(ms));
   }
   const t = String(v).trim();
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::\d{2})?)?/.exec(t);
-  if (m) return aISO(`${m[1]}-${pad(m[2])}-${pad(m[3])}`, `${pad(m[4] || 0)}:${m[5] || "00"}`);
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(.*)$/.exec(t);
+  if (m) return aISO(`${m[1]}-${pad(m[2])}-${pad(m[3])}`, leerHora(m[4]));
   // 01/10/2026 09:00 (día/mes/año, como se escribe en RD)
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(t);
-  if (m) return aISO(`${m[3]}-${pad(m[2])}-${pad(m[1])}`, `${pad(m[4] || 0)}:${m[5] || "00"}`);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(.*)$/.exec(t);
+  if (m) return aISO(`${m[3]}-${pad(m[2])}-${pad(m[1])}`, leerHora(m[4]));
   return null;
 }
+
+// La hora que viene detrás de la fecha: "18:30", "6:30 p. m.", "6:30pm",
+// "6 PM", "10:30 a.m.". Con a. m. / p. m. se respeta; sin ellos es 24 h,
+// como la escribe el sistema de antes.
+function leerHora(resto) {
+  const m = /^[ T]*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(?:([ap])\.?\s*m\.?)?/i.exec(resto || "");
+  if (!m || (!m[2] && !m[3])) return "00:00";
+  let h = Number(m[1]);
+  if (m[3]) h = (h % 12) + (m[3].toLowerCase() === "p" ? 12 : 0);
+  return `${pad(Math.min(h, 23))}:${m[2] || "00"}`;
+}
+
+// "18:30" → "6:30 p. m."
+export const a12 = (hhmm) => {
+  const [h, m] = String(hhmm).split(":").map(Number);
+  return `${h % 12 || 12}:${pad(m)} ${h < 12 ? "a. m." : "p. m."}`;
+};
 
 const texto = (v) => {
   if (v == null) return "";
@@ -145,6 +162,10 @@ export async function leerExcel(base64) {
       if (!inicio && !tituloTxt && !plantaTxt) return;          // fila vacía
       if (!inicio) { errores.push(`Hoja "${ws.name}", fila ${n}: fecha de inicio no válida`); return; }
       let fin = leerFechaCelda(v("fin"));
+      // "10:30 p. m." a "2:00 a. m." con la misma fecha: termina al día siguiente
+      if (fin && new Date(fin) < new Date(inicio) && fin.slice(0, 10) === inicio.slice(0, 10)) {
+        fin = aISO(sumarDias(fin.slice(0, 10), 1), fin.slice(11, 16));
+      }
       if (fin && new Date(fin) < new Date(inicio)) fin = null;
       filas.push({
         fila: n,
@@ -224,7 +245,7 @@ router.get("/excel", OFICINA, async (req, res) => {
       const d = new Date(iso);
       const f = d.toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
       const h = d.toLocaleTimeString("en-GB", { timeZone: "America/Santo_Domingo", hour: "2-digit", minute: "2-digit" });
-      return `${f} ${h}`;
+      return `${f} ${a12(h)}`;   // 12 h; "Subir Excel" lo vuelve a leer igual
     };
     const ESTADO_TXT = { pendiente: "PENDIENTE", realizado: "REALIZADO", cancelado: "CANCELADO", reprogramado: "REPROGRAMADO" };
 

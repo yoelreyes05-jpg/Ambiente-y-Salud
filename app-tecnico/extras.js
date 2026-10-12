@@ -12,7 +12,12 @@
 const TZ_RD = { timeZone: "America/Santo_Domingo" };
 const DIAS_SEM = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const fechaRDt = (iso) => new Date(iso).toLocaleDateString("en-CA", TZ_RD);
-const horaRDt = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { ...TZ_RD, hour: "2-digit", minute: "2-digit" }) : "");
+// Hora en 12 h, como se trabaja en el campo: "6:30 p. m."
+const horaRDt = (iso) => {
+  if (!iso) return "";
+  const [h, m] = new Date(iso).toLocaleTimeString("en-GB", { ...TZ_RD, hour: "2-digit", minute: "2-digit" }).split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "a. m." : "p. m."}`;
+};
 const masDias = (f, n) => {
   const d = new Date(f + "T12:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
