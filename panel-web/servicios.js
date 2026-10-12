@@ -421,7 +421,7 @@ async function imprimirServicio(d) {
     <div class="imp-encabezado">
       <div>
         <h1>${esc(CONFIG.NOMBRE_SISTEMA)}</h1>
-        <p>Comprobante de servicio · Control integrado de plagas</p>
+        <p>Comprobante de servicio · Manejo integrado de plagas</p>
         <p>${esc(d.planta || "")}${d.cliente ? ` · ${esc(d.cliente)}` : ""}</p>
       </div>
       <p>Impreso el ${esc(new Date().toLocaleString("es-DO"))}</p>

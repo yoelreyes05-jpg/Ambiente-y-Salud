@@ -559,7 +559,7 @@ function abrirDocumento(d, { titulo, tituloInfo }) {
     yLinea = doc.y + 2;
   }
   doc.font("Helvetica-Bold").fontSize(8.4).fillColor("#FFFFFF")
-     .text("CONTROL INTEGRADO DE PLAGAS", x0, altoFranja - 16);
+     .text("MANEJO INTEGRADO DE PLAGAS", x0, altoFranja - 16);
 
   doc.y = altoFranja + 18;
   doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(17)
