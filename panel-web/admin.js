@@ -957,31 +957,58 @@ function modalImportarPuntos(sitioId, onSaved) {
       };
 
       const boton = $("#asa-modal-submit");
+      const previa = $("#previsualizacion");
+      // Lo que se eligió en la vista previa: área del Excel → área de la planta
+      const mapaElegido = () => {
+        const m = {};
+        previa.querySelectorAll("[data-area-excel]").forEach((sel) => { m[sel.dataset.areaExcel] = sel.value; });
+        return m;
+      };
+
       // Primera pasada: simular. Segunda: confirmar.
       if (boton.dataset.confirmar !== "si") {
         const r = await post("/puntos/importar", { ...cuerpo, simular: true });
-        $("#previsualizacion").innerHTML = `
+        const avisos = r.advertencias || r.errores || [];
+        const mapeo = r.areas_mapeo || [];
+        const etiqueta = { igual: "mismo nombre", parecida: "nombre parecido: revísala", elegida: "elegida", nueva: "se creará nueva" };
+        previa.innerHTML = `
           <div class="resumen-import">
-            <div><strong>${r.puntos_nuevos ?? r.creados ?? 0}</strong> puntos se crearían</div>
+            <div><strong>${r.puntos_a_crear ?? r.puntos_nuevos ?? 0}</strong> puntos se crearían</div>
             <div><strong>${r.qr_conservados ?? 0}</strong> QR impresos se conservarían</div>
-            <div><strong>${(r.areas_nuevas || []).length}</strong> áreas nuevas</div>
-            <div><strong>${(r.estrategias_nuevas || []).length}</strong> estrategias nuevas</div>
+            <div><strong>${mapeo.filter((a) => a.area_id).length}</strong> áreas reconocidas · <strong>${mapeo.filter((a) => !a.area_id).length}</strong> áreas nuevas</div>
+            <div><strong>${(r.estrategias_nuevas || []).length}</strong> estrategias nuevas${(r.estrategias_nuevas || []).length ? `: ${esc(r.estrategias_nuevas.join(", "))}` : ""}</div>
             ${
-              (r.errores || []).length
+              avisos.length
                 ? `<div class="form-error" style="display:block;margin-top:10px">
-                     ${r.errores.length} fila(s) con problema:<br>
-                     ${r.errores.slice(0, 8).map((e) => `línea ${e.linea}: ${esc(e.mensaje)}`).join("<br>")}
+                     ${avisos.length} aviso(s):<br>
+                     ${avisos.slice(0, 8).map((e) => `línea ${e.linea}: ${esc(e.mensaje)}`).join("<br>")}
                    </div>`
                 : `<div class="estado-chip hecho" style="margin-top:10px">Sin errores</div>`
             }
-          </div>`;
+          </div>
+          ${mapeo.length ? `
+            <h4 style="margin:14px 0 6px">Áreas del Excel → áreas de la planta</h4>
+            <p class="text-muted" style="margin:0 0 8px">Cámbiala si no es la correcta. "Crear área nueva" la agrega a la planta con el nombre del Excel.</p>
+            <div style="max-height:340px;overflow:auto">
+              <table class="data"><thead><tr><th>En el Excel</th><th>Puntos</th><th>Irá al área</th></tr></thead><tbody>
+                ${mapeo.map((a) => `
+                  <tr>
+                    <td>${esc(a.excel)}<div class="text-muted" style="font-size:12px">${etiqueta[a.como] || ""}</div></td>
+                    <td>${a.puntos}</td>
+                    <td><select data-area-excel="${esc(a.excel)}">
+                      <option value="nueva"${a.area_id ? "" : " selected"}>➕ Crear área nueva</option>
+                      ${(r.areas_existentes || []).map((x) => `<option value="${x.id}"${x.id === a.area_id ? " selected" : ""}>${esc(x.nombre)}</option>`).join("")}
+                    </select></td>
+                  </tr>`).join("")}
+              </tbody></table>
+            </div>` : ""}`;
         boton.dataset.confirmar = "si";
         boton.textContent = "Confirmar importación";
         boton.disabled = false;
         return;   // el modal sigue abierto para que revise antes de confirmar
       }
 
-      const r = await post("/puntos/importar", cuerpo);
+      const r = await post("/puntos/importar", { ...cuerpo, mapa_areas: mapaElegido() });
       closeModal();
       toast(`${r.creados ?? r.puntos_nuevos ?? 0} puntos importados`);
       onSaved?.();

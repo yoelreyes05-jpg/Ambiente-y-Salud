@@ -1222,6 +1222,49 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   const areasPorNombre = new Map((areasExistentes || []).map((a) => [normalizar(a.nombre), a]));
   const estrategiasPorNombre = new Map((estrategiasExistentes || []).map((e) => [normalizar(e.nombre), e]));
   const areasNuevas = [];
+
+  // A qué área de la planta va cada área del Excel. El hotel casi siempre ya
+  // tiene sus áreas creadas con otro nombre ("Cocina central en general" en el
+  // sistema, "Cocina Central" en el Excel); exigir el nombre idéntico creaba
+  // un área duplicada por cada una. Orden de prioridad: lo que el usuario eligió
+  // en la vista previa (mapa_areas), el nombre igual, y el nombre parecido.
+  const nombresExcel = new Map();
+  for (const f of filas) {
+    let n = valor(f, ["area", "zona", "ubicacion", "sector", "departamento"]);
+    if (!n) continue;
+    if (String(n).length > 80) n = String(n).split("(")[0].trim() || "Área múltiple";
+    n = recortarPrefijo(n, prefijos);
+    if (!nombresExcel.has(normalizar(n))) nombresExcel.set(normalizar(n), String(n).trim());
+  }
+  const elegidas = new Map(Object.entries(req.body.mapa_areas || {}).map(([k, v]) => [normalizar(k), v]));
+  const areasActivas = (areasExistentes || []).filter((a) => a.activo !== false);
+  const destinoArea = new Map();   // normalizar(nombre del Excel) → { area, como }
+  const pendientes = [];
+  for (const [clave, nombre] of nombresExcel) {
+    const elegida = elegidas.get(clave);
+    const porId = elegida && elegida !== "nueva" ? (areasExistentes || []).find((a) => a.id === elegida) : null;
+    if (porId) destinoArea.set(clave, { area: porId, como: "elegida" });
+    else if (areasPorNombre.has(clave)) destinoArea.set(clave, { area: areasPorNombre.get(clave), como: "igual" });
+    else if (elegida === "nueva") destinoArea.set(clave, { area: null, como: "nueva" });
+    else pendientes.push([clave, nombre]);
+  }
+  // Parecidas: uno a uno, primero las parejas más parecidas, para que "Bar
+  // Lobby" no se lleve el área "Lobby" que le corresponde a "Lobby y sus
+  // alrededores".
+  const ocupadas = new Set([...destinoArea.values()].map((d) => d.area?.id).filter(Boolean));
+  const parejas = [];
+  for (const [clave, nombre] of pendientes) {
+    for (const a of areasActivas) {
+      const s = parecidoArea(nombre, a.nombre);
+      if (s >= 0.5) parejas.push({ clave, area: a, s });
+    }
+  }
+  parejas.sort((x, y) => y.s - x.s);
+  for (const p of parejas) {
+    if (destinoArea.has(p.clave) || ocupadas.has(p.area.id)) continue;
+    destinoArea.set(p.clave, { area: p.area, como: "parecida" });
+    ocupadas.add(p.area.id);
+  }
   const estrategiasNuevas = [];
   const puntos = [];
   const errores = [];
@@ -1273,8 +1316,13 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
       }
     }
 
-    if (nombreArea) {
+    const claveExcel = nombreArea ? normalizar(nombreArea) : null;
+    const destino = claveExcel ? destinoArea.get(claveExcel) : null;
+    if (destino?.area) {
+      nombreArea = destino.area.nombre;            // el punto va al área que ya existe
+    } else if (nombreArea) {
       const clave = normalizar(nombreArea);
+      if (!destino) destinoArea.set(clave, { area: null, como: "nueva" });
       if (!areasPorNombre.has(clave)) {
         const nueva = {
           _nueva: true,
@@ -1306,6 +1354,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
 
     puntos.push({
       _area_nombre: nombreArea || null,
+      _area_excel: claveExcel,
       _estrategia_nombre: estrategiaTexto ? String(estrategiaTexto).trim() : null,
       _tipo_nombre: tipo.nombre,
       sitio_id,
@@ -1342,6 +1391,20 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     puntos_a_crear: puntos.length,
     qr_conservados: qrVistos.size,
     areas_nuevas: areasNuevas.map((a) => a.nombre),
+    // Para la vista previa: cada área del Excel, a qué área irá y por qué
+    areas_mapeo: [...nombresExcel].map(([clave, nombre]) => {
+      const d = destinoArea.get(clave);
+      return {
+        excel: nombre,
+        area_id: d?.area?.id || null,
+        area_nombre: d?.area?.nombre || null,
+        como: d?.como || "nueva",
+        puntos: puntos.filter((p) => p._area_excel === clave).length,
+      };
+    }),
+    areas_existentes: areasActivas
+      .map((a) => ({ id: a.id, nombre: a.nombre }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
     estrategias_nuevas: estrategiasNuevas.map((e) => e.nombre),
     por_tipo: puntos.reduce((acc, p) => ({ ...acc, [p._tipo_nombre]: (acc[p._tipo_nombre] || 0) + 1 }), {}),
     advertencias: errores,
@@ -1351,7 +1414,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     return res.json({
       simulado: true,
       ...resumen,
-      muestra: puntos.slice(0, 15).map(({ _area_nombre, _estrategia_nombre, _tipo_nombre, ...p }) => ({
+      muestra: puntos.slice(0, 15).map(({ _area_nombre, _area_excel, _estrategia_nombre, _tipo_nombre, ...p }) => ({
         ...p,
         area: _area_nombre,
         estrategia: _estrategia_nombre,
@@ -1384,7 +1447,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   }
 
   // 3) Puntos, resolviendo área y estrategia por nombre
-  const aInsertar = puntos.map(({ _area_nombre, _estrategia_nombre, _tipo_nombre, ...p }) => ({
+  const aInsertar = puntos.map(({ _area_nombre, _area_excel, _estrategia_nombre, _tipo_nombre, ...p }) => ({
     ...p,
     area_id: _area_nombre ? areasPorNombre.get(normalizar(_area_nombre))?.id || null : null,
     estrategia_id: _estrategia_nombre ? estrategiasPorNombre.get(normalizar(_estrategia_nombre))?.id || null : null,
@@ -1906,6 +1969,45 @@ function valor(fila, claves) {
     }
   }
   return null;
+}
+
+// Qué tan parecidos son dos nombres de área, de 0 a 1. Compara palabras, no
+// letras: "Cocina Central" y "Cocina central en general" son la misma área, y
+// "Retaurante Thai" (con la errata del reporte) es "Restaurante Thai". Las
+// palabras de relleno (de, la, área, general…) no cuentan.
+const RELLENO_AREA = new Set(["de", "del", "la", "las", "el", "los", "y", "e", "en", "con", "sus", "su", "al", "a",
+  "area", "areas", "general", "alrededores", "zona"]);
+
+function palabrasArea(texto) {
+  return String(texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w && !RELLENO_AREA.has(w))
+    .map((w) => (w.length > 3 ? w.replace(/(es|s)$/, "") : w));
+}
+
+function distanciaMax1(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, cambios = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++cambios > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else { i++; j++; }
+  }
+  return cambios + (a.length - i) + (b.length - j) <= 1;
+}
+
+function parecidoArea(a, b) {
+  const pa = [...new Set(palabrasArea(a))];
+  const pb = [...new Set(palabrasArea(b))];
+  if (!pa.length || !pb.length) return 0;
+  const igual = (x, y) => x === y || (Math.min(x.length, y.length) >= 5 && distanciaMax1(x, y));
+  const comunes = pa.filter((x) => pb.some((y) => igual(x, y))).length;
+  return comunes / (pa.length + pb.length - comunes);
 }
 
 function siglas(texto) {
