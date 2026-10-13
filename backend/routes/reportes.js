@@ -887,7 +887,7 @@ async function juntarEvidencia(req) {
 
   let qEmpresa = supabase.from("asa_config_sistema").select("valor").eq("clave", "empresa").maybeSingle();
   let qSitio = sitio_id
-    ? supabase.from("asa_sitios").select("nombre, direccion, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
+    ? supabase.from("asa_sitios").select("*, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
     : Promise.resolve({ data: null });
 
   let qServicios = supabase
@@ -1050,6 +1050,8 @@ async function juntarEvidencia(req) {
       ? {
           nombre: sitio.data.nombre,
           direccion: sitio.data.direccion,
+          supervisor: sitio.data.supervisor || null,
+          supervisor_telefono: sitio.data.supervisor_telefono || null,
           cliente: sitio.data.asa_clientes?.razon_social || sitio.data.asa_clientes?.nombre_contacto || null,
         }
       : null,
@@ -1164,7 +1166,7 @@ async function juntarPendientes(req) {
 
   const qEmpresa = supabase.from("asa_config_sistema").select("valor").eq("clave", "empresa").maybeSingle();
   const qSitio = sitio_id
-    ? supabase.from("asa_sitios").select("nombre, direccion, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
+    ? supabase.from("asa_sitios").select("*, asa_clientes(razon_social, nombre_contacto)").eq("id", sitio_id).maybeSingle()
     : Promise.resolve({ data: null });
 
   const armarNoRealizados = () => {
@@ -1240,6 +1242,8 @@ async function juntarPendientes(req) {
       ? {
           nombre: sitio.data.nombre,
           direccion: sitio.data.direccion,
+          supervisor: sitio.data.supervisor || null,
+          supervisor_telefono: sitio.data.supervisor_telefono || null,
           cliente: sitio.data.asa_clientes?.razon_social || sitio.data.asa_clientes?.nombre_contacto || null,
         }
       : null,

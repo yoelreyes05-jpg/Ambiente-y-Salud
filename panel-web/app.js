@@ -1602,9 +1602,11 @@ async function abrirPlanta(sitioId) {
         <div>
           <button class="btn btn-sm" id="volver-plantas">← Plantas</button>
           <h2 style="display:inline-block;margin-left:10px">${esc(sitio.nombre)}</h2>
+          <div class="text-muted" style="margin-top:4px">👤 Supervisor asignado: <strong>${esc(sitio.supervisor || "Sin asignar")}</strong>${sitio.supervisor_telefono ? ` · ${esc(sitio.supervisor_telefono)}` : ""}</div>
         </div>
         <div class="actions">
           <button class="btn" id="btn-editar-planta">Editar planta</button>
+          <button class="btn" id="btn-supervisor" title="Supervisor de área de esta planta; sale en el reporte">👤 Supervisor</button>
           <button class="btn" id="btn-portal-visible" title="Qué tipos de punto ve el hotel en su portal">👁 Qué ve el hotel</button>
           <button class="btn btn-primary" id="btn-reporte">Generar reporte</button>
           <button class="btn" id="btn-excel">Excel</button>
@@ -1631,6 +1633,7 @@ async function abrirPlanta(sitioId) {
   });
 
   $("#btn-portal-visible").addEventListener("click", () => modalPortalVisible(sitioId, sitio.nombre));
+  $("#btn-supervisor").addEventListener("click", () => modalSupervisorPlanta(sitio, () => abrirPlanta(sitioId)));
 
   const cuerpo = $("#tab-cuerpo");
   const pintores = {
@@ -1658,6 +1661,46 @@ async function abrirPlanta(sitioId) {
     })
   );
   await pintores.servicios();
+}
+
+// ── Supervisor asignado a la planta ──────────────────────────────────────
+// Cada hotel tiene su supervisor de área. Sale en el reporte de servicios y
+// evidencias como "Supervisor asignado". La lista de usuarios es solo una
+// ayuda para escribir el nombre (la ve el admin); se puede poner cualquiera.
+async function modalSupervisorPlanta(sitio, onSaved) {
+  const usuarios = await get("/usuarios").catch(() => []);
+  openModal({
+    title: `Supervisor asignado · ${sitio.nombre}`,
+    bodyHTML: `
+      <p class="text-muted">Sale impreso en el reporte de esta planta como <strong>Supervisor asignado</strong>.</p>
+      <div class="form-group"><label>Nombre del supervisor</label>
+        <input name="supervisor" list="lista-supervisores" value="${esc(sitio.supervisor || "")}" placeholder="Nombre y apellido" />
+        <datalist id="lista-supervisores">
+          ${(usuarios || []).filter((u) => u.activo !== false).map((u) => `<option value="${esc(u.nombre_completo || u.email)}">${esc(u.rol || "")}</option>`).join("")}
+        </datalist>
+      </div>
+      <div class="form-group"><label>Teléfono (opcional)</label>
+        <input name="supervisor_telefono" value="${esc(sitio.supervisor_telefono || "")}" placeholder="809-000-0000" />
+      </div>
+      <small class="text-muted">Déjalo en blanco para quitar el supervisor.</small>`,
+    submitLabel: "Guardar",
+    async onSubmit(fd) {
+      try {
+        await put(`/sitios/${sitio.id}`, {
+          supervisor: String(fd.get("supervisor") || "").trim() || null,
+          supervisor_telefono: String(fd.get("supervisor_telefono") || "").trim() || null,
+        });
+      } catch (e) {
+        if (/supervisor/i.test(e.message)) {
+          throw new Error("Falta agregar el campo en la base de datos: corre supabase/37_supervisor_planta.sql en Supabase y vuelve a intentar.");
+        }
+        throw e;
+      }
+      closeModal();
+      toast("Supervisor guardado");
+      onSaved?.();
+    },
+  });
 }
 
 // ── Qué ve el hotel en su portal ─────────────────────────────────────────

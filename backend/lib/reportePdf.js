@@ -564,8 +564,6 @@ function abrirDocumento(d, { titulo, tituloInfo }) {
   doc.y = altoFranja + 18;
   doc.fillColor(C.texto).font("Helvetica-Bold").fontSize(17)
      .text(limpiar(titulo), x0, doc.y, { width: ancho });
-  doc.font("Helvetica").fontSize(11).fillColor(C.suave)
-     .text(limpiar(d.sitio?.nombre || "Todas las plantas"), { width: ancho });
   doc.moveDown(0.8);
 
   const datosCabecera = [
@@ -573,9 +571,10 @@ function abrirDocumento(d, { titulo, tituloInfo }) {
     ["Planta / complejo", d.sitio?.nombre || "Todas"],
     ["Direccion", d.sitio?.direccion || "—"],
     ["Periodo cubierto", `${fechaLarga(d.periodo.desde)} al ${fechaLarga(d.periodo.hasta)}`],
-    ["Responsable tecnico", e.responsable_tecnico || "—"],
-    ["Licencia sanitaria", e.licencia_sanitaria || "—"],
-    ["Generado", `${fechaLarga(new Date())} a las ${horaCorta(new Date())}`],
+    // Supervisor de área asignado a ESTA planta (se asigna al entrar a la
+    // planta en el panel); cada hotel tiene el suyo.
+    ["Supervisor asignado", [d.sitio?.supervisor, d.sitio?.supervisor_telefono].filter(Boolean).join(" · ") || "—"],
+    ["Fecha del reporte", fechaLarga(new Date())],
   ];
   doc.fontSize(9);
   datosCabecera.forEach(([k, v]) => {
@@ -593,7 +592,7 @@ export async function construirReporte(d, opciones = {}) {
   const conDetalle = opciones.detalle !== false;
 
   const { doc, terminado, e } = abrirDocumento(d, {
-    titulo: "Reporte de servicios y evidencia",
+    titulo: "Reporte de servicios y evidencias",
     tituloInfo: "Reporte de control de plagas",
   });
 
@@ -612,7 +611,7 @@ export async function construirReporte(d, opciones = {}) {
   kpis(doc, [
     { valor: r.servicios_realizados ?? 0, etiqueta: "Servicios realizados", fondo: C.verdeClaro, borde: C.verde, color: C.verde },
     { valor: r.con_actividad ?? 0, etiqueta: "Con actividad detectada", fondo: C.ambarClaro, borde: C.ambar, color: C.ambar },
-    { valor: r.plagas_contadas ?? 0, etiqueta: "Plagas reportadas (individuos)" },
+    { valor: r.plagas_contadas ?? 0, etiqueta: "Plagas reportadas" },
     { valor: r.tipos_plaga ?? 0, etiqueta: "Tipos de plaga encontrados" },
     { valor: r.puntos_total ?? 0, etiqueta: "Puntos de control" },
     { valor: `${r.cumplimiento_pct ?? 0}%`, etiqueta: "Puntos dentro de frecuencia" },
@@ -627,7 +626,7 @@ export async function construirReporte(d, opciones = {}) {
   // ── Histograma ────────────────────────────────────────────────────────────
   if (d.histograma?.datos?.length) {
     tituloSeccion(doc, `Servicios registrados por ${nombreAgrupar(d.histograma.agrupar)}`, C.azul, 250);
-    parrafo(doc, "Cada barra es un periodo, partida por el nivel de actividad encontrado. Una barra que crece con mucho rojo es el aviso temprano: el problema esta subiendo antes de que el hotel lo reclame.");
+    parrafo(doc, "Gráfico 1. Cada barra representa un período evaluado y refleja el nivel de actividad de plagas registradas durante las inspecciones.");
     doc.moveDown(0.4);
     histograma(doc, d.histograma.datos, d.histograma.series, {
       ninguna: C.azulClaro, bajo: C.verde, medio: C.ambar, alto: C.rojo,
@@ -645,7 +644,7 @@ export async function construirReporte(d, opciones = {}) {
   const pp = d.plagas_periodo;
   if (pp?.datos?.length) {
     tituloSeccion(doc, `Cantidad de plagas por ${nombreAgrupar(pp.agrupar)}`, C.azul, 260);
-    parrafo(doc, `Individuos contados por los tecnicos en cada ${nombreAgrupar(pp.agrupar)}, partidos por tipo de plaga. Total del periodo: ${pp.total}.`);
+    parrafo(doc, `Gráfico 2. El gráfico siguiente muestra la cantidad de incidencias registradas por el personal técnico como parte del seguimiento y control del manejo integrado de plagas. Total del período: ${pp.total}.`);
     doc.moveDown(0.4);
     histograma(doc, pp.datos, pp.series, pp.colores || {}, {
       etiqueta: (x) => rotuloPeriodo(x.periodo, pp.agrupar),
@@ -778,7 +777,7 @@ export async function construirReporte(d, opciones = {}) {
     // no realizados. Ahora sigue debajo; `bloqueServicio` ya se encarga de no
     // partir un servicio entre dos hojas.
     tituloSeccion(doc, "Detalle de cada servicio realizado", C.azul, 150);
-    parrafo(doc, `${d.servicios.length} servicios, con las preguntas que el tecnico verifico una por una, lo que encontro y su evidencia fotografica. El texto de cada pregunta es el que estaba vigente el dia de la visita, no el de hoy: por eso el reporte sigue siendo valido si despues se cambio el checklist.`);
+    parrafo(doc, `Presenta el desglose de los servicios ejecutados y la cantidad total registrada durante el período seleccionado: ${d.servicios.length} servicios.`);
     doc.moveDown(0.5);
 
     for (const s of d.servicios) {
