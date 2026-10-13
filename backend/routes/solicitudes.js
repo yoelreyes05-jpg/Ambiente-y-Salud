@@ -23,6 +23,7 @@ import { logAccion } from "../lib/auditoria.js";
 import { filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { crearIncidencia, leerProtocolo } from "./incidencias.js";
 import { construirCertificado } from "../lib/certificadoPdf.js";
+import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
 
 // Orden de chinche / código rosa terminada → el hotel descarga el certificado.
 const CERRADAS_OK = ["ejecutada", "control_calidad", "facturada", "cerrada"];
@@ -246,6 +247,11 @@ router.get("/:id", async (req, res) => {
   ]);
   if (items.error) return error500(res, items.error);
 
+  // El motivo tal como lo escribió el técnico en la estrategia
+  const textos = await motivosDeInspecciones(
+    (items.data || []).filter((it) => it.estado === "no_realizado").map((it) => it.inspeccion_id)
+  ).catch(() => new Map());
+
   const puntos = (items.data || [])
     .map((it) => {
       const p = it.asa_puntos_control || {};
@@ -255,6 +261,7 @@ router.get("/:id", async (req, res) => {
         estado: it.estado,
         inspeccion_id: it.inspeccion_id,
         motivo_no_realizado: it.motivo_no_realizado,
+        motivo_texto: textos.get(it.inspeccion_id) || null,
         atendido_at: it.atendido_at,
         codigo_visible: p.codigo_visible,
         punto_nombre: p.nombre,

@@ -199,7 +199,7 @@ async function tabNoRealizados(cuerpo, sitioId) {
               { key: "hora", label: "Hora", fmt: (n) => esc(new Date(n.fecha).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })) },
               { key: "punto", label: "Punto / habitación", fmt: (n) => `<strong>${esc(n.numero_habitacion ? `Hab. ${n.numero_habitacion}` : n.codigo_visible)}</strong>` },
               { key: "area", label: "Área", fmt: (n) => esc([n.area, n.nivel ? `Nivel ${n.nivel}` : null].filter(Boolean).join(" · ") || "—") },
-              { key: "motivo", label: "Motivo", fmt: (n) => esc(MOTIVOS_TEXTO[n.motivo_no_realizado] || n.motivo_no_realizado || "Sin motivo") },
+              { key: "motivo", label: "Motivo", fmt: (n) => esc((n.motivo_texto || MOTIVOS_TEXTO[n.motivo_no_realizado]) || n.motivo_no_realizado || "Sin motivo") },
               { key: "impedido_por", label: "Informado por", fmt: (n) => esc(n.impedido_por || "—") },
               { key: "tecnico", label: "Técnico", fmt: (n) => esc(n.tecnico || "—") },
               {
@@ -316,7 +316,7 @@ function fichaServicioHTML(d) {
 
       ${noHecho ? `
         <div class="fs-alerta">
-          <strong>No se pudo realizar:</strong> ${esc(MOTIVOS_TEXTO[d.motivo_no_realizado] || d.motivo_no_realizado)}
+          <strong>No se pudo realizar:</strong> ${esc((d.motivo_texto || MOTIVOS_TEXTO[d.motivo_no_realizado]) || d.motivo_no_realizado)}
           ${d.impedido_por ? `<br>Informado por: ${esc(d.impedido_por)}` : ""}
           <br>Responsable del pendiente:
           <strong>${MOTIVOS_DEL_HOTEL.includes(d.motivo_no_realizado) ? "el hotel" : "ASA"}</strong>
@@ -658,7 +658,7 @@ async function tabPendientesArea(cuerpo, sitioId) {
         ESTADO_CELDA[p.estado].texto,
         p.frecuencia ? `Frecuencia: ${p.frecuencia}` : "",
         p.hora ? `Hoy ${new Date(p.hora).toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" })}${p.tecnico ? ` · ${p.tecnico}` : ""}` : "",
-        p.motivo_no_realizado ? `Motivo: ${MOTIVOS_TEXTO[p.motivo_no_realizado] || p.motivo_no_realizado}` : "",
+        p.motivo_no_realizado ? `Motivo: ${(p.motivo_texto || MOTIVOS_TEXTO[p.motivo_no_realizado]) || p.motivo_no_realizado}` : "",
         !p.hora && p.ultima_inspeccion ? `Último servicio: ${fmtDate(p.ultima_inspeccion)}` : "",
         !p.ultima_inspeccion && !p.hora ? "Nunca se ha revisado" : "",
       ]

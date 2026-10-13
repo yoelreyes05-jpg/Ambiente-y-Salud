@@ -310,7 +310,7 @@ let PH_VER = "";
 
 // "No se pudo hoy: Huésped en la habitación" o "No se pudo el 12/10: …"
 function textoNoSePudo(p) {
-  const motivo = MOTIVOS_TEXTO[p.motivo_no_realizado] || p.motivo_no_realizado || "sin motivo";
+  const motivo = (p.motivo_texto || MOTIVOS_TEXTO[p.motivo_no_realizado]) || p.motivo_no_realizado || "sin motivo";
   const dia = p.fecha_no_realizado ? new Date(p.fecha_no_realizado).toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" }) : null;
   return dia && dia !== hoyLocal() ? `No se pudo el ${fecha(p.fecha_no_realizado)}: ${motivo}` : `No se pudo hoy: ${motivo}`;
 }
@@ -417,7 +417,7 @@ async function vistaPendientes(cuerpo) {
                     ${MOTIVOS_DEL_HOTEL.includes(n.motivo_no_realizado) ? "Depende del hotel" : "Pendiente de ASA"}
                   </span>
                 </div>
-                <div class="meta">${esc(MOTIVOS_TEXTO[n.motivo_no_realizado] || n.motivo_no_realizado || "Sin motivo")}</div>
+                <div class="meta">${esc((n.motivo_texto || MOTIVOS_TEXTO[n.motivo_no_realizado]) || n.motivo_no_realizado || "Sin motivo")}</div>
                 ${n.impedido_por ? `<div class="meta">Informado por: ${esc(n.impedido_por)}</div>` : ""}
                 <div class="meta">${esc([n.area, n.tecnico].filter(Boolean).join(" · "))}</div>
               </div>
@@ -513,7 +513,7 @@ async function vistaHistorial(cuerpo) {
                     i.asa_empleados?.nombre_completo,
                   ].filter(Boolean).join(" · "))}
                 </div>
-                ${noHecho ? `<div class="meta">${esc(MOTIVOS_TEXTO[i.motivo_no_realizado] || i.motivo_no_realizado)}</div>` : ""}
+                ${noHecho ? `<div class="meta">${esc((i.motivo_texto || MOTIVOS_TEXTO[i.motivo_no_realizado]) || i.motivo_no_realizado)}</div>` : ""}
                 ${i.notas ? `<div class="meta">${esc(i.notas)}</div>` : ""}
               </div>
               <div class="fecha">
@@ -660,7 +660,7 @@ function fichaServicioHTML(d) {
 
       ${noHecho ? `
         <div class="fs-alerta">
-          <strong>No se pudo realizar:</strong> ${esc(MOTIVOS_TEXTO[d.motivo_no_realizado] || d.motivo_no_realizado)}
+          <strong>No se pudo realizar:</strong> ${esc((d.motivo_texto || MOTIVOS_TEXTO[d.motivo_no_realizado]) || d.motivo_no_realizado)}
           ${d.impedido_por ? `<br>Informado por: ${esc(d.impedido_por)}` : ""}
           <br>Responsable del pendiente:
           <strong>${MOTIVOS_DEL_HOTEL.includes(d.motivo_no_realizado) ? "el hotel" : "ASA"}</strong>
@@ -1006,12 +1006,12 @@ async function detalleSolicitud(cuerpo, id, silencioso = false) {
     const ayuda = verde
       ? `Hecha ${p.atendido_at ? fechaHora(p.atendido_at) : ""}`
       : p.estado === "no_realizado"
-      ? `No se pudo: ${MOTIVOS_TEXTO[p.motivo_no_realizado] || "sin motivo"}`
+      ? `No se pudo: ${(p.motivo_texto || MOTIVOS_TEXTO[p.motivo_no_realizado]) || "sin motivo"}`
       : p.estado === "cancelado" ? "Cancelada" : "Por hacer";
     return `<div class="celda ${clase}${p.inspeccion_id && verde ? " clicable" : ""}" title="${esc(ayuda)}"
                  ${p.inspeccion_id && verde ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
               ${esc(p.numero_habitacion || p.codigo_visible)}
-              ${p.estado === "no_realizado" ? `<small>${esc(MOTIVOS_TEXTO[p.motivo_no_realizado] || "no se pudo")}</small>` : ""}
+              ${p.estado === "no_realizado" ? `<small>${esc((p.motivo_texto || MOTIVOS_TEXTO[p.motivo_no_realizado]) || "no se pudo")}</small>` : ""}
             </div>`;
   };
 

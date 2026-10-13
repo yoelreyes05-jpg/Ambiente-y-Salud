@@ -11,6 +11,7 @@
 
 import { supabase } from "./supabaseClient.js";
 import { traerTodo } from "./paginar.js";
+import { motivosDeInspecciones } from "./motivoEstrategia.js";
 
 // Hasta cuántos días atrás se mira. Un intento más viejo que esto ya no se
 // muestra como "no se pudo": el punto queda simplemente por hacer.
@@ -51,5 +52,8 @@ export async function intentosPendientes(sitioId, ultimaRealizada) {
       tecnico: i.asa_empleados?.nombre_completo || i.asa_usuarios?.nombre_completo || null,
     });
   }
+  // El motivo tal como lo escribió el técnico en la estrategia
+  const textos = await motivosDeInspecciones([...out.values()].map((x) => x.inspeccion_id)).catch(() => new Map());
+  for (const x of out.values()) x.motivo_texto = textos.get(x.inspeccion_id) || null;
   return out;
 }

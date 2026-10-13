@@ -13,6 +13,7 @@ import { leerEstadosPunto } from "./configuracion.js";
 import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
+import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_REALIZO } from "../lib/motivoEstrategia.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -95,6 +96,9 @@ router.get("/dia", async (req, res) => {
   const S = servicios.data || [];
   const realizados = S.filter((x) => !x.no_realizado);
   let noRealizados = S.filter((x) => x.no_realizado);
+  // El motivo tal como lo escribió el técnico en la estrategia
+  const textosNR = await motivosDeInspecciones(noRealizados.map((x) => x.inspeccion_id));
+  noRealizados = noRealizados.map((x) => ({ ...x, motivo_texto: textosNR.get(x.inspeccion_id) || null }));
 
   // Cuentas del hotel: lo pendiente y lo no realizado solo de los tipos de
   // punto que ASA le dejó ver (lo hecho se sigue mostrando completo).
@@ -320,7 +324,12 @@ router.get("/:id", async (req, res) => {
     supabase.from("asa_capturas").select("*, asa_plagas(nombre, grupo, icono, color)").eq("inspeccion_id", data.id),
   ]);
 
-  res.json({ ...data, respuestas: respuestas.data || [], capturas: capturas.data || [] });
+  res.json({
+    ...data,
+    motivo_texto: data.motivo_no_realizado ? motivoDeRespuestas(respuestas.data || []) || null : null,
+    respuestas: respuestas.data || [],
+    capturas: capturas.data || [],
+  });
 });
 
 // GET /inspecciones/avance/hoy?sitio_id= — los dos recuadros del panel
@@ -363,13 +372,17 @@ router.get("/avance/hoy", async (req, res) => {
     ? await intentosPendientes(sitio_id, new Map((puntos.data || []).map((p) => [p.punto_id, p.ultima_inspeccion])))
     : new Map();
 
+  // El motivo tal como lo escribió el técnico en la estrategia
+  const textos = await motivosDeInspecciones([...intentos.values()].map((i) => i.id));
+
   const realizados = [];
   const pendientes = [];
   for (const p of puntos.data || []) {
     const insp = porPunto.get(p.punto_id);
     if (insp) realizados.push({ ...p, inspeccion: insp });
     else {
-      const intento = intentos.get(p.punto_id) || viejos.get(p.punto_id) || null;
+      const hoyI = intentos.get(p.punto_id);
+      const intento = hoyI ? { ...hoyI, motivo_texto: textos.get(hoyI.id) || null } : viejos.get(p.punto_id) || null;
       if (p.frecuencia !== "por_orden" || intento) pendientes.push({ ...p, intento });
     }
   }
@@ -464,12 +477,21 @@ async function registrarInspeccion(req, cuerpo) {
   // está diciendo que NO se hizo. Antes eso quedaba como servicio realizado (en
   // verde) y el punto salía al día. Se guarda como no realizado ("otro") para
   // que siga pendiente; la app nueva ya pide el motivo en ese caso.
-  const dijoQueNo = (respuestas || []).find(
-    (r) => r?.valor_bool === false && /se\s+realiz/i.test(String(r.pregunta_texto || ""))
+  //
+  // Y el motivo sale de la ESTRATEGIA: la pregunta "¿Por qué no se pudo
+  // realizar?" (o "Motivo…") del checklist de habitaciones. Con eso basta para
+  // saber que no se hizo, salvo que el técnico haya contestado "Sí" a "¿Se
+  // realizó…?".
+  const seRealizo = (respuestas || []).find(
+    (r) => r && r.valor_bool != null && PREGUNTA_SE_REALIZO.test(String(r.pregunta_texto || ""))
   );
-  if (!resto.motivo_no_realizado && dijoQueNo) {
-    resto.motivo_no_realizado = "otro";
-    resto.notas = [resto.notas, `Respondió "No" a: ${dijoQueNo.pregunta_texto}`].filter(Boolean).join(" · ");
+  const motivoTexto = motivoDeRespuestas(respuestas || []);
+  if (!resto.motivo_no_realizado && (seRealizo?.valor_bool === false || (motivoTexto && seRealizo?.valor_bool !== true))) {
+    resto.motivo_no_realizado = codigoMotivo(motivoTexto);
+    resto.notas = [
+      resto.notas,
+      motivoTexto ? `No se pudo: ${motivoTexto}` : `Respondió "No" a: ${seRealizo.pregunta_texto}`,
+    ].filter(Boolean).join(" · ");
   }
 
   if (resto.motivo_no_realizado) {

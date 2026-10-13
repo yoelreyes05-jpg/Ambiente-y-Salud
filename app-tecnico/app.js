@@ -622,7 +622,7 @@ function filaPunto(p, hecho) {
       ? new Date(p.intento.fecha).toLocaleDateString("es-DO", { day: "2-digit", month: "2-digit", timeZone: "America/Santo_Domingo" })
       : null;
     const hoyTxt = new Date().toLocaleDateString("es-DO", { day: "2-digit", month: "2-digit", timeZone: "America/Santo_Domingo" });
-    linea2 += `<div class="quien alerta">No se pudo${diaIntento && diaIntento !== hoyTxt ? ` el ${diaIntento}` : ""}: ${esc(MOTIVO_CORTO[p.intento.motivo_no_realizado] || p.intento.motivo_no_realizado)}${
+    linea2 += `<div class="quien alerta">No se pudo${diaIntento && diaIntento !== hoyTxt ? ` el ${diaIntento}` : ""}: ${esc((p.intento.motivo_texto || MOTIVO_CORTO[p.intento.motivo_no_realizado]) || p.intento.motivo_no_realizado)}${
       p.intento.tecnico ? ` · ${esc(p.intento.tecnico)}` : ""} · pendiente</div>`;
   } else if (!p.vencido && p.ultima_inspeccion) {
     const dias = Math.floor((Date.now() - new Date(p.ultima_inspeccion)) / 86400000);
@@ -1646,7 +1646,7 @@ async function pantallaSolicitud(id) {
         <span class="icono">${p.tipo_icono || "🛏️"}</span>
         <div class="texto">
           <div class="codigo">${esc(nombre)}</div>
-          <div class="detalle">${esc(p.codigo_visible || "")}${p.estado === "no_realizado" ? ` · No se pudo: ${esc(MOTIVO_TXT[p.motivo_no_realizado] || "")} — toca para reintentar` : ""}${local ? " · Guardada en el teléfono" : ""}</div>
+          <div class="detalle">${esc(p.codigo_visible || "")}${p.estado === "no_realizado" ? ` · No se pudo: ${esc((p.motivo_texto || MOTIVO_TXT[p.motivo_no_realizado]) || "")} — toca para reintentar` : ""}${local ? " · Guardada en el teléfono" : ""}</div>
         </div>
         <span class="marca">${marca}</span>
       </div>`;

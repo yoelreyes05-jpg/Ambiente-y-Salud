@@ -12,6 +12,7 @@ import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
+import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
 
 const router = express.Router();
 
@@ -311,6 +312,7 @@ router.get("/estado", async (req, res) => {
       .in("estado", ["pendiente", "no_realizado"])
       .then((r) => r.data || [], () => []),
   ]);
+  const textosHoy = await motivosDeInspecciones([...intentoHoy.values()].map((x) => x.inspeccion_id));
   const enSolicitud = new Map(enviadas.map((x) => [x.punto_id, x.asa_ordenes_trabajo?.numero_orden || "solicitud"]));
 
   const tipos = new Map();
@@ -348,6 +350,7 @@ router.get("/estado", async (req, res) => {
       tecnico: (h || n)?.tecnico || null,
       motivo_no_realizado: !h && n ? n.motivo_no_realizado : null,
       fecha_no_realizado: !h && n ? n.fecha : null,
+      motivo_texto: !h && n ? n.motivo_texto || textosHoy.get(n.inspeccion_id) || null : null,
       en_solicitud: enSolicitud.get(p.id) || null,
       nivel_actividad: h?.nivel_actividad || null,
     };
