@@ -353,6 +353,10 @@ function openModal({ title, bodyHTML, large, onMount, onSubmit, submitLabel = "G
   $("#asa-modal-cancel").addEventListener("click", closeModal);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
   if (onMount) onMount(overlay);
+  // Una ventana sin onSubmit (por ejemplo el desglose de un servicio) nunca
+  // debe "enviar" el formulario: un botón sin type="button" adentro recargaba
+  // la página entera y mandaba al dashboard.
+  if (!onSubmit) $("#asa-modal-form").addEventListener("submit", (e) => e.preventDefault());
   if (onSubmit) {
     $("#asa-modal-form").addEventListener("submit", async (e) => {
       e.preventDefault();

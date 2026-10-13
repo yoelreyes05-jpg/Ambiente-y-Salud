@@ -281,8 +281,8 @@ async function abrirDesglose(inspeccionId) {
   const puedeCorregir = ["admin", "operaciones"].includes(USUARIO?.rol) && !d.motivo_no_realizado;
   $(".modal-body").innerHTML = fichaServicioHTML(d) + `
     <div class="actions" style="margin-top:18px">
-      <button class="btn" id="dg-imprimir">Imprimir / guardar en PDF</button>
-      ${puedeCorregir ? `<button class="btn" id="dg-corregir">✏️ Corregir conteo de plagas</button>` : ""}
+      <button type="button" class="btn" id="dg-imprimir">Imprimir / guardar en PDF</button>
+      ${puedeCorregir ? `<button type="button" class="btn" id="dg-corregir">✏️ Corregir conteo de plagas</button>` : ""}
     </div>`;
 
   $("#dg-imprimir").addEventListener("click", () => imprimirServicio(d));
