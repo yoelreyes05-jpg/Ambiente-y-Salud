@@ -62,6 +62,15 @@ function plagaDelTipoPunto(tipo) {
 
 const NO_ES_CONTEO = /cebo|gramo|%|porcentaje|carga|dosis|producto|temperatura|litro|ml\b/;
 
+// Preguntas sobre lo que se TRATÓ, no sobre lo que se encontró: "Plagas
+// tratadas", "Plagas a controlar", "Plaga objetivo", "Tratamiento dirigido a…".
+// El técnico marca ahí cucarachas, moscas y mosquitos en todas las
+// habitaciones porque es contra lo que aplica, y el reporte las sumaba como
+// plagas encontradas (24 cucarachas, 24 moscas y 24 mosquitos de un técnico).
+const ES_TRATAMIENTO = /tratad|tratar|tratamiento|objetivo|aplicad|aplicar|aplicacion|a controlar|controlad|prevenc|preventiv|dirigid|programa/;
+// Solo cuentan las marcas de preguntas que hablan de lo encontrado
+const ES_HALLAZGO = /encontr|observ|evidencia|indicio|hallad|detect|avist|presencia|vist[oa]s?\b/;
+
 function plagasDelChecklist(respuestas, plagaPorCodigo) {
   // Por inspección: los números mandan; una plaga solo marcada (sin número)
   // cuenta como 1 y queda señalada como "sin conteo".
@@ -83,6 +92,7 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
     }
 
     const n = Number(r.valor_numero);
+    if (ES_TRATAMIENTO.test(texto)) continue; // lo tratado no es lo encontrado
     if (n > 0 && !NO_ES_CONTEO.test(texto) && /conteo|cuant|cantidad|captura|insecto|individuo|plaga|mosca|cucaracha|roedor|raton|hormiga|chinche|mosquito/.test(texto)) {
       const codigo = plagaDeTexto(texto) || plagaDelTipoPunto(tipo) || "otro";
       x.numeros.set(codigo, (x.numeros.get(codigo) || 0) + Math.round(n));
@@ -92,7 +102,7 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
       x.vistas.add(plagaDeTexto(texto) || "roedor_raton");
       continue;
     }
-    if (/plaga|encontr|observ|evidencia|indicio/.test(texto) && !/condicion|favorec/.test(texto)) {
+    if (ES_HALLAZGO.test(texto) && !/condicion|favorec/.test(texto)) {
       const opciones = Array.isArray(r.valor_opciones) ? r.valor_opciones : [];
       for (const o of [...opciones, r.valor_texto].filter(Boolean)) {
         const codigo = plagaDeTexto(o);
