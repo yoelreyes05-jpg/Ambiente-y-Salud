@@ -1,0 +1,11 @@
+# Proyecto de Vercel "asa.solidpest.online" (raíz del repo): solo se publican
+# la página de inicio y las tres aplicaciones. El backend, las migraciones y los
+# documentos internos NO se suben.
+backend
+supabase
+app-cliente
+app-personal
+Claude outputs
+*.md
+nixpacks.toml
+railway.json

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ambiente y Salud RD</title>
+<meta name="description" content="Acceso al sistema de manejo integrado de plagas de Ambiente y Salud RD." />
+<link rel="icon" href="/admin/assets/favicon.png" />
+<link rel="apple-touch-icon" href="/admin/assets/apple-touch-icon.png" />
+<style>
+  :root { --azul:#32539C; --azul-osc:#24407C; --verde:#609C63; --pastel:#EAF0F8; --texto:#1E293B; --suave:#64748B; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--pastel); color: var(--texto); min-height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--azul); color: #fff; padding: 36px 16px 64px; text-align: center; }
+  header img { width: 88px; height: 88px; object-fit: contain; background: #fff; border-radius: 20px; padding: 8px; }
+  header h1 { font-size: 26px; margin-top: 14px; }
+  header p { opacity: .85; margin-top: 6px; font-size: 15px; }
+  main { width: 100%; max-width: 960px; margin: -40px auto 0; padding: 0 16px 32px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  a.opcion { display: flex; flex-direction: column; gap: 8px; background: #fff; border-radius: 16px; padding: 22px 20px; text-decoration: none; color: inherit; box-shadow: 0 4px 14px rgba(36,64,124,.12); border: 2px solid transparent; transition: border-color .15s, transform .15s; }
+  a.opcion:hover, a.opcion:focus-visible { border-color: var(--azul); transform: translateY(-2px); outline: none; }
+  .ic { font-size: 34px; }
+  a.opcion h2 { font-size: 19px; color: var(--azul-osc); }
+  a.opcion p { color: var(--suave); font-size: 14px; line-height: 1.45; flex: 1; }
+  a.opcion span.ir { margin-top: 6px; font-weight: 600; color: var(--verde); font-size: 14px; }
+  footer { margin-top: auto; text-align: center; padding: 18px 16px; color: var(--suave); font-size: 13px; }
+  footer strong { color: var(--azul); }
+</style>
+</head>
+<body>
+  <header>
+    <img src="/admin/assets/logo-asa.png" alt="Ambiente y Salud RD" />
+    <h1>Ambiente y Salud RD</h1>
+    <p>Manejo integrado de plagas · ¿A dónde quieres entrar?</p>
+  </header>
+  <main>
+    <a class="opcion" href="/admin/">
+      <div class="ic">🗂️</div>
+      <h2>Portal administrativo</h2>
+      <p>Oficina de ASA: plantas, puntos de control, cronograma, reportes, flota y configuración.</p>
+      <span class="ir">Entrar →</span>
+    </a>
+    <a class="opcion" href="/hotel/">
+      <div class="ic">🏨</div>
+      <h2>Portal del hotel</h2>
+      <p>Para el personal de calidad del hotel: lo hecho, lo pendiente, reportes y estadísticas de plagas.</p>
+      <span class="ir">Entrar →</span>
+    </a>
+    <a class="opcion" href="/tecnico/">
+      <div class="ic">📱</div>
+      <h2>App del técnico</h2>
+      <p>Para el campo: escanear QR, ruta del día e inspecciones, también sin señal. Se puede instalar en el celular.</p>
+      <span class="ir">Entrar →</span>
+    </a>
+  </main>
+  <footer>Funciona con <strong>SolidPest</strong></footer>
+</body>
+</html>
