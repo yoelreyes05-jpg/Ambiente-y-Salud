@@ -69,10 +69,18 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
   for (const r of respuestas) {
     const insp = r.asa_inspecciones;
     if (!insp) continue;
-    if (!porInsp.has(insp.id)) porInsp.set(insp.id, { insp, numeros: new Map(), vistas: new Set() });
+    if (!porInsp.has(insp.id)) porInsp.set(insp.id, { insp, numeros: new Map(), vistas: new Set(), sinEvidencia: false });
     const x = porInsp.get(insp.id);
     const texto = sinAcentos(r.pregunta_texto);
     const tipo = insp.asa_puntos_control?.asa_tipos_punto?.codigo;
+
+    // "¿Se encontró evidencia de plagas?" / "¿Se observó actividad?" = No: lo
+    // que haya quedado marcado en "¿Qué se encontró?" no cuenta. La app deja
+    // marcar las dos cosas y así salían cucarachas en habitaciones sin plagas.
+    if (r.valor_bool === false && /evidencia|se encontr|se observ|actividad|persiste/.test(texto)) {
+      x.sinEvidencia = true;
+      continue;
+    }
 
     const n = Number(r.valor_numero);
     if (n > 0 && !NO_ES_CONTEO.test(texto) && /conteo|cuant|cantidad|captura|insecto|individuo|plaga|mosca|cucaracha|roedor|raton|hormiga|chinche|mosquito/.test(texto)) {
@@ -98,8 +106,9 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
     const p = plagaPorCodigo.get(codigo) || plagaPorCodigo.get("otro") || { codigo, nombre: "Otra plaga", grupo: "otra" };
     salida.push({ cantidad, asa_plagas: p, asa_inspecciones: insp, sin_conteo: sinConteo });
   };
-  for (const { insp, numeros, vistas } of porInsp.values()) {
+  for (const { insp, numeros, vistas, sinEvidencia } of porInsp.values()) {
     for (const [codigo, n] of numeros) fila(codigo, n, insp, false);
+    if (sinEvidencia) continue; // dijo que no había plagas: las marcas sueltas no cuentan
     for (const codigo of vistas) if (!numeros.has(codigo)) fila(codigo, 1, insp, true);
   }
   return salida;
