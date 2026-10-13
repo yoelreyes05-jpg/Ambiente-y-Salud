@@ -308,6 +308,13 @@ function engancharServicios(raiz) {
 let PH_TIPO = null;
 let PH_VER = "";
 
+// "No se pudo hoy: Huésped en la habitación" o "No se pudo el 12/10: …"
+function textoNoSePudo(p) {
+  const motivo = MOTIVOS_TEXTO[p.motivo_no_realizado] || p.motivo_no_realizado || "sin motivo";
+  const dia = p.fecha_no_realizado ? new Date(p.fecha_no_realizado).toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" }) : null;
+  return dia && dia !== hoyLocal() ? `No se pudo el ${fecha(p.fecha_no_realizado)}: ${motivo}` : `No se pudo hoy: ${motivo}`;
+}
+
 async function vistaPendientes(cuerpo) {
   const qs = new URLSearchParams({ sitio_id: PLANTA.id });
   if (PH_TIPO) qs.set("tipo", PH_TIPO);
@@ -343,7 +350,7 @@ async function vistaPendientes(cuerpo) {
       p.punto_nombre || p.codigo_visible,
       p.estado === "hecho_hoy" ? `Hecho hoy ${p.hora ? horaCorta(p.hora) : ""}` :
       p.estado === "al_dia" ? `Hecho el ${fecha(p.ultima_inspeccion)} · al día` :
-      p.estado === "no_realizado" ? `No se pudo hoy: ${MOTIVOS_TEXTO[p.motivo_no_realizado] || "sin motivo"}` :
+      p.estado === "no_realizado" ? `${textoNoSePudo(p)} · sigue pendiente` :
       p.ultima_inspeccion ? `Por hacer · último servicio ${fecha(p.ultima_inspeccion)}` : "Por hacer · nunca revisado",
     ].join("\n");
 
@@ -1206,12 +1213,30 @@ async function formularioHabitaciones(orden = null) {
     if (!porArea.has(h.area_nombre)) porArea.set(h.area_nombre, []);
     porArea.get(h.area_nombre).push(h);
   }
-  q("#hab-grid").innerHTML = [...porArea.entries()]
+  // Semáforo para enviar con control: rojo = por hacer, amarillo = no se pudo
+  // (sigue pendiente), verde = ya enviada al técnico o ya hecha.
+  function colorHabitacion(h) {
+    if (h.en_solicitud) return { clase: "verde", marca: "📨 Enviada", titulo: `Ya enviada al técnico en ${h.en_solicitud}` };
+    if (h.estado === "hecho_hoy" || h.estado === "al_dia") return { clase: "verde", marca: "✓ Hecha", titulo: h.ultima_inspeccion ? `Hecha el ${fecha(h.ultima_inspeccion)}` : "Hecha" };
+    if (h.estado === "no_realizado") return { clase: "amarillo", marca: "Pendiente", titulo: textoNoSePudo(h) };
+    return { clase: "rojo", marca: "", titulo: h.ultima_inspeccion ? `Por hacer · último servicio ${fecha(h.ultima_inspeccion)}` : "Por hacer · nunca revisada" };
+  }
+  const leyenda = `
+    <div class="leyenda-semaforo">
+      <span><i class="punto-rojo"></i> Por hacer</span>
+      <span><i class="punto-amarillo"></i> No se pudo (pendiente)</span>
+      <span><i class="punto-verde"></i> Enviada o hecha</span>
+      <span><i style="background:var(--azul)"></i> Elegida para enviar</span>
+    </div>`;
+  q("#hab-grid").innerHTML = leyenda + [...porArea.entries()]
     .map(([area, lista]) => `
       <div class="grupo-hab">
         <div class="grupo-hab-titulo">${esc(area)}</div>
         <div class="semaforo">
-          ${lista.map((h) => `<button type="button" class="celda elegible" data-id="${esc(h.id)}">${esc(h.numero_habitacion || h.codigo_visible)}</button>`).join("")}
+          ${lista.map((h) => {
+            const c = colorHabitacion(h);
+            return `<button type="button" class="celda elegible ${c.clase}" data-id="${esc(h.id)}" title="${esc(c.titulo)}">${esc(h.numero_habitacion || h.codigo_visible)}${c.marca ? `<small>${esc(c.marca)}</small>` : ""}</button>`;
+          }).join("")}
         </div>
       </div>`)
     .join("");

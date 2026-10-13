@@ -617,8 +617,13 @@ function filaPunto(p, hecho) {
       i.nivel_actividad && i.nivel_actividad !== "ninguna" ? ` <span class="etiqueta roja">Actividad ${esc({ bajo: "baja", medio: "media", alto: "alta" }[i.nivel_actividad] || i.nivel_actividad)}</span>` : ""
     }</div>`;
   } else if (p.intento) {
-    linea2 += `<div class="quien alerta">No se pudo: ${esc(MOTIVO_CORTO[p.intento.motivo_no_realizado] || p.intento.motivo_no_realizado)}${
-      p.intento.tecnico ? ` · ${esc(p.intento.tecnico)}` : ""}</div>`;
+    // Si fue otro día, se dice cuándo: sigue pendiente hasta que se haga.
+    const diaIntento = p.intento.fecha
+      ? new Date(p.intento.fecha).toLocaleDateString("es-DO", { day: "2-digit", month: "2-digit", timeZone: "America/Santo_Domingo" })
+      : null;
+    const hoyTxt = new Date().toLocaleDateString("es-DO", { day: "2-digit", month: "2-digit", timeZone: "America/Santo_Domingo" });
+    linea2 += `<div class="quien alerta">No se pudo${diaIntento && diaIntento !== hoyTxt ? ` el ${diaIntento}` : ""}: ${esc(MOTIVO_CORTO[p.intento.motivo_no_realizado] || p.intento.motivo_no_realizado)}${
+      p.intento.tecnico ? ` · ${esc(p.intento.tecnico)}` : ""} · pendiente</div>`;
   } else if (!p.vencido && p.ultima_inspeccion) {
     const dias = Math.floor((Date.now() - new Date(p.ultima_inspeccion)) / 86400000);
     linea2 += `<div class="quien">Hecho hace ${dias === 0 ? "menos de un día" : `${dias} día${dias === 1 ? "" : "s"}`}</div>`;

@@ -12,6 +12,7 @@ import { guardarFotos } from "../lib/evidencias.js";
 import { leerEstadosPunto } from "./configuracion.js";
 import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
+import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -356,12 +357,21 @@ router.get("/avance/hoy", async (req, res) => {
     else porPunto.set(i.punto_id, fila);
   }
 
+  // Lo que no se pudo en días anteriores y sigue sin hacerse: el técnico lo
+  // ve en amarillo, con el motivo y la fecha, hasta que lo resuelva.
+  const viejos = dia === hoyRD()
+    ? await intentosPendientes(sitio_id, new Map((puntos.data || []).map((p) => [p.punto_id, p.ultima_inspeccion])))
+    : new Map();
+
   const realizados = [];
   const pendientes = [];
   for (const p of puntos.data || []) {
     const insp = porPunto.get(p.punto_id);
     if (insp) realizados.push({ ...p, inspeccion: insp });
-    else if (p.frecuencia !== "por_orden") pendientes.push({ ...p, intento: intentos.get(p.punto_id) || null });
+    else {
+      const intento = intentos.get(p.punto_id) || viejos.get(p.punto_id) || null;
+      if (p.frecuencia !== "por_orden" || intento) pendientes.push({ ...p, intento });
+    }
   }
   // Lo último que se hizo arriba: el técnico ve primero lo que acaba de subir.
   realizados.sort((a, b) => String(b.inspeccion.fecha).localeCompare(String(a.inspeccion.fecha)));

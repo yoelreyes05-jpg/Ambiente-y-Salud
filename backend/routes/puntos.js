@@ -11,6 +11,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
+import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 
 const router = express.Router();
 
@@ -297,6 +298,21 @@ router.get("/estado", async (req, res) => {
     else hechoHoy.set(s.punto_id, s);
   }
 
+  // "No se pudo" de días anteriores que siguen sin resolverse: el punto sigue
+  // en amarillo con su motivo hasta que el técnico lo haga.
+  // Y las habitaciones que el hotel ya envió en una solicitud abierta.
+  const [intentosViejos, enviadas] = await Promise.all([
+    intentosPendientes(sitio_id, new Map(puntos.map((p) => [p.id, p.ultima_inspeccion]))),
+    supabase
+      .from("asa_orden_puntos")
+      .select("punto_id, estado, asa_ordenes_trabajo!inner(numero_orden, estado, sitio_id)")
+      .eq("asa_ordenes_trabajo.sitio_id", sitio_id)
+      .in("asa_ordenes_trabajo.estado", ["solicitada", "agendada", "en_ruta", "en_sitio"])
+      .in("estado", ["pendiente", "no_realizado"])
+      .then((r) => r.data || [], () => []),
+  ]);
+  const enSolicitud = new Map(enviadas.map((x) => [x.punto_id, x.asa_ordenes_trabajo?.numero_orden || "solicitud"]));
+
   const tipos = new Map();
   for (const p of puntos) {
     const k = p.tipo_codigo || "otro";
@@ -308,7 +324,7 @@ router.get("/estado", async (req, res) => {
 
   const lista = filtrados.map((p) => {
     const h = hechoHoy.get(p.id);
-    const n = intentoHoy.get(p.id);
+    const n = intentoHoy.get(p.id) || intentosViejos.get(p.id);
     let estado;
     if (h) estado = "hecho_hoy";
     else if (n) estado = "no_realizado";
@@ -331,6 +347,8 @@ router.get("/estado", async (req, res) => {
       hora: (h || n)?.fecha || null,
       tecnico: (h || n)?.tecnico || null,
       motivo_no_realizado: !h && n ? n.motivo_no_realizado : null,
+      fecha_no_realizado: !h && n ? n.fecha : null,
+      en_solicitud: enSolicitud.get(p.id) || null,
       nivel_actividad: h?.nivel_actividad || null,
     };
   });
