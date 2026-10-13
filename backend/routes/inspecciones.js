@@ -332,6 +332,104 @@ router.get("/:id", async (req, res) => {
   });
 });
 
+// PUT /inspecciones/:id/capturas — corregir el conteo de plagas desde la oficina
+// Body: { capturas: [{ plaga_id, cantidad }], motivo, nivel_actividad? }
+//
+// Para cuando el técnico se equivocó (24 cucarachas donde no había). Se manda
+// la lista completa como debe quedar: lo que venga en 0 se borra, lo nuevo se
+// agrega. Cada fila corregida guarda en su observación qué decía antes y
+// quién lo cambió, y la bitácora guarda el antes y el después completos.
+router.put("/:id/capturas", requireRol("operaciones"), async (req, res) => {
+  const { capturas = [], motivo, nivel_actividad } = req.body || {};
+  const razon = String(motivo || "").trim();
+  if (!razon) return res.status(400).json({ error: true, mensaje: "Escribe por qué se corrige el conteo" });
+  if (!Array.isArray(capturas)) return res.status(400).json({ error: true, mensaje: "capturas tiene que ser una lista" });
+  if (nivel_actividad && !["ninguna", "bajo", "medio", "alto"].includes(nivel_actividad)) {
+    return res.status(400).json({ error: true, mensaje: "Nivel de actividad no válido" });
+  }
+
+  const { data: insp } = await supabase
+    .from("asa_inspecciones")
+    .select("id, sitio_id, nivel_actividad, motivo_no_realizado, asa_puntos_control(codigo_visible)")
+    .eq("id", req.params.id)
+    .maybeSingle();
+  if (!insp) return res.status(404).json({ error: true, mensaje: "Servicio no encontrado" });
+  if (!exigirSitioPermitido(req, res, insp.sitio_id)) return;
+
+  const { data: antes, error: e0 } = await supabase
+    .from("asa_capturas")
+    .select("id, plaga_id, cantidad, etapa, observacion, asa_plagas(nombre)")
+    .eq("inspeccion_id", insp.id);
+  if (e0) return res.status(500).json({ error: true, mensaje: e0.message });
+
+  const quien = req.usuario?.nombre || req.usuario?.email || "oficina";
+  const nota = (n) => `Corregido por ${quien}: decía ${n} (${razon})`;
+  const nuevas = new Map();
+  for (const c of capturas) {
+    if (!c?.plaga_id) continue;
+    const n = Math.max(0, Math.min(Math.round(Number(c.cantidad) || 0), 100000));
+    nuevas.set(c.plaga_id, (nuevas.get(c.plaga_id) || 0) + n);
+  }
+
+  // Si la plaga ya tenía varias filas (por etapa), se deja una sola con el total
+  const viejasPorPlaga = new Map();
+  for (const a of antes || []) {
+    if (!viejasPorPlaga.has(a.plaga_id)) viejasPorPlaga.set(a.plaga_id, []);
+    viejasPorPlaga.get(a.plaga_id).push(a);
+  }
+
+  const cambios = [];
+  for (const [plagaId, filas] of viejasPorPlaga) {
+    const totalAntes = filas.reduce((s2, f) => s2 + f.cantidad, 0);
+    const totalNuevo = nuevas.has(plagaId) ? nuevas.get(plagaId) : totalAntes;
+    nuevas.delete(plagaId);
+    if (totalNuevo === totalAntes) continue;
+    cambios.push({ plaga: filas[0].asa_plagas?.nombre || plagaId, antes: totalAntes, despues: totalNuevo });
+    const [primera, ...resto] = filas;
+    if (resto.length) {
+      const { error } = await supabase.from("asa_capturas").delete().in("id", resto.map((f) => f.id));
+      if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    }
+    const { error } = totalNuevo === 0
+      ? await supabase.from("asa_capturas").delete().eq("id", primera.id)
+      : await supabase.from("asa_capturas").update({
+          cantidad: totalNuevo,
+          observacion: [primera.observacion, nota(totalAntes)].filter(Boolean).join(" · "),
+        }).eq("id", primera.id);
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  }
+  // Plagas que no estaban y la oficina agrega
+  const agregar = [...nuevas.entries()].filter(([, n]) => n > 0);
+  if (agregar.length) {
+    const { error } = await supabase.from("asa_capturas").insert(agregar.map(([plaga_id, cantidad]) => ({
+      inspeccion_id: insp.id, plaga_id, cantidad, metodo: "conteo", observacion: nota(0),
+    })));
+    if (error) return res.status(500).json({ error: true, mensaje: error.message });
+    for (const [plaga_id, n] of agregar) cambios.push({ plaga: plaga_id, antes: 0, despues: n });
+  }
+
+  // Nivel de actividad: el que se elija; si no se elige y ya no queda ninguna
+  // plaga, pasa a "sin actividad" para que el servicio deje de salir en rojo.
+  const totalFinal = (antes || []).length || agregar.length
+    ? (await supabase.from("asa_capturas").select("cantidad").eq("inspeccion_id", insp.id)).data?.reduce((s2, f) => s2 + f.cantidad, 0) || 0
+    : 0;
+  const nivelNuevo = nivel_actividad || (totalFinal === 0 && !insp.motivo_no_realizado ? "ninguna" : null);
+  if (nivelNuevo && nivelNuevo !== insp.nivel_actividad) {
+    await supabase.from("asa_inspecciones").update({ nivel_actividad: nivelNuevo }).eq("id", insp.id);
+    cambios.push({ plaga: "nivel de actividad", antes: insp.nivel_actividad, despues: nivelNuevo });
+  }
+
+  logAccion(req, {
+    accion: "actualizar",
+    modulo: "inspecciones",
+    registroId: insp.id,
+    descripcion: `Conteo de plagas corregido en ${insp.asa_puntos_control?.codigo_visible || "servicio"}: ${
+      cambios.map((c) => `${c.plaga} ${c.antes}→${c.despues}`).join(", ") || "sin cambios"}`,
+    detalle: { motivo: razon, cambios },
+  });
+  res.json({ ok: true, cambios, total: totalFinal });
+});
+
 // GET /inspecciones/avance/hoy?sitio_id= — los dos recuadros del panel
 router.get("/avance/hoy", async (req, res) => {
   const { sitio_id, fecha } = req.query;

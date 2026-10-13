@@ -276,12 +276,97 @@ async function abrirDesglose(inspeccionId) {
   }
 
   $(".modal-head h3").textContent = `${d.punto.codigo} — ${d.punto.nombre || d.punto.tipo || ""}`;
+  // Corregir el conteo: solo la oficina (admin y operaciones) y solo en
+  // servicios realizados.
+  const puedeCorregir = ["admin", "operaciones"].includes(USUARIO?.rol) && !d.motivo_no_realizado;
   $(".modal-body").innerHTML = fichaServicioHTML(d) + `
     <div class="actions" style="margin-top:18px">
       <button class="btn" id="dg-imprimir">Imprimir / guardar en PDF</button>
+      ${puedeCorregir ? `<button class="btn" id="dg-corregir">✏️ Corregir conteo de plagas</button>` : ""}
     </div>`;
 
   $("#dg-imprimir").addEventListener("click", () => imprimirServicio(d));
+  $("#dg-corregir")?.addEventListener("click", () => modalCorregirConteo(inspeccionId, d));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Corregir el conteo de plagas de un servicio ya enviado (el técnico puso 24
+// cucarachas donde no había). Se ve lo que contó el técnico, se cambia la
+// cantidad (0 = quitarla), se puede agregar una plaga, y el motivo es
+// obligatorio: queda en la bitácora con el antes y el después.
+// ═════════════════════════════════════════════════════════════════════════
+async function modalCorregirConteo(inspeccionId, d) {
+  const catalogo = await get("/plagas/catalogo").catch(() => []);
+  // Una fila por plaga, sumando etapas
+  const actuales = new Map();
+  for (const c of d.capturas || []) {
+    const k = c.plaga_id;
+    const prev = actuales.get(k);
+    actuales.set(k, { plaga_id: k, nombre: c.plaga, cantidad: (prev?.cantidad || 0) + c.cantidad });
+  }
+  const filaHTML = (c) => `
+    <tr data-plaga="${esc(c.plaga_id)}">
+      <td><strong>${esc(c.nombre)}</strong></td>
+      <td style="text-align:right;color:var(--text-muted,#64748b)">${c.antes ?? c.cantidad}</td>
+      <td style="width:110px"><input type="number" min="0" step="1" value="${c.cantidad}" data-cant style="width:100%;text-align:right" /></td>
+    </tr>`;
+
+  openModal({
+    title: `Corregir conteo — ${d.punto.codigo}`,
+    bodyHTML: `
+      <p class="text-muted">Pon la cantidad real de cada plaga. <strong>0</strong> la quita del servicio.
+        El cambio se ve enseguida en el reporte, las estadísticas y el portal del hotel, y queda
+        anotado quién lo corrigió y qué decía antes.</p>
+      <table class="data">
+        <thead><tr><th>Plaga</th><th style="text-align:right">Técnico puso</th><th style="text-align:right">Real</th></tr></thead>
+        <tbody id="cc-filas">
+          ${[...actuales.values()].map((c) => filaHTML({ ...c, antes: c.cantidad })).join("") ||
+            `<tr id="cc-vacio"><td colspan="3" class="text-muted">Este servicio no tiene plagas contadas.</td></tr>`}
+        </tbody>
+      </table>
+      <div style="display:flex;gap:8px;margin:10px 0 4px">
+        <select id="cc-nueva" style="flex:1">
+          <option value="">+ Agregar otra plaga…</option>
+          ${catalogo.filter((p) => !actuales.has(p.id)).map((p) => `<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join("")}
+        </select>
+      </div>` +
+      campo("Nivel de actividad",
+        `<select name="nivel_actividad">
+           <option value="">Dejarlo como está${d.nivel_actividad ? ` (${esc(NIVEL_TEXTO[d.nivel_actividad] || d.nivel_actividad)})` : ""}</option>
+           <option value="ninguna">Sin actividad</option>
+           <option value="bajo">Bajo</option>
+           <option value="medio">Medio</option>
+           <option value="alto">Alto</option>
+         </select>`,
+        "Si quitas todas las plagas y lo dejas como está, pasa solo a \"Sin actividad\".") +
+      campo("¿Por qué se corrige? *", `<input name="motivo" required placeholder="Ej.: error de digitación, eran 2 y no 24" />`),
+    submitLabel: "Guardar corrección",
+    onMount(overlay) {
+      overlay.querySelector("#cc-nueva").addEventListener("change", (e) => {
+        const id = e.target.value;
+        if (!id) return;
+        const p = catalogo.find((x) => x.id === id);
+        overlay.querySelector("#cc-vacio")?.remove();
+        overlay.querySelector("#cc-filas").insertAdjacentHTML("beforeend", filaHTML({ plaga_id: id, nombre: p?.nombre || "Plaga", cantidad: 1, antes: 0 }));
+        e.target.querySelector(`option[value="${CSS.escape(id)}"]`)?.remove();
+        e.target.value = "";
+      });
+    },
+    async onSubmit(fd, overlay) {
+      const capturas = [...overlay.querySelectorAll("#cc-filas tr[data-plaga]")].map((tr) => ({
+        plaga_id: tr.dataset.plaga,
+        cantidad: Number(tr.querySelector("[data-cant]").value) || 0,
+      }));
+      const r = await put(`/inspecciones/${inspeccionId}/capturas`, {
+        capturas,
+        motivo: String(fd.get("motivo") || "").trim(),
+        nivel_actividad: fd.get("nivel_actividad") || undefined,
+      });
+      closeModal();
+      toast(r.cambios?.length ? `Conteo corregido (${r.cambios.length} cambio${r.cambios.length === 1 ? "" : "s"})` : "No había nada que cambiar");
+      abrirDesglose(inspeccionId);
+    },
+  });
 }
 
 function fichaServicioHTML(d) {
