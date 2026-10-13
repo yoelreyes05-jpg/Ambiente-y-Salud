@@ -181,7 +181,7 @@ async function montarPlano(lienzo, plano, puntoId) {
 
   const tieneGeo = plano.geo_norte != null && plano.geo_sur != null;
   estado.innerHTML = tieneGeo
-    ? `<span class="pista">Toca 📍 para ubicarte en el mapa. Pellizca para agrandar.</span>`
+    ? `<span class="pista">Toca 📍 para ubicarte. Con dos dedos agrandas o achicas; con uno mueves el plano; doble toque acerca.</span>`
     : `<span class="pista aviso">Este plano no tiene coordenadas, así que el GPS no puede ubicarte encima.
         ${esc(plano.nombre)} se ve igual, pero para la ubicación en vivo hay que cargarle el recuadro desde el panel.</span>`;
 
@@ -269,56 +269,93 @@ function controlDeVista(visor, capa, anchoNatural, altoNatural) {
     aplicar();
   }
 
+  // ── Tacto ──────────────────────────────────────────────────────────────
+  // Un dedo arrastra; dos dedos agrandan/achican alrededor de los dedos y a la
+  // vez mueven el plano (como en Google Maps). Al levantar un dedo del
+  // pellizco, el que queda sigue arrastrando sin saltos.
+  //
+  // El doble toque (acercar de golpe / volver a la vista completa) solo cuenta
+  // si fueron dos toques cortos de UN dedo sin moverse. Antes, al terminar un
+  // pellizco los dos dedos se levantaban casi a la vez, eso se leía como doble
+  // toque y el mapa volvía a la vista completa: parecía que pellizcar no servía.
   let arrastrando = false, ultimoX = 0, ultimoY = 0;
-  let distanciaInicial = 0, escalaInicial = 1;
+  let distanciaInicial = 0, escalaInicial = 1, centroAnt = null;
+  let gestoMultiple = false, inicioToque = null, movido = false;
+
+  const centro = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+  const empezarArrastre = (t) => { arrastrando = true; ultimoX = t.clientX; ultimoY = t.clientY; };
 
   const alTocar = (e) => {
-    if (e.touches.length === 2) {
+    if (e.touches.length >= 2) {
+      gestoMultiple = true;
+      arrastrando = false;
       distanciaInicial = distancia(e.touches);
       escalaInicial = escala;
-      arrastrando = false;
+      centroAnt = centro(e.touches);
     } else if (e.touches.length === 1) {
-      arrastrando = true;
-      ultimoX = e.touches[0].clientX;
-      ultimoY = e.touches[0].clientY;
+      gestoMultiple = false;
+      movido = false;
+      inicioToque = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+      empezarArrastre(e.touches[0]);
     }
   };
 
   const alMover = (e) => {
-    if (e.touches.length === 2 && distanciaInicial) {
+    if (e.touches.length >= 2 && distanciaInicial) {
       e.preventDefault();
-      const d = distancia(e.touches);
-      const centroX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const centroY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      const objetivo = escalaInicial * (d / distanciaInicial);
-      zoomEn(objetivo / escala, centroX, centroY);
+      const c = centro(e.touches);
+      const objetivo = escalaInicial * (distancia(e.touches) / distanciaInicial);
+      zoomEn(objetivo / escala, c.x, c.y);
+      if (centroAnt) { x += c.x - centroAnt.x; y += c.y - centroAnt.y; aplicar(); }
+      centroAnt = c;
     } else if (arrastrando && e.touches.length === 1) {
       e.preventDefault();
-      x += e.touches[0].clientX - ultimoX;
-      y += e.touches[0].clientY - ultimoY;
-      ultimoX = e.touches[0].clientX;
-      ultimoY = e.touches[0].clientY;
+      const t = e.touches[0];
+      if (inicioToque && Math.hypot(t.clientX - inicioToque.x, t.clientY - inicioToque.y) > 10) movido = true;
+      x += t.clientX - ultimoX;
+      y += t.clientY - ultimoY;
+      ultimoX = t.clientX;
+      ultimoY = t.clientY;
       aplicar();
     }
   };
 
   const alSoltar = (e) => {
-    if (!e.touches.length) { arrastrando = false; distanciaInicial = 0; }
+    if (e.touches.length === 1) {
+      // Terminó el pellizco pero queda un dedo: sigue arrastrando desde ahí
+      distanciaInicial = 0;
+      centroAnt = null;
+      empezarArrastre(e.touches[0]);
+    } else if (!e.touches.length) {
+      arrastrando = false;
+      distanciaInicial = 0;
+      centroAnt = null;
+    }
   };
 
-  // Doble toque: acercar de golpe donde se tocó, y si ya está acercado, volver
-  // a la vista completa.
-  let ultimoToque = 0;
+  let ultimoToque = null;
   const alFin = (e) => {
-    const ahora = Date.now();
-    if (ahora - ultimoToque < 300 && e.changedTouches?.length === 1) {
-      const t = e.changedTouches[0];
-      if (escala > minEscala * 1.5) ajustar();
-      else zoomEn(3, t.clientX, t.clientY);
+    const t = e.changedTouches?.[0];
+    const fueToque = !gestoMultiple && !movido && !e.touches.length && t && inicioToque && Date.now() - inicioToque.t < 300;
+    if (fueToque) {
+      const ahora = Date.now();
+      if (ultimoToque && ahora - ultimoToque.t < 320 && Math.hypot(t.clientX - ultimoToque.x, t.clientY - ultimoToque.y) < 40) {
+        if (escala > minEscala * 1.5) ajustar();
+        else zoomEn(3, t.clientX, t.clientY);
+        ultimoToque = null;
+      } else {
+        ultimoToque = { t: ahora, x: t.clientX, y: t.clientY };
+      }
+    } else if (!e.touches.length) {
+      ultimoToque = null;
     }
-    ultimoToque = ahora;
     alSoltar(e);
+    if (!e.touches.length) gestoMultiple = false;
   };
+
+  // Safari en iPhone agranda la PÁGINA con el pellizco aunque se cancele el
+  // touchmove; esto se lo impide dentro del mapa.
+  const sinGestoPagina = (e) => e.preventDefault();
 
   const alRueda = (e) => { e.preventDefault(); zoomEn(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY); };
 
@@ -337,6 +374,8 @@ function controlDeVista(visor, capa, anchoNatural, altoNatural) {
   visor.addEventListener("touchmove", alMover, { passive: false });
   visor.addEventListener("touchend", alFin);
   visor.addEventListener("touchcancel", alSoltar);
+  visor.addEventListener("gesturestart", sinGestoPagina);
+  visor.addEventListener("gesturechange", sinGestoPagina);
   visor.addEventListener("wheel", alRueda, { passive: false });
   visor.addEventListener("mousedown", ratonInicio);
   window.addEventListener("mousemove", ratonMueve);
@@ -359,6 +398,8 @@ function controlDeVista(visor, capa, anchoNatural, altoNatural) {
       visor.removeEventListener("touchmove", alMover);
       visor.removeEventListener("touchend", alFin);
       visor.removeEventListener("touchcancel", alSoltar);
+      visor.removeEventListener("gesturestart", sinGestoPagina);
+      visor.removeEventListener("gesturechange", sinGestoPagina);
       visor.removeEventListener("wheel", alRueda);
       visor.removeEventListener("mousedown", ratonInicio);
       window.removeEventListener("mousemove", ratonMueve);

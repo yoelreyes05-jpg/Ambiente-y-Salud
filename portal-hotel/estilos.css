@@ -335,7 +335,13 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .mapa-pdf{border:1px solid var(--borde);border-radius:var(--radio);overflow:hidden;background:var(--blanco);margin-bottom:10px}
 .mapa-pdf iframe{width:100%;height:70vh;min-height:420px;border:0;display:block}
 .mapa-img{position:relative;border:1px solid var(--borde);border-radius:var(--radio);overflow:hidden;background:var(--blanco)}
-.mapa-img img{display:block;width:100%;height:auto}
+.mapa-img img{display:block;width:100%;height:auto;pointer-events:none;user-select:none;-webkit-user-drag:none}
+/* Zoom con los dedos: la capa (plano + pines) se agranda con transform */
+.mapa-img{touch-action:pan-y;cursor:grab}
+.mapa-img-capa{position:relative;transform-origin:0 0;will-change:transform}
+.mapa-img-capa .mapa-pin{transform:translate(-50%,-50%) scale(calc(1 / var(--zoom, 1)))}
+.mapa-zoom-barra{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;font-size:12.5px;color:var(--suave)}
+.mapa-zoom-barra .btn{min-width:40px;font-size:18px;padding:4px 10px}
 .mapa-pin{
   position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid #fff;padding:0;cursor:pointer;
   transform:translate(-50%,-50%);box-shadow:0 1px 3px rgba(0,0,0,.35);

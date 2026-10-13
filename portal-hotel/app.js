@@ -823,7 +823,15 @@ async function vistaMapa(cuerpo) {
           <span><i class="punto-verde"></i> Hecho (${nVerde})</span>
           <span><i class="punto-rojo"></i> Por hacer (${pins.length - nVerde})</span>
         </div>` : ""}
-      <div class="mapa-img" id="mapa-img">
+      <div class="mapa-zoom-barra">
+        <span>Con dos dedos agrandas o achicas · con uno mueves · doble toque acerca</span>
+        <span>
+          <button type="button" class="btn" id="mapa-menos" aria-label="Alejar">−</button>
+          <button type="button" class="btn" id="mapa-mas" aria-label="Acercar">+</button>
+          <button type="button" class="btn" id="mapa-ajustar" aria-label="Ver completo">⤢</button>
+        </span>
+      </div>
+      <div class="mapa-img" id="mapa-img"><div class="mapa-img-capa" id="mapa-capa">
         <img src="${esc(plano.imagen_url)}" alt="${esc(plano.nombre)}" />
         ${pins.map((p) => {
           const e = estadoDe.get(p.id);
@@ -833,10 +841,16 @@ async function vistaMapa(cuerpo) {
                     ${e?.inspeccion_id && ok ? `data-insp="${esc(e.inspeccion_id)}"` : ""}
                     aria-label="${esc(p.codigo_visible)}"></button>`;
         }).join("")}
-      </div>
+      </div></div>
       <div class="mapa-info" id="mapa-info">${pins.length ? "Toca un punto del plano para ver qué es y cómo está." : ""}</div>`}`;
 
   $("#mapa-plano")?.addEventListener("change", (ev) => { MAPA_PLANO = ev.target.value; vistaMapa(cuerpo); });
+  if ($("#mapa-img")) {
+    const z = zoomTactil($("#mapa-img"), $("#mapa-capa"));
+    $("#mapa-mas").addEventListener("click", () => z.zoom(1.4));
+    $("#mapa-menos").addEventListener("click", () => z.zoom(1 / 1.4));
+    $("#mapa-ajustar").addEventListener("click", () => z.ajustar());
+  }
   $$(".mapa-pin", cuerpo).forEach((b) =>
     b.addEventListener("click", () => {
       $$(".mapa-pin.activo", cuerpo).forEach((x) => x.classList.remove("activo"));
@@ -845,6 +859,80 @@ async function vistaMapa(cuerpo) {
       $("#mapa-ver")?.addEventListener("click", (ev) => { ev.preventDefault(); abrirServicio(b.dataset.insp); });
     })
   );
+}
+
+// ── Zoom con los dedos sobre el plano ────────────────────────────────────
+// Dos dedos agrandan/achican alrededor de los dedos y mueven a la vez; un dedo
+// arrastra; doble toque acerca de golpe (o vuelve a la vista completa). En la
+// computadora, la rueda del ratón y arrastrar. Los pines van dentro de la capa
+// y se achican al revés para que no tapen el plano al acercar.
+function zoomTactil(visor, capa) {
+  let escala = 1, x = 0, y = 0;
+  const MAX = 8;
+  const aplicar = () => {
+    // Que el plano no se escape de la vista
+    const w = visor.clientWidth, h = capa.offsetHeight;
+    x = Math.min(0, Math.max(w - w * escala, x));
+    y = Math.min(0, Math.max(visor.clientHeight - h * escala, y));
+    capa.style.transform = `translate(${x}px, ${y}px) scale(${escala})`;
+    capa.style.setProperty("--zoom", escala);
+  };
+  const zoomEn = (f, cx, cy) => {
+    const r = visor.getBoundingClientRect();
+    const px = (cx ?? r.left + r.width / 2) - r.left, py = (cy ?? r.top + r.height / 2) - r.top;
+    const nueva = Math.max(1, Math.min(escala * f, MAX));
+    x = px - ((px - x) * nueva) / escala;
+    y = py - ((py - y) * nueva) / escala;
+    escala = nueva;
+    aplicar();
+  };
+  const ajustar = () => { escala = 1; x = 0; y = 0; aplicar(); };
+
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const centro = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+  let d0 = 0, e0 = 1, cAnt = null, arr = null, multi = false, ini = null, movido = false, ultimo = null;
+
+  visor.addEventListener("touchstart", (e) => {
+    if (e.touches.length >= 2) { multi = true; arr = null; d0 = dist(e.touches); e0 = escala; cAnt = centro(e.touches); }
+    else { multi = false; movido = false; ini = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() }; arr = { x: ini.x, y: ini.y }; }
+  }, { passive: true });
+  visor.addEventListener("touchmove", (e) => {
+    if (e.touches.length >= 2 && d0) {
+      e.preventDefault();
+      const c = centro(e.touches);
+      zoomEn((e0 * dist(e.touches) / d0) / escala, c.x, c.y);
+      if (cAnt) { x += c.x - cAnt.x; y += c.y - cAnt.y; aplicar(); }
+      cAnt = c;
+    } else if (arr && e.touches.length === 1 && escala > 1) {
+      // Con el plano completo, un dedo deja bajar la página como siempre
+      e.preventDefault();
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - ini.x, t.clientY - ini.y) > 10) movido = true;
+      x += t.clientX - arr.x; y += t.clientY - arr.y; arr = { x: t.clientX, y: t.clientY };
+      aplicar();
+    } else if (ini && e.touches.length === 1 && Math.hypot(e.touches[0].clientX - ini.x, e.touches[0].clientY - ini.y) > 10) {
+      movido = true;
+    }
+  }, { passive: false });
+  visor.addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    if (!multi && !movido && !e.touches.length && ini && Date.now() - ini.t < 300) {
+      if (ultimo && Date.now() - ultimo < 320) {
+        e.preventDefault();
+        escala > 1.5 ? ajustar() : zoomEn(2.5, t.clientX, t.clientY);
+        ultimo = null;
+      } else ultimo = Date.now();
+    } else if (!e.touches.length) ultimo = null;
+    if (e.touches.length === 1) { d0 = 0; cAnt = null; arr = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+    if (!e.touches.length) { d0 = 0; cAnt = null; arr = null; multi = false; }
+  });
+  ["gesturestart", "gesturechange"].forEach((n) => visor.addEventListener(n, (e) => e.preventDefault()));
+  visor.addEventListener("wheel", (e) => { e.preventDefault(); zoomEn(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY); }, { passive: false });
+  let raton = null;
+  visor.addEventListener("mousedown", (e) => { if (escala > 1) raton = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener("mousemove", (e) => { if (!raton) return; x += e.clientX - raton.x; y += e.clientY - raton.y; raton = { x: e.clientX, y: e.clientY }; aplicar(); });
+  window.addEventListener("mouseup", () => { raton = null; });
+  return { zoom: (f) => zoomEn(f), ajustar };
 }
 
 // ── Hallazgos ────────────────────────────────────────────────────────────
