@@ -775,7 +775,8 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
     bodyHTML:
       campo("Tipo", `<select name="tipo_punto_id" required>${opciones(tipos, punto?.tipo_punto_id, (t) => t.id, (t) => `${t.icono || ""} ${t.nombre}`)}</select>`) +
       campo("Área", `<select name="area_id"><option value="">Sin área</option>${opciones(areas, punto?.area_id, (a) => a.id, (a) => a.nombre)}</select>`) +
-      campo("Código visible", `<input name="codigo_visible" value="${esc(punto?.codigo_visible || "")}" placeholder="Se genera solo si lo dejas vacío" />`) +
+      campo("Código visible", `<input name="codigo_visible" value="${esc(punto?.codigo_visible || "")}" placeholder="Se genera solo si lo dejas vacío" />`,
+        "Habitaciones: si lo dejas vacío queda H + número de habitación (H1001).") +
       campo("Nombre / referencia", `<input name="nombre" value="${esc(punto?.nombre || "")}" placeholder="Cebadero pasillo cocina" />`) +
       campo("Ubicación", `<input name="ubicacion_descripcion" value="${esc(punto?.ubicacion_descripcion || "")}" placeholder="Detrás de la nevera industrial" />`) +
       campo("Número de habitación", `<input name="numero_habitacion" value="${esc(punto?.numero_habitacion || "")}" />`,
@@ -843,11 +844,42 @@ function modalPuntosMasivo(sitioId, areas, tipos, onSaved) {
       campo("Área", `<select name="area_id"><option value="">Sin área</option>${opciones(areas, null, (a) => a.id, (a) => a.nombre)}</select>`) +
       campo("Cantidad", `<input name="cantidad" type="number" min="1" max="1000" value="10" required />`) +
       campo("Numerar desde", `<input name="desde" type="number" min="1" value="1" />`) +
-      campo("Prefijo del código", `<input name="prefijo" placeholder="Se toma del área o del tipo" />`) +
+      campo("Prefijo del código", `<input name="prefijo" placeholder="Habitaciones: H · lo demás: el del área o del tipo" />`) +
+      campo("Formato del código",
+        `<select name="formato">
+           <option value="">Automático (habitaciones pegado, lo demás con guion)</option>
+           <option value="pegado">Pegado: H1001</option>
+           <option value="guion">Con guion: H1-001</option>
+         </select>`) +
+      campo("Cifras del número", `<input name="digitos" type="number" min="1" max="6" value="3" />`,
+        "Con prefijo H1 y 3 cifras: H1001, H1002… · Con prefijo H, desde 1001 y 4 cifras: H1001, H1002…") +
+      `<p class="text-muted" id="pm-ejemplo" style="font-weight:600"></p>` +
       campo("Frecuencia", `<select name="frecuencia">${opcionesFrecuencia("mensual")}</select>`),
     submitLabel: "Crear",
+    onMount(overlay) {
+      // Muestra cómo van a quedar los códigos antes de crearlos
+      const ejemplo = () => {
+        const f = (n) => overlay.querySelector(`[name="${n}"]`);
+        const tipo = tipos.find((t) => t.id === f("tipo_punto_id").value);
+        const esHab = tipo?.codigo === "habitacion";
+        const area = areas.find((a) => a.id === f("area_id").value);
+        const pre = f("prefijo").value.trim() || (esHab ? "H" : area?.codigo || tipo?.prefijo_codigo || "PC");
+        const pegado = f("formato").value ? f("formato").value === "pegado" : esHab;
+        const cifras = Math.max(1, Math.min(Number(f("digitos").value) || 3, 6));
+        const desde = Number(f("desde").value) || 1;
+        const cod = (n) => (pegado ? `${pre}${String(n).padStart(cifras, "0")}` : `${pre}-${String(n).padStart(cifras, "0")}`);
+        const cant = Number(f("cantidad").value) || 1;
+        overlay.querySelector("#pm-ejemplo").textContent =
+          `Quedarán así: ${cod(desde)}, ${cod(desde + 1)}${cant > 2 ? ` … ${cod(desde + cant - 1)}` : ""}`;
+      };
+      overlay.addEventListener("input", ejemplo);
+      overlay.addEventListener("change", ejemplo);
+      ejemplo();
+    },
     async onSubmit(fd) {
       const r = await post("/puntos/masivo", {
+        formato: fd.get("formato") || undefined,
+        digitos: Number(fd.get("digitos")) || 3,
         sitio_id: sitioId,
         tipo_punto_id: fd.get("tipo_punto_id"),
         area_id: fd.get("area_id") || null,

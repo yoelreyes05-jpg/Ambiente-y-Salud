@@ -1019,7 +1019,7 @@ router.post("/", requireRol("operaciones", "comercial"), async (req, res) => {
   const fila = {
     ...req.body,
     tipo_punto_id: tipo.id,
-    codigo_visible: codigo_visible || (await siguienteCodigo(sitio_id, tipo)),
+    codigo_visible: codigo_visible || (await siguienteCodigo(sitio_id, tipo, req.body.numero_habitacion)),
     frecuencia: req.body.frecuencia || tipo.frecuencia_default,
   };
   delete fila.tipo_codigo;
@@ -1043,7 +1043,7 @@ router.post("/", requireRol("operaciones", "comercial"), async (req, res) => {
 // POST /puntos/masivo — genera N puntos numerados de un tipo en un área
 // Body: { sitio_id, area_id, tipo_codigo, cantidad, desde?, prefijo?, frecuencia?, nombre_base? }
 router.post("/masivo", requireRol("operaciones"), async (req, res) => {
-  const { sitio_id, area_id, tipo_punto_id, tipo_codigo, cantidad, desde = 1, prefijo, frecuencia, nombre_base } = req.body;
+  const { sitio_id, area_id, tipo_punto_id, tipo_codigo, cantidad, desde = 1, prefijo, frecuencia, nombre_base, formato, digitos } = req.body;
 
   if (!sitio_id || !cantidad) {
     return res.status(400).json({ error: true, mensaje: "sitio_id y cantidad son requeridos" });
@@ -1056,8 +1056,16 @@ router.post("/masivo", requireRol("operaciones"), async (req, res) => {
   const tipo = await resolverTipo({ tipo_punto_id, tipo_codigo });
   if (!tipo) return res.status(400).json({ error: true, mensaje: "Tipo de punto no válido" });
 
-  // Prefijo: el que mandes, o el del área, o el del tipo
+  const esHab = tipo.codigo === "habitacion";
+  // Formato del código. Las habitaciones van PEGADAS por defecto ("H1001"),
+  // que es la nomenclatura que ya usa ASA en los hoteles; lo demás con guion
+  // ("CR-001"). Se puede elegir en la pantalla.
+  const pegado = formato ? formato === "pegado" : esHab;
+  const cifras = Math.max(1, Math.min(Number(digitos) || 3, 6));
+
+  // Prefijo: el que mandes, o el del área, o el del tipo ("H" en habitaciones)
   let pre = prefijo;
+  if (!pre && esHab) pre = "H";
   if (!pre && area_id) {
     const { data: area } = await supabase.from("asa_areas").select("codigo").eq("id", area_id).maybeSingle();
     pre = area?.codigo || null;
@@ -1071,9 +1079,9 @@ router.post("/masivo", requireRol("operaciones"), async (req, res) => {
       sitio_id,
       area_id: area_id || null,
       tipo_punto_id: tipo.id,
-      codigo_visible: `${pre}-${String(n).padStart(3, "0")}`,
+      codigo_visible: armarCodigo(pre, n, pegado, cifras),
       nombre: nombre_base ? `${nombre_base} ${n}` : null,
-      numero_habitacion: tipo.codigo === "habitacion" ? String(n) : null,
+      numero_habitacion: esHab ? numeroDeHabitacion(armarCodigo(pre, n, pegado, cifras), n) : null,
       frecuencia: frecuencia || tipo.frecuencia_default,
     });
   }
@@ -1085,7 +1093,7 @@ router.post("/masivo", requireRol("operaciones"), async (req, res) => {
     accion: "crear",
     modulo: "puntos",
     registroId: sitio_id,
-    descripcion: `${data.length} puntos de tipo ${tipo.nombre} (${pre}-...)`,
+    descripcion: `${data.length} puntos de tipo ${tipo.nombre} (${armarCodigo(pre, Number(desde), pegado, cifras)}...)`,
   });
   res.status(201).json({ creados: data.length, puntos: data.map((p) => ({ ...p, url_qr: urlQR(p.qr_token) })) });
 });
@@ -1121,24 +1129,27 @@ router.post("/masivo-areas", requireRol("operaciones"), async (req, res) => {
   // Último número usado por prefijo en la planta
   const ultimo = new Map();
   for (const p of existentes) {
-    const m = /^(.*)-(\d+)$/.exec(p.codigo_visible || "");
+    const m = /^(.*)-(\d+)$/.exec(p.codigo_visible || "") || /^([A-Za-z]+)(\d+)$/.exec(p.codigo_visible || "");
     if (m) ultimo.set(m[1], Math.max(ultimo.get(m[1]) || 0, Number(m[2])));
   }
 
   const filas = [];
   for (const area of areasDeLaPlanta) {
     for (const tipo of tipos) {
+      const esHab = tipo.codigo === "habitacion";
       const preTipo = tipo.prefijo_codigo || "PC";
-      const pre = area.codigo ? `${area.codigo}-${preTipo}` : preTipo;
+      // Habitaciones: H1001, H1002… seguidas en toda la planta, como las numera ASA
+      const pre = esHab ? "H" : area.codigo ? `${area.codigo}-${preTipo}` : preTipo;
       for (let i = 0; i < cantidad; i++) {
         const n = (ultimo.get(pre) || 0) + 1;
         ultimo.set(pre, n);
+        const codigo = armarCodigo(pre, n, esHab, 3);
         filas.push({
           sitio_id,
           area_id: area.id,
           tipo_punto_id: tipo.id,
-          codigo_visible: `${pre}-${String(n).padStart(3, "0")}`,
-          numero_habitacion: null,
+          codigo_visible: codigo,
+          numero_habitacion: esHab ? numeroDeHabitacion(codigo, n) : null,
           frecuencia: frecuencia || tipo.frecuencia_default,
         });
       }
@@ -1932,7 +1943,29 @@ async function resolverTipo({ tipo_punto_id, tipo_codigo }) {
   return data || null;
 }
 
-async function siguienteCodigo(sitio_id, tipo) {
+// "H1" + 1 → "H1001" (pegado) o "H1-001" (con guion)
+function armarCodigo(pre, n, pegado, cifras = 3) {
+  const num = String(n).padStart(cifras, "0");
+  return pegado ? `${pre}${num}` : `${pre}-${num}`;
+}
+
+// El número de la habitación sale del código: "H1001" → "1001"
+function numeroDeHabitacion(codigo, n) {
+  const m = /^[A-Za-z]*(\d+)$/.exec(String(codigo));
+  return m ? String(Number(m[1])) : String(n);
+}
+
+async function siguienteCodigo(sitio_id, tipo, numeroHabitacion) {
+  // Habitaciones con la nomenclatura de ASA: H + número ("H1001"). Si viene el
+  // número de habitación, ese es el código; si no, el siguiente de la planta.
+  if (tipo.codigo === "habitacion") {
+    const numero = String(numeroHabitacion || "").trim();
+    if (numero) return /^\d+$/.test(numero) ? `H${numero}` : numero;
+    const { data } = await supabase.from("asa_puntos_control").select("codigo_visible")
+      .eq("sitio_id", sitio_id).like("codigo_visible", "H%");
+    const max = Math.max(0, ...(data || []).map((p) => /^H(\d+)$/.exec(p.codigo_visible)?.[1]).filter(Boolean).map(Number));
+    return armarCodigo("H", max + 1, true, 3);
+  }
   const pre = tipo.prefijo_codigo || "PC";
   const { data } = await supabase
     .from("asa_puntos_control")
