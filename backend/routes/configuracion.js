@@ -129,6 +129,7 @@ export const MODULOS_PERMISOS = [
   ["solicitudes", "Solicitudes del hotel"],
   ["incidencias", "Chinche / codigo rosa"],
   ["cronograma", "Cronograma de trabajo"],
+  ["rastreo", "Técnicos en vivo (ubicación)"],
   ["plagas_reporte", "Plagas encontradas"],
   ["documentos", "Documentos y productos"],
   ["puntos", "Puntos de control"],

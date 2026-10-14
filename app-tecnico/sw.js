@@ -11,7 +11,7 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v20";
+const VERSION = "asa-tecnico-v21";
 const CAPARAZON = [
   "./",
   "./index.html",
@@ -20,6 +20,7 @@ const CAPARAZON = [
   "./mapa.js",
   "./chequeo.js",
   "./extras.js",
+  "./rastreo.js",
   "./config.js",
   "./manifest.json",
   "./logo-asa.png",

@@ -76,6 +76,7 @@ import limpiezaRouter from "./routes/limpieza.js";
 import respaldoRouter from "./routes/respaldo.js";
 import incidenciasRouter from "./routes/incidencias.js";
 import cronogramaRouter from "./routes/cronograma.js";
+import rastreoRouter from "./routes/rastreo.js";
 
 // ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
@@ -127,6 +128,7 @@ app.use("/limpieza", limpiezaRouter);
 app.use("/respaldo", respaldoRouter);
 app.use("/incidencias", incidenciasRouter);   // chinche / código rosa: protocolo y certificado
 app.use("/cronograma", cronogramaRouter);     // programación de servicios (Excel)
+app.use("/rastreo", rastreoRouter);           // ubicación de técnicos y recorrido del día
 app.use("/notificaciones", notificacionesRouter);
 app.use("/rnc", rncRouter);
 

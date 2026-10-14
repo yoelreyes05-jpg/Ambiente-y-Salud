@@ -739,3 +739,26 @@ tr.sem-fila-amarillo{background:#fefce8}
 /* Crear puntos por áreas */
 .pa-lista{max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fbfcfe}
 .pa-lista .campo-check{display:block;margin:4px 0}
+
+/* ── Técnicos en vivo (rastreo.js) ─────────────────────────────────────── */
+.rt-grid{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
+@media (max-width:900px){.rt-grid{grid-template-columns:1fr}}
+.rt-lista{display:flex;flex-direction:column;gap:6px;max-height:620px;overflow:auto}
+.rt-tec{display:flex;gap:10px;align-items:flex-start;text-align:left;width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer;font:inherit}
+.rt-tec:hover{background:#f8fafc}
+.rt-tec.activo{border-color:var(--asa-azul);box-shadow:0 0 0 2px rgba(50,83,156,.15)}
+.rt-tec[disabled]{opacity:.55;cursor:default}
+.rt-tec-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rt-tec-txt small{color:var(--text-muted,#64748b);font-size:12px}
+.rt-punto{width:12px;height:12px;border-radius:50%;margin-top:4px;flex:none;box-shadow:0 0 0 2px #fff,0 0 0 3px rgba(0,0,0,.08)}
+.rt-mapa{height:520px;border-radius:12px;border:1px solid var(--border);background:#e2e8f0}
+@media (max-width:900px){.rt-mapa{height:380px}}
+.rt-mapa.rt-fijando{cursor:crosshair;outline:3px dashed var(--asa-azul);outline-offset:2px}
+.rt-marca{position:relative}
+.rt-marca-punto{width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);transform:translate(-50%,-50%)}
+.rt-marca-nombre{position:absolute;left:12px;top:-10px;white-space:nowrap;background:rgba(15,23,42,.85);color:#fff;font-size:11px;font-weight:600;padding:1px 6px;border-radius:6px}
+.rt-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:600px){.rt-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rt-kpis div{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:8px 10px}
+.rt-kpis strong{display:block;font-size:17px;color:var(--asa-azul-osc,#24407C)}
+.rt-kpis span{font-size:12px;color:var(--text-muted,#64748b)}

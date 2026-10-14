@@ -178,6 +178,7 @@ async function sincronizar(silencioso = true) {
 
 // ── Sesión ───────────────────────────────────────────────────────────────
 function cerrarSesion(mensaje) {
+  if (typeof detenerRastreo === "function") detenerRastreo();
   TOKEN = null; USUARIO = null; SITIO = null;
   localStorage.removeItem("asa_t_token");
   localStorage.removeItem("asa_t_usuario");
@@ -225,6 +226,7 @@ function pantallaLogin(mensaje) {
       USUARIO = r.usuario;
       localStorage.setItem("asa_t_token", TOKEN);
       guardarJSON("asa_t_usuario", USUARIO);
+      if (typeof iniciarRastreo === "function") iniciarRastreo();
       await elegirHotel();
     } catch (err) {
       boton.disabled = false;
@@ -1892,6 +1894,8 @@ async function arrancar() {
   await actualizarContadorPendientes();
   enrutar();
   sincronizar(true);
+  // Ubicación para el panel ("Técnicos en vivo"), solo con la app abierta
+  if (TOKEN && typeof iniciarRastreo === "function") iniciarRastreo();
   // Reintento periódico por si el navegador no soporta Background Sync
   setInterval(() => sincronizar(true), 60_000);
 }

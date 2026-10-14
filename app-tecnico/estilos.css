@@ -567,3 +567,12 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 /* No se pudo hacer: amarillo, sigue pendiente (no es un hecho) */
 .punto.nopudo { border-left-color: #eab308; background: #fefce8; }
 .punto.nopudo .quien.alerta { color: #a16207; font-weight: 700; }
+
+/* Ubicación activa (rastreo.js): siempre visible para que el técnico sepa */
+.gps-pastilla {
+  position: fixed; left: 10px; bottom: 10px; z-index: 50;
+  background: rgba(15, 23, 42, .78); color: #fff; font-size: 11.5px;
+  padding: 4px 10px; border-radius: 999px; pointer-events: none;
+}
+.gps-pastilla[data-estado="fuera"] { background: rgba(100, 116, 139, .75); }
+.gps-pastilla[data-estado="permiso"] { background: #b91c1c; }
