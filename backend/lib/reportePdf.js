@@ -156,7 +156,7 @@ async function bajarFoto(ref) {
     }
 
     if (!/^https?:\/\//i.test(ref)) return null;
-    const res = await fetch(ref, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(ref, { signal: AbortSignal.timeout(12000) });
     if (!res.ok) return null;
     const tipo = res.headers.get("content-type") || "";
     if (!formatoAceptado(tipo)) return null;
@@ -167,13 +167,63 @@ async function bajarFoto(ref) {
   }
 }
 
-async function bajarFotos(refs) {
-  const salida = [];
-  for (let i = 0; i < refs.length; i += LOTE_FOTOS) {
-    const lote = await Promise.all(refs.slice(i, i + LOTE_FOTOS).map(bajarFoto));
-    salida.push(...lote);
+// Fotos ya achicadas, guardadas en memoria entre reportes. La URL de una foto
+// en Storage no cambia de contenido, así que el segundo reporte del mismo
+// período (el hotel y la oficina piden el mismo) no vuelve a bajar ni a achicar
+// nada. Tope por cantidad: cada foto achicada pesa ~60-120 KB.
+const CACHE_FOTOS = new Map();
+const TOPE_CACHE_FOTOS = 800;
+const SIMULTANEAS = 12;
+let enCurso = 0;
+const cola = [];
+
+function conTurno(tarea) {
+  return new Promise((resolver) => {
+    const correr = async () => {
+      enCurso++;
+      try { resolver(await tarea()); } finally {
+        enCurso--;
+        cola.shift()?.();
+      }
+    };
+    if (enCurso < SIMULTANEAS) correr();
+    else cola.push(correr);
+  });
+}
+
+// Una foto (con cache y turno). Devuelve siempre la misma promesa para la
+// misma URL, así dos servicios con la misma foto no la bajan dos veces.
+function foto(ref) {
+  const clave = typeof ref === "string" && !ref.startsWith("data:") ? ref : null;
+  if (clave && CACHE_FOTOS.has(clave)) {
+    const p = CACHE_FOTOS.get(clave);
+    CACHE_FOTOS.delete(clave);           // al final: la más usada se queda
+    CACHE_FOTOS.set(clave, p);
+    return p;
   }
-  return salida;
+  const p = conTurno(() => bajarFoto(ref));
+  if (clave) {
+    CACHE_FOTOS.set(clave, p);
+    p.then((b) => { if (!b) CACHE_FOTOS.delete(clave); });   // un fallo se reintenta la próxima vez
+    while (CACHE_FOTOS.size > TOPE_CACHE_FOTOS) CACHE_FOTOS.delete(CACHE_FOTOS.keys().next().value);
+  }
+  return p;
+}
+
+async function bajarFotos(refs) {
+  return Promise.all(refs.map(foto));
+}
+
+// Todas las fotos del reporte se piden de una vez al empezar, 12 a la vez. Así
+// se van bajando mientras se dibujan los primeros servicios, en vez de esperar
+// a llegar a cada servicio para bajar las suyas (eso era lo que hacía tardar
+// minutos un reporte con cientos de habitaciones).
+function adelantarFotos(servicios) {
+  for (const s of servicios || []) {
+    if (s.motivo_no_realizado) continue;
+    for (const f of s.fotos || []) foto(f);
+    for (const q of s.respuestas || []) for (const f of q.fotos || []) foto(f);
+  }
 }
 
 
@@ -590,6 +640,7 @@ function abrirDocumento(d, { titulo, tituloInfo }) {
 export async function construirReporte(d, opciones = {}) {
   const conFotos = opciones.fotos !== false;
   const conDetalle = opciones.detalle !== false;
+  if (conFotos) adelantarFotos(d.servicios);
 
   const { doc, terminado, e } = abrirDocumento(d, {
     titulo: "Reporte de servicios y evidencias",
