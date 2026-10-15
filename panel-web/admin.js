@@ -2296,6 +2296,64 @@ async function viewAccesosHotel(content) {
   await cargar();
 }
 
+// Personas autorizadas de una cuenta de hotel (dentro de la ventana de la cuenta)
+async function montarPersonas(cuenta) {
+  const caja = $("#acceso-personas");
+  if (!caja) return;
+  async function pintar() {
+    let lista;
+    try {
+      lista = await get(`/usuarios/portal/${cuenta.id}/personas`);
+    } catch (e) {
+      caja.innerHTML = `<div class="form-error" style="display:block">${esc(e.message)}</div>`;
+      return;
+    }
+    caja.innerHTML = lista.length
+      ? `<table class="data"><thead><tr><th>Nombre</th><th>Correo</th><th>Último acceso</th><th></th></tr></thead><tbody>
+          ${lista.map((p) => `
+            <tr style="${p.activo ? "" : "opacity:.55"}">
+              <td><strong>${esc(p.nombre)}</strong>${p.activo ? "" : ` <span class="estado-chip fuera">Sin acceso</span>`}</td>
+              <td>${esc(p.email)}</td>
+              <td>${p.ultimo_acceso ? fmtDateTime(p.ultimo_acceso) : "Nunca"}</td>
+              <td style="white-space:nowrap">
+                <button type="button" class="btn btn-sm" data-p-activo="${esc(p.id)}" data-v="${p.activo ? "0" : "1"}">${p.activo ? "Quitar acceso" : "Devolver acceso"}</button>
+                <button type="button" class="btn btn-sm btn-danger" data-p-borrar="${esc(p.id)}" title="Borrar de la lista">✕</button>
+              </td>
+            </tr>`).join("")}
+        </tbody></table>`
+      : `<div class="estado-chip pendiente" style="display:inline-block">Nadie registrado: cualquiera con la clave puede entrar</div>`;
+    caja.querySelectorAll("[data-p-activo]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        try {
+          await patch(`/usuarios/portal/personas/${b.dataset.pActivo}`, { activo: b.dataset.v === "1" });
+          toast(b.dataset.v === "1" ? "Acceso devuelto" : "Acceso retirado: ya no puede entrar");
+          pintar();
+        } catch (e) { toast(e.message, true); }
+      })
+    );
+    caja.querySelectorAll("[data-p-borrar]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (!confirm("¿Borrar a esta persona de la lista? Pierde el acceso al momento.")) return;
+        try { await del(`/usuarios/portal/personas/${b.dataset.pBorrar}`); toast("Persona borrada"); pintar(); }
+        catch (e) { toast(e.message, true); }
+      })
+    );
+  }
+  $("#persona-agregar")?.addEventListener("click", async () => {
+    const nombre = $("#persona-nombre").value.trim();
+    const email = $("#persona-email").value.trim().toLowerCase();
+    if (!nombre || !email) return toast("Pon el nombre y el correo de la persona", true);
+    try {
+      await post(`/usuarios/portal/${cuenta.id}/personas`, { nombre, email });
+      $("#persona-nombre").value = "";
+      $("#persona-email").value = "";
+      toast(`${nombre} autorizada`);
+      pintar();
+    } catch (e) { toast(e.message, true); }
+  });
+  await pintar();
+}
+
 // Cambio de contrasena reutilizable: lo usan las cuentas de personal interno
 // (Usuarios) y las de acceso del hotel, que pegan a rutas distintas.
 function modalCambiarClave({ titulo, ruta, onDone }) {
@@ -2357,8 +2415,22 @@ function modalAcceso(cuenta, plantas, onSaved) {
          </small>
        </div>` +
       (esNueva
-        ? ""
-        : `<div class="actions" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+        ? `<p class="text-muted" style="margin:10px 0 0">Después de crearla, ábrela otra vez para agregar a las <strong>personas</strong> que la van a usar.</p>`
+        : `<div class="campo" style="margin-top:14px">
+             <span>Personas que usan esta cuenta</span>
+             <small class="ayuda" style="display:block;margin-bottom:6px">
+               Cada persona entra con el correo y la clave de esta cuenta y <strong>después confirma con su
+               propio correo</strong> (Google, Microsoft/Hotmail o un código). Si no está aquí, o está
+               desactivada, no entra aunque sepa la clave. Si la lista está vacía, basta con la clave.
+             </small>
+             <div id="acceso-personas"><div class="text-muted">Cargando…</div></div>
+             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+               <input id="persona-nombre" placeholder="Nombre (ej.: Leticia Álvarez)" style="flex:1;min-width:150px" />
+               <input id="persona-email" type="email" placeholder="Su correo personal" style="flex:1;min-width:180px" />
+               <button type="button" class="btn btn-primary" id="persona-agregar">+ Agregar</button>
+             </div>
+           </div>
+           <div class="actions" style="margin-top:10px;gap:8px;flex-wrap:wrap">
              <button type="button" class="btn" id="acceso-clave">Cambiar contrasena</button>
              <button type="button" class="btn" id="acceso-estado">
                ${cuenta.activo ? "Desactivar cuenta" : "Reactivar cuenta"}
@@ -2371,6 +2443,7 @@ function modalAcceso(cuenta, plantas, onSaved) {
              con las plantas que tenia asignadas.
            </p>`),
     onMount() {
+      if (!esNueva) montarPersonas(cuenta);
       $("#acceso-clave")?.addEventListener("click", () =>
         modalCambiarClave({
           titulo: `Contrasena de ${cuenta.email}`,

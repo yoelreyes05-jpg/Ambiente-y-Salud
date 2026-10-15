@@ -55,8 +55,40 @@ export function requireRol(...rolesPermitidos) {
 //   [...] → solo esos sitio_id
 // Los routers la aplican con `filtrarPorSitio(query, req)`.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Vigencia de la sesión
+//
+// El token dura 12 horas. Sin esta revisión, a una persona a la que se le
+// quita el acceso (renunció) le seguiría funcionando la sesión abierta hasta
+// que venciera. Aquí se comprueba en cada consulta que la cuenta siga activa
+// y, si entró como persona de un hotel, que la persona siga autorizada. Se
+// guarda 30 segundos en memoria para no consultar la base en cada clic.
+// ─────────────────────────────────────────────────────────────────────────────
+const VIGENCIA = new Map();
+const VIGENCIA_MS = 30_000;
+export function olvidarVigencia() { VIGENCIA.clear(); }
+
+async function sesionVigente(u) {
+  const clave = `${u.id}|${u.persona_id || ""}`;
+  const guardada = VIGENCIA.get(clave);
+  if (guardada && Date.now() - guardada.t < VIGENCIA_MS) return guardada.ok;
+  let ok = true;
+  const { data: cuenta, error } = await supabase.from("asa_usuarios").select("activo").eq("id", u.id).maybeSingle();
+  if (!error) ok = !!cuenta?.activo;
+  if (ok && u.persona_id) {
+    const { data: p, error: e2 } = await supabase.from("asa_usuario_personas").select("activo").eq("id", u.persona_id).maybeSingle();
+    if (!e2) ok = !!p?.activo;
+  }
+  if (VIGENCIA.size > 5000) VIGENCIA.clear();
+  VIGENCIA.set(clave, { ok, t: Date.now() });
+  return ok;
+}
+
 export async function cargarAlcance(req, res, next) {
   req.sitiosPermitidos = null;
+  if (req.usuario && !(await sesionVigente(req.usuario))) {
+    return res.status(401).json({ error: true, mensaje: "Tu acceso fue retirado. Si es un error, contacta a Ambiente y Salud." });
+  }
 
   if (!req.usuario) return next();
   if (ROLES_INTERNOS.includes(req.usuario.rol)) return next();

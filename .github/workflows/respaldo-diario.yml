@@ -1,0 +1,93 @@
+# Respaldo diario de la base de datos de Supabase (Ambiente y Salud RD)
+#
+# Todos los días a las 3:15 a.m. (hora de RD) saca una copia COMPLETA del
+# esquema public (todas las tablas y sus datos) y la guarda cifrada en un .7z
+# con la clave RESPALDO_CLAVE. Se descarga desde GitHub → Actions → "Respaldo
+# diario" → la corrida del día → Artifacts. Se abre con 7-Zip y esa clave.
+#
+# Secretos (GitHub → Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL  la cadena "Session pooler" de Supabase (Connect → Session
+#                    pooler), con la contraseña de la base puesta.
+#   RESPALDO_CLAVE   la clave para abrir el .7z. Guárdala en un lugar seguro:
+#                    sin ella el respaldo no se puede abrir.
+#
+# Cómo restaurar: ver SEGURIDAD-ACCESOS-Y-RESPALDOS.md
+name: Respaldo diario
+
+on:
+  schedule:
+    - cron: "15 7 * * *"   # 07:15 UTC = 3:15 a.m. en RD
+  workflow_dispatch: {}     # botón "Run workflow" para sacarlo cuando quieras
+
+permissions:
+  contents: read
+
+concurrency:
+  group: respaldo-base
+  cancel-in-progress: false
+
+jobs:
+  respaldo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Revisar secretos
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          CLAVE: ${{ secrets.RESPALDO_CLAVE }}
+        run: |
+          if [ -z "$DB" ] || [ -z "$CLAVE" ]; then
+            echo "::error::Faltan los secretos SUPABASE_DB_URL y/o RESPALDO_CLAVE (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+      - name: Instalar PostgreSQL 17 (pg_dump) y 7-Zip
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 p7zip-full >/dev/null
+
+      - name: Sacar el respaldo
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          CLAVE: ${{ secrets.RESPALDO_CLAVE }}
+        run: |
+          set -euo pipefail
+          PG=/usr/lib/postgresql/17/bin
+          FECHA=$(TZ=America/Santo_Domingo date +%Y-%m-%d_%H%M)
+          NOMBRE="respaldo-asa-$FECHA"
+          mkdir -p "$NOMBRE"
+          # 1) Formato propio de PostgreSQL: el que usa pg_restore (restauración completa)
+          $PG/pg_dump "$DB" --schema=public --no-owner --no-privileges -Fc -f "$NOMBRE/base.dump"
+          # 2) El mismo contenido en SQL legible, por si hace falta sacar algo a mano
+          $PG/pg_dump "$DB" --schema=public --no-owner --no-privileges -f "$NOMBRE/base.sql"
+          # 3) Cuántas filas tiene cada tabla, para comprobar que el respaldo está completo
+          $PG/psql "$DB" -At -F $'\t' -c "select relname, n_live_tup from pg_stat_user_tables where schemaname='public' order by relname" > "$NOMBRE/filas-por-tabla.txt"
+          cat > "$NOMBRE/LEEME.txt" <<TXT
+          Respaldo de la base de Ambiente y Salud RD — $FECHA (hora de RD)
+          base.dump  → para restaurar con pg_restore (ver SEGURIDAD-ACCESOS-Y-RESPALDOS.md en el repositorio)
+          base.sql   → el mismo contenido en texto SQL
+          filas-por-tabla.txt → cuántas filas tenía cada tabla
+          Las fotos y documentos (Storage de Supabase) no van aquí: van sus enlaces.
+          TXT
+          TAM=$(du -sh "$NOMBRE" | cut -f1)
+          7z a -t7z -mx=7 -mhe=on -p"$CLAVE" "$NOMBRE.7z" "$NOMBRE" >/dev/null
+          rm -rf "$NOMBRE"
+          echo "NOMBRE=$NOMBRE" >> "$GITHUB_ENV"
+          {
+            echo "### Respaldo $FECHA"
+            echo "- Tamaño sin comprimir: $TAM · cifrado: $(du -h "$NOMBRE.7z" | cut -f1)"
+            echo "- Tablas: $($PG/psql "$DB" -At -c "select count(*) from pg_tables where schemaname='public'")"
+            echo "- Descárgalo abajo en **Artifacts** y ábrelo con 7-Zip usando la clave RESPALDO_CLAVE."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar para descargar
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NOMBRE }}
+          path: ${{ env.NOMBRE }}.7z
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error

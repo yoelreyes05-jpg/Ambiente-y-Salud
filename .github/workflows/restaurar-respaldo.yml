@@ -1,0 +1,93 @@
+# Restaurar la base desde un respaldo diario (Ambiente y Salud RD)
+#
+# ⚠️ REEMPLAZA los datos actuales de la base por los del respaldo elegido.
+# Antes de tocar nada saca un respaldo de cómo está la base AHORA
+# ("antes-de-restaurar-…"), por si hay que deshacer.
+#
+# Se corre a mano: GitHub → Actions → "Restaurar respaldo" → Run workflow, con
+#   corrida:   el número de la corrida del respaldo (sale en la dirección de la
+#              página: .../actions/runs/ESTE_NUMERO)
+#   confirmar: escribir RESTAURAR
+name: Restaurar respaldo
+
+on:
+  workflow_dispatch:
+    inputs:
+      corrida:
+        description: "Número de la corrida del 'Respaldo diario' que quieres restaurar (…/actions/runs/NÚMERO)"
+        required: true
+      confirmar:
+        description: "Escribe RESTAURAR para confirmar que se reemplazan los datos actuales"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: respaldo-base
+  cancel-in-progress: false
+
+jobs:
+  restaurar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Confirmación
+        if: ${{ inputs.confirmar != 'RESTAURAR' }}
+        run: |
+          echo "::error::No se restauró nada: en 'confirmar' hay que escribir RESTAURAR."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Instalar PostgreSQL 17 y 7-Zip
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 p7zip-full >/dev/null
+
+      - name: Bajar el respaldo elegido
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.corrida }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: elegido
+
+      - name: Respaldo de la base como está ahora (por si hay que deshacer)
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          CLAVE: ${{ secrets.RESPALDO_CLAVE }}
+        run: |
+          set -euo pipefail
+          FECHA=$(TZ=America/Santo_Domingo date +%Y-%m-%d_%H%M)
+          /usr/lib/postgresql/17/bin/pg_dump "$DB" --schema=public --no-owner --no-privileges -Fc -f antes.dump
+          7z a -t7z -mhe=on -p"$CLAVE" "antes-de-restaurar-$FECHA.7z" antes.dump >/dev/null
+          echo "ANTES=antes-de-restaurar-$FECHA" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ANTES }}
+          path: ${{ env.ANTES }}.7z
+          retention-days: 30
+          compression-level: 0
+
+      - name: Restaurar
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+          CLAVE: ${{ secrets.RESPALDO_CLAVE }}
+        run: |
+          set -euo pipefail
+          ARCHIVO=$(find elegido -name '*.7z' | head -1)
+          [ -n "$ARCHIVO" ] || { echo "::error::Esa corrida no tiene un respaldo .7z"; exit 1; }
+          7z x -p"$CLAVE" -o"abierto" "$ARCHIVO" >/dev/null
+          DUMP=$(find abierto -name base.dump | head -1)
+          echo "Restaurando $ARCHIVO"
+          /usr/lib/postgresql/17/bin/pg_restore --clean --if-exists --no-owner --no-privileges --single-transaction \
+            --schema=public -d "$DB" "$DUMP"
+          # Volver a cerrar las tablas a la clave pública (RLS y permisos)
+          /usr/lib/postgresql/17/bin/psql "$DB" -v ON_ERROR_STOP=1 -q -f supabase/41_seguridad_y_accesos.sql
+          echo "### Restaurado desde $ARCHIVO" >> "$GITHUB_STEP_SUMMARY"
+          echo "Copia de cómo estaba antes: **${ANTES}** (en Artifacts de esta corrida)." >> "$GITHUB_STEP_SUMMARY"

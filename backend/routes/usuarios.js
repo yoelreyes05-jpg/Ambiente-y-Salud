@@ -3,7 +3,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { supabase } from "../lib/supabaseClient.js";
-import { requireAuth, requireRol, ROLES_INTERNOS } from "../middleware/auth.js";
+import { requireAuth, requireRol, ROLES_INTERNOS, olvidarVigencia } from "../middleware/auth.js";
 import { logAccion } from "../lib/auditoria.js";
 
 const router = express.Router();
@@ -50,8 +50,10 @@ export async function vincularEmpleado(usuario) {
   return empleadoId;
 }
 
-// POST /usuarios/registrar-cliente — usado por la app móvil del cliente
-router.post("/registrar-cliente", async (req, res) => {
+// POST /usuarios/registrar-cliente — cuentas de la app del cliente.
+// Estaba abierta: cualquiera podía crearse una cuenta y escoger el cliente_id
+// para ver sus datos. Ahora solo la crea la oficina.
+router.post("/registrar-cliente", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
   const { email, password, nombre_completo, cliente_id } = req.body;
   if (!email || !password) return res.status(400).json({ error: true, mensaje: "email y password son requeridos" });
 
@@ -67,6 +69,92 @@ router.post("/registrar-cliente", async (req, res) => {
   res.status(201).json(usuario);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Inicio de sesión
+//
+// Dos formas de entrar, y la cuenta de hotel puede exigir las dos:
+//
+//   1. Correo + clave (POST /usuarios/login), como siempre.
+//   2. Correo personal verificado (POST /usuarios/login-correo): Google,
+//      Microsoft (Hotmail / Outlook / Office 365) o un código que llega al
+//      correo. Lo verifica Supabase Auth; aquí solo se recibe su token y se
+//      pregunta a Supabase de quién es.
+//
+// Cuentas de hotel con personas autorizadas (asa_usuario_personas): la clave
+// del hotel sola NO basta. Después de la clave, la persona entra con su correo
+// y tiene que estar en la lista de esa cuenta. Si renuncia, se le desactiva y
+// no vuelve a entrar aunque sepa la clave (ni con una sesión ya abierta: ver
+// middleware/auth.js → vigencia).
+// ─────────────────────────────────────────────────────────────────────────────
+const accesoCorreoConfigurado = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+
+async function configAcceso() {
+  try {
+    const { data } = await supabase.from("asa_config_sistema").select("valor").eq("clave", "acceso").maybeSingle();
+    return data?.valor || {};
+  } catch {
+    return {};
+  }
+}
+
+async function personasActivas(usuarioId) {
+  const { data, error } = await supabase
+    .from("asa_usuario_personas")
+    .select("id, nombre, email")
+    .eq("usuario_id", usuarioId)
+    .eq("activo", true);
+  if (error) return [];          // falta correr 41_seguridad_y_accesos.sql
+  return data || [];
+}
+
+const ticketPersona = (usuario) =>
+  jwt.sign({ tipo: "persona", uid: usuario.id }, process.env.JWT_SECRET, { expiresIn: "15m" });
+
+async function emitirSesion(usuario, persona = null) {
+  usuario.empleado_id = await vincularEmpleado(usuario);
+  const nombre = persona ? persona.nombre : usuario.nombre_completo;
+  const token = jwt.sign(
+    {
+      id: usuario.id, rol: usuario.rol, nombre, cliente_id: usuario.cliente_id, empleado_id: usuario.empleado_id,
+      ...(persona ? { persona_id: persona.id, persona_email: persona.email, cuenta: usuario.nombre_completo } : {}),
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "12h" }
+  );
+  const ahora = new Date().toISOString();
+  await supabase.from("asa_usuarios").update({ ultimo_acceso: ahora }).eq("id", usuario.id);
+  if (persona) await supabase.from("asa_usuario_personas").update({ ultimo_acceso: ahora }).eq("id", persona.id);
+  return {
+    token,
+    usuario: {
+      id: usuario.id, nombre, rol: usuario.rol, cliente_id: usuario.cliente_id,
+      ...(persona ? { persona: persona.nombre, persona_email: persona.email, cuenta: usuario.nombre_completo } : {}),
+    },
+  };
+}
+
+// Respuesta cuando a la cuenta le falta el paso de la persona
+const pedirPersona = (usuario) => ({
+  requiere_persona: true,
+  ticket: ticketPersona(usuario),
+  cuenta: usuario.nombre_completo,
+  mensaje: "Confirma quién eres: entra con tu correo personal.",
+});
+
+// GET /usuarios/acceso-config — público: qué botones mostrar en el login.
+// La anon key de Supabase es pública por diseño (va en el navegador); con la
+// migración 41 no da acceso a ninguna tabla, solo sirve para el inicio de
+// sesión con Google / Microsoft / código.
+router.get("/acceso-config", (req, res) => {
+  const ok = accesoCorreoConfigurado();
+  res.json({
+    oauth: ok,
+    supabase_url: ok ? process.env.SUPABASE_URL : null,
+    anon_key: ok ? process.env.SUPABASE_ANON_KEY : null,
+    proveedores: String(process.env.ACCESO_PROVEEDORES || "google,azure,email").split(",").map((x) => x.trim()).filter(Boolean),
+  });
+});
+
 // POST /usuarios/login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -77,19 +165,89 @@ router.post("/login", async (req, res) => {
   const valido = await bcrypt.compare(password, usuario.password_hash);
   if (!valido) return res.status(401).json({ error: true, mensaje: "Credenciales inválidas" });
 
-  // Cuentas de técnico creadas antes de que se pidiera la ficha de empleado:
-  // se amarran aquí, así el token ya sale con su empleado_id.
-  usuario.empleado_id = await vincularEmpleado(usuario);
+  // Cuenta de hotel con personas autorizadas: falta que la persona diga quién es
+  if (usuario.rol === "cliente_calidad" && (await personasActivas(usuario.id)).length) {
+    if (!accesoCorreoConfigurado()) {
+      return res.status(503).json({ error: true, mensaje: "Esta cuenta exige confirmar la persona con su correo, pero el acceso con correo no está configurado en el servidor (falta SUPABASE_ANON_KEY)." });
+    }
+    return res.json(pedirPersona(usuario));
+  }
 
-  const token = jwt.sign(
-    { id: usuario.id, rol: usuario.rol, nombre: usuario.nombre_completo, cliente_id: usuario.cliente_id, empleado_id: usuario.empleado_id },
-    process.env.JWT_SECRET,
-    { expiresIn: "12h" }
-  );
+  // Personal de ASA: si se activó "solo correo personal", la clave ya no sirve
+  // (menos para admin, para no quedarse nunca afuera).
+  if (ROLES_INTERNOS.includes(usuario.rol) && usuario.rol !== "admin" && accesoCorreoConfigurado()) {
+    const cfg = await configAcceso();
+    if (cfg.solo_correo_personal) {
+      return res.status(403).json({ error: true, mensaje: "Entra con Google, Microsoft o con el código por correo (botones de abajo)." });
+    }
+  }
 
-  await supabase.from("asa_usuarios").update({ ultimo_acceso: new Date().toISOString() }).eq("id", usuario.id);
+  res.json(await emitirSesion(usuario));
+});
 
-  res.json({ token, usuario: { id: usuario.id, nombre: usuario.nombre_completo, rol: usuario.rol, cliente_id: usuario.cliente_id } });
+// POST /usuarios/login-correo { access_token, ticket? }
+//   access_token: el de Supabase Auth después de entrar con Google, Microsoft
+//                 o el código por correo.
+//   ticket:       el que devolvió /login cuando la cuenta de hotel pidió la
+//                 persona (paso 2).
+router.post("/login-correo", async (req, res) => {
+  if (!accesoCorreoConfigurado()) return res.status(503).json({ error: true, mensaje: "El acceso con correo no está configurado" });
+  const { access_token, ticket } = req.body || {};
+  if (!access_token) return res.status(400).json({ error: true, mensaje: "Falta el token del correo" });
+
+  let correo;
+  try {
+    const { data, error } = await supabase.auth.getUser(access_token);
+    if (error || !data?.user?.email) throw new Error(error?.message || "sin correo");
+    correo = String(data.user.email).trim().toLowerCase();
+  } catch (e) {
+    return res.status(401).json({ error: true, mensaje: `No se pudo verificar el correo: ${e.message}` });
+  }
+  const anotar = (usuario, descripcion) =>
+    logAccion({ usuario: { id: usuario?.id || null, nombre: usuario?.nombre_completo || correo } },
+      { accion: "acceso", modulo: "accesos", registroId: usuario?.id || null, descripcion, detalle: { correo } });
+
+  // Paso 2 de una cuenta de hotel: la persona tiene que estar en SU lista
+  if (ticket) {
+    let t;
+    try {
+      t = jwt.verify(ticket, process.env.JWT_SECRET);
+      if (t.tipo !== "persona") throw new Error();
+    } catch {
+      return res.status(401).json({ error: true, mensaje: "Pasaron más de 15 minutos. Vuelve a poner el correo y la clave del hotel." });
+    }
+    const { data: usuario } = await supabase.from("asa_usuarios").select("*").eq("id", t.uid).eq("activo", true).maybeSingle();
+    if (!usuario) return res.status(401).json({ error: true, mensaje: "La cuenta del hotel está desactivada" });
+    const persona = (await personasActivas(usuario.id)).find((p) => String(p.email).toLowerCase() === correo);
+    if (!persona) {
+      anotar(usuario, `Intento de entrada rechazado: ${correo} no está autorizado en ${usuario.email}`);
+      return res.status(403).json({
+        error: true,
+        mensaje: `El correo ${correo} no está autorizado en esta cuenta. Pide a Ambiente y Salud que te agreguen.`,
+      });
+    }
+    const sesion = await emitirSesion(usuario, persona);
+    anotar(usuario, `${persona.nombre} (${correo}) entró con la cuenta ${usuario.email}`);
+    return res.json(sesion);
+  }
+
+  // Entrada directa con el correo personal (personal de ASA)
+  const { data: usuarios } = await supabase.from("asa_usuarios").select("*").ilike("email", correo.replace(/[%_\\]/g, "\\$&")).eq("activo", true).limit(2);
+  const usuario = (usuarios || []).find((u) => String(u.email).toLowerCase() === correo);
+  if (usuario) {
+    if (usuario.rol === "cliente_calidad" && (await personasActivas(usuario.id)).length) return res.json(pedirPersona(usuario));
+    const sesion = await emitirSesion(usuario);
+    anotar(usuario, `${usuario.nombre_completo} entró con su correo (${correo})`);
+    return res.json(sesion);
+  }
+
+  // Es una persona de un hotel: primero va la clave de la cuenta del hotel
+  const { data: deHotel } = await supabase.from("asa_usuario_personas").select("id").ilike("email", correo.replace(/[%_\\]/g, "\\$&")).eq("activo", true).limit(1);
+  if (deHotel?.length) {
+    return res.status(403).json({ error: true, mensaje: "Primero entra con el correo y la clave del hotel; después te pide tu correo." });
+  }
+  anotar(null, `Intento de entrada rechazado: ${correo} no tiene cuenta`);
+  return res.status(403).json({ error: true, mensaje: `El correo ${correo} no tiene acceso. Pide a Ambiente y Salud que lo registren.` });
 });
 
 // GET /usuarios/me — requiere token
@@ -193,6 +351,7 @@ router.patch("/:id/activo", requireAuth, requireRol("admin"), async (req, res) =
     .select("id, email, nombre_completo, rol, activo")
     .single();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  olvidarVigencia();   // una cuenta desactivada pierde la sesión abierta al momento
   res.json(data);
 });
 
@@ -241,6 +400,7 @@ router.patch("/portal/:id", requireAuth, requireRol("admin", "comercial"), async
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
   if (!data?.length) return res.status(404).json({ error: true, mensaje: "Cuenta de hotel no encontrada" });
 
+  olvidarVigencia();
   logAccion(req, { accion: "actualizar", modulo: "accesos_hotel", registroId: req.params.id, descripcion: data[0].email });
   res.json(data[0]);
 });
@@ -282,6 +442,81 @@ router.delete("/portal/:id", requireAuth, requireRol("admin", "comercial"), asyn
   const { error } = await supabase.from("asa_usuarios").delete().eq("id", req.params.id);
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
   logAccion(req, { accion: "eliminar", modulo: "accesos_hotel", registroId: req.params.id, descripcion: cuenta.email });
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Personas autorizadas en una cuenta de hotel
+//
+// La cuenta (hotel@ambienteysaludrd.com) es compartida. Cada gerente de calidad
+// que la usa se registra aquí con su nombre y su correo personal. Al entrar,
+// después de la clave, confirma con ese correo. Desactivarla le cierra la
+// entrada al momento, aunque sepa la clave o tenga la sesión abierta.
+// ─────────────────────────────────────────────────────────────────────────────
+const PUEDE_PERSONAS = requireRol("admin", "comercial");
+const correoValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+const faltaMigracion41 = (error) =>
+  /asa_usuario_personas/.test(error?.message || "") ? "Falta correr supabase/41_seguridad_y_accesos.sql" : error?.message;
+
+// GET /usuarios/portal/:id/personas
+router.get("/portal/:id/personas", requireAuth, requireRol("admin", "comercial", "operaciones"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("asa_usuario_personas")
+    .select("id, nombre, email, activo, ultimo_acceso, creado_por, created_at")
+    .eq("usuario_id", req.params.id)
+    .order("activo", { ascending: false })
+    .order("nombre");
+  if (error) return res.status(500).json({ error: true, mensaje: faltaMigracion41(error) });
+  res.json(data || []);
+});
+
+// POST /usuarios/portal/:id/personas { nombre, email }
+router.post("/portal/:id/personas", requireAuth, PUEDE_PERSONAS, async (req, res) => {
+  const nombre = String(req.body?.nombre || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!nombre || !correoValido(email)) return res.status(400).json({ error: true, mensaje: "Pon el nombre y un correo válido" });
+  // Sin esto la cuenta del hotel quedaría trancada: pediría el paso 2 y no
+  // habría cómo hacerlo.
+  if (!accesoCorreoConfigurado()) {
+    return res.status(400).json({ error: true, mensaje: "Primero configura el acceso con correo en el servidor (variable SUPABASE_ANON_KEY en Railway). Sin eso las personas no podrían entrar." });
+  }
+  const { data: cuenta } = await supabase.from("asa_usuarios").select("id, email, rol").eq("id", req.params.id).maybeSingle();
+  if (!cuenta || cuenta.rol !== "cliente_calidad") return res.status(404).json({ error: true, mensaje: "Cuenta de hotel no encontrada" });
+
+  // Si ya estuvo (y se desactivó), se reactiva en vez de duplicarla
+  const { data: previa } = await supabase.from("asa_usuario_personas").select("id").eq("usuario_id", cuenta.id).ilike("email", email.replace(/[%_\\]/g, "\\$&")).maybeSingle();
+  const fila = { nombre, email, activo: true, updated_at: new Date().toISOString() };
+  const { data, error } = previa
+    ? await supabase.from("asa_usuario_personas").update(fila).eq("id", previa.id).select().single()
+    : await supabase.from("asa_usuario_personas").insert([{ ...fila, usuario_id: cuenta.id, creado_por: req.usuario?.nombre || null }]).select().single();
+  if (error) return res.status(500).json({ error: true, mensaje: faltaMigracion41(error) });
+  logAccion(req, { accion: "crear", modulo: "accesos_hotel", registroId: cuenta.id, descripcion: `Autorizada ${nombre} (${email}) en ${cuenta.email}` });
+  res.status(201).json(data);
+});
+
+// PATCH /usuarios/portal/personas/:pid { activo?, nombre? }
+router.patch("/portal/personas/:pid", requireAuth, PUEDE_PERSONAS, async (req, res) => {
+  const cambios = { updated_at: new Date().toISOString() };
+  if (req.body?.activo !== undefined) cambios.activo = !!req.body.activo;
+  if (req.body?.nombre !== undefined) cambios.nombre = String(req.body.nombre).trim();
+  const { data, error } = await supabase.from("asa_usuario_personas").update(cambios).eq("id", req.params.pid).select().maybeSingle();
+  if (error) return res.status(500).json({ error: true, mensaje: faltaMigracion41(error) });
+  if (!data) return res.status(404).json({ error: true, mensaje: "Persona no encontrada" });
+  olvidarVigencia();
+  logAccion(req, {
+    accion: "actualizar", modulo: "accesos_hotel", registroId: data.usuario_id,
+    descripcion: cambios.activo === false ? `Acceso retirado a ${data.nombre} (${data.email})` : `Persona ${data.nombre} (${data.email}) actualizada`,
+  });
+  res.json(data);
+});
+
+// DELETE /usuarios/portal/personas/:pid — la borra de la lista
+router.delete("/portal/personas/:pid", requireAuth, PUEDE_PERSONAS, async (req, res) => {
+  const { data, error } = await supabase.from("asa_usuario_personas").delete().eq("id", req.params.pid).select().maybeSingle();
+  if (error) return res.status(500).json({ error: true, mensaje: faltaMigracion41(error) });
+  if (!data) return res.status(404).json({ error: true, mensaje: "Persona no encontrada" });
+  olvidarVigencia();
+  logAccion(req, { accion: "eliminar", modulo: "accesos_hotel", registroId: data.usuario_id, descripcion: `Borrada ${data.nombre} (${data.email})` });
   res.json({ ok: true });
 });
 

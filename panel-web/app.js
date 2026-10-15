@@ -145,22 +145,7 @@ async function handleLogin(e) {
   btn.disabled = true; btn.textContent = "Entrando…";
   try {
     const data = await api("/usuarios/login", { method: "POST", body: JSON.stringify({ email, password }) });
-    TOKEN = data.token; USUARIO = data.usuario;
-    // Las cuentas externas tienen su propia aplicación. Si entraran aquí verían
-    // un panel administrativo recortado y sin sentido para ellas.
-    if (USUARIO.rol === "cliente_calidad") {
-      throw new Error(
-        "Esta cuenta es del portal del hotel, no del panel administrativo. " +
-        "Entra por la dirección del portal que te dio Ambiente y Salud RD."
-      );
-    }
-    if (USUARIO.rol === "cliente") {
-      throw new Error("Este panel es solo para personal interno. Usa la app de clientes.");
-    }
-    localStorage.setItem("asa_token", TOKEN);
-    localStorage.setItem("asa_usuario", JSON.stringify(USUARIO));
-    await cargarConfiguracion();
-    renderShell();
+    await entrarConSesion(data);
   } catch (e2) {
     err.textContent = e2.message || "No se pudo iniciar sesión";
     err.style.display = "block";
@@ -168,6 +153,29 @@ async function handleLogin(e) {
   } finally {
     btn.disabled = false; btn.textContent = "Entrar";
   }
+}
+
+// Lo mismo para la clave y para Google / Microsoft / código por correo
+async function entrarConSesion(data) {
+  if (data.requiere_persona) {
+    throw new Error("Esta cuenta es del portal del hotel, no del panel administrativo.");
+  }
+  TOKEN = data.token; USUARIO = data.usuario;
+  // Las cuentas externas tienen su propia aplicación. Si entraran aquí verían
+  // un panel administrativo recortado y sin sentido para ellas.
+  if (USUARIO.rol === "cliente_calidad") {
+    throw new Error(
+      "Esta cuenta es del portal del hotel, no del panel administrativo. " +
+      "Entra por la dirección del portal que te dio Ambiente y Salud RD."
+    );
+  }
+  if (USUARIO.rol === "cliente") {
+    throw new Error("Este panel es solo para personal interno. Usa la app de clientes.");
+  }
+  localStorage.setItem("asa_token", TOKEN);
+  localStorage.setItem("asa_usuario", JSON.stringify(USUARIO));
+  await cargarConfiguracion();
+  renderShell();
 }
 
 function renderLogin(msg) {
@@ -182,10 +190,21 @@ function renderLogin(msg) {
         <input id="login-password" type="password" autocomplete="current-password" required />
         <button id="login-btn" class="btn-login" type="submit">Entrar</button>
         <div class="login-error" id="login-error"></div>
+        <div id="acceso-correo"></div>
       </form>
     </div>`;
   if (msg) { const err = $("#login-error"); err.textContent = msg; err.style.display = "block"; }
   $("#login-form").addEventListener("submit", handleLogin);
+  window.AccesoCorreo?.montar({
+    contenedor: $("#acceso-correo"),
+    api: CONFIG.API_BASE,
+    alEntrar: async (r) => {
+      try { await entrarConSesion(r); } catch (e) {
+        TOKEN = null; USUARIO = null;
+        const err = $("#login-error"); err.textContent = e.message; err.style.display = "block";
+      }
+    },
+  });
 }
 
 // Configuración del sistema, cargada una vez al entrar: los datos de la empresa

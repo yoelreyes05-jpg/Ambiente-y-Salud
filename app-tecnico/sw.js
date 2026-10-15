@@ -11,7 +11,7 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v22";
+const VERSION = "asa-tecnico-v23";
 const CAPARAZON = [
   "./",
   "./index.html",
@@ -67,6 +67,8 @@ self.addEventListener("fetch", (e) => {
                 url.pathname.startsWith("/hallazgos") || url.pathname.startsWith("/flota") ||
                 url.pathname.startsWith("/plagas");
   if (esAPI) return; // la API va directo a la red; de lo offline se encarga app.js
+  // Inicio de sesión con Google / Microsoft / código: nunca de la caché
+  if (url.hostname.endsWith(".supabase.co") || /[?&]code=/.test(url.search)) return;
 
   // Red primero para el caparazón: si hay señal, el técnico tiene la versión
   // nueva sin tener que reinstalar nada; si no, se sirve lo guardado.

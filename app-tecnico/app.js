@@ -212,8 +212,17 @@ function pantallaLogin(mensaje) {
           <input type="password" id="clave" autocomplete="current-password" required />
         </div>
         <button class="btn" type="submit" id="entrar">Entrar</button>
+        <div id="acceso-correo"></div>
       </form>
     </div>`;
+
+  window.AccesoCorreo?.montar({
+    contenedor: $("#acceso-correo"),
+    api: CONFIG.API_BASE,
+    alEntrar: async (r) => {
+      try { await entrarConSesion(r); } catch (e) { aviso(e.message, "error"); }
+    },
+  });
 
   $("#form-login").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -222,18 +231,26 @@ function pantallaLogin(mensaje) {
     boton.textContent = "Entrando…";
     try {
       const r = await POST("/usuarios/login", { email: $("#email").value.trim(), password: $("#clave").value });
-      TOKEN = r.token;
-      USUARIO = r.usuario;
-      localStorage.setItem("asa_t_token", TOKEN);
-      guardarJSON("asa_t_usuario", USUARIO);
-      if (typeof iniciarRastreo === "function") iniciarRastreo();
-      await elegirHotel();
+      await entrarConSesion(r);
     } catch (err) {
       boton.disabled = false;
       boton.textContent = "Entrar";
       aviso(err.message, "error");
     }
   });
+}
+
+// Lo mismo para la clave y para Google / Microsoft / código por correo
+async function entrarConSesion(r) {
+  if (r.requiere_persona || r.usuario?.rol === "cliente_calidad") {
+    throw new Error("Esta cuenta es del portal del hotel, no de la app del técnico.");
+  }
+  TOKEN = r.token;
+  USUARIO = r.usuario;
+  localStorage.setItem("asa_t_token", TOKEN);
+  guardarJSON("asa_t_usuario", USUARIO);
+  if (typeof iniciarRastreo === "function") iniciarRastreo();
+  await elegirHotel();
 }
 
 async function elegirHotel() {

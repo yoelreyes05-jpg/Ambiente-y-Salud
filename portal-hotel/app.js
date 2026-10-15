@@ -97,8 +97,27 @@ function pantallaLogin(mensaje) {
         <input id="clave" type="password" autocomplete="current-password" required />
         <button class="btn-entrar" id="btn-entrar" type="submit">Entrar</button>
         ${mensaje ? `<div class="error">${esc(mensaje)}</div>` : ""}
+        <div id="acceso-correo"></div>
       </form>
     </div>`;
+
+  const mostrarError = (texto) => {
+    const caja = $(".error") || document.createElement("div");
+    caja.className = "error";
+    caja.textContent = texto;
+    $("#form-login").appendChild(caja);
+  };
+  // Paso 2 (la persona confirma con su correo) o vuelta de Google / Microsoft
+  const montarCorreo = (extra = {}) =>
+    window.AccesoCorreo?.montar({
+      contenedor: $("#acceso-correo"),
+      api: CONFIG.API_BASE,
+      ...extra,
+      alEntrar: async (r) => {
+        try { await entrarConSesion(r); } catch (e) { mostrarError(e.message); }
+      },
+    });
+  montarCorreo();
 
   $("#form-login").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -109,24 +128,34 @@ function pantallaLogin(mensaje) {
         email: $("#correo").value.trim().toLowerCase(),
         password: $("#clave").value,
       });
-      // Este portal es solo para cuentas de hotel. Al personal de ASA se le
-      // dice dónde entrar en vez de dejarlo con una pantalla vacía.
-      if (r.usuario.rol !== "cliente_calidad") {
-        throw new Error("Esta cuenta es del personal de ASA. Entra por el panel administrativo.");
+      if (r.requiere_persona) {
+        // La clave del hotel estaba bien; ahora la persona dice quién es
+        $("#correo").disabled = true;
+        $("#clave").disabled = true;
+        btn.hidden = true;
+        $(".error")?.remove();
+        await montarCorreo({ ticket: r.ticket, cuenta: r.cuenta });
+        return;
       }
-      TOKEN = r.token; USUARIO = r.usuario;
-      localStorage.setItem("asa_portal_token", TOKEN);
-      guardarJSON("asa_portal_usuario", USUARIO);
-      await arrancar();
+      await entrarConSesion(r);
     } catch (e) {
-      const caja = $(".error") || document.createElement("div");
-      caja.className = "error";
-      caja.textContent = e.message;
-      $("#form-login").appendChild(caja);
+      mostrarError(e.message);
     } finally {
       btn.disabled = false; btn.textContent = "Entrar";
     }
   });
+}
+
+async function entrarConSesion(r) {
+  // Este portal es solo para cuentas de hotel. Al personal de ASA se le
+  // dice dónde entrar en vez de dejarlo con una pantalla vacía.
+  if (r.usuario.rol !== "cliente_calidad") {
+    throw new Error("Esta cuenta es del personal de ASA. Entra por el panel administrativo.");
+  }
+  TOKEN = r.token; USUARIO = r.usuario;
+  localStorage.setItem("asa_portal_token", TOKEN);
+  guardarJSON("asa_portal_usuario", USUARIO);
+  await arrancar();
 }
 
 // ── Marco ────────────────────────────────────────────────────────────────

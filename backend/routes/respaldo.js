@@ -36,7 +36,7 @@ const SOLO_ADMIN = requireRol("admin");
 const TABLAS = [
   ["asa_config_sistema", "clave"], ["asa_rnc_cache", "rnc"], ["asa_secuencias_ecf", "tipo_ecf"],
   ["asa_plan_cuentas"], ["asa_suplidores"], ["asa_clientes"], ["asa_empleados"], ["asa_usuarios"],
-  ["asa_sitios"], ["asa_usuario_sitios"], ["asa_contratos_plagas"], ["asa_contrato_sitios"],
+  ["asa_sitios"], ["asa_usuario_sitios"], ["asa_usuario_personas"], ["asa_ubicaciones"], ["asa_contratos_plagas"], ["asa_contrato_sitios"],
   ["asa_areas"], ["asa_planos"], ["asa_tipos_punto"], ["asa_estrategias"], ["asa_preguntas"],
   ["asa_plagas"], ["asa_umbrales"], ["asa_tipo_punto_estrategias", "tipo_punto_id,estrategia_id"],
   ["asa_tipo_punto_plagas", "tipo_punto_id,plaga_id"], ["asa_puntos_control"],
