@@ -149,7 +149,36 @@ function montarEstadisticasPlagas(raiz) {
           </tbody>
         </table>
       </div>
-      ${d.por_area.length > 30 ? `<p class="pl-nota">Se muestran las 30 áreas con más plagas de ${d.por_area.length}.</p>` : ""}`;
+      ${d.por_area.length > 30 ? `<p class="pl-nota">Se muestran las 30 áreas con más plagas de ${d.por_area.length}.</p>` : ""}
+
+      <h3 class="pl-sub">Dónde se encontró cada plaga</h3>
+      <p class="pl-nota">Habitación o punto de cada registro. Toca una fila para ver el servicio.</p>
+      <select class="btn" id="pl-donde-plaga" style="margin-bottom:8px">
+        <option value="">Todas las plagas (${(d.donde || []).length})</option>
+        ${d.plagas.map((p) => `<option value="${esc(p.plaga)}">${esc(p.plaga)} (${(d.donde || []).filter((x) => x.plaga === p.plaga).length})</option>`).join("")}
+      </select>
+      <div id="pl-donde"></div>`;
+
+    const todos = d.donde || [];
+    const sel = $("#pl-donde-plaga", raiz);
+    const pintarDonde = () => {
+      const lista = sel.value ? todos.filter((x) => x.plaga === sel.value) : todos;
+      $("#pl-donde", raiz).innerHTML = lista.length
+        ? `<div class="pl-tabla-scroll"><table class="pl-tabla">
+             <thead><tr><th>Plaga</th><th>Cant.</th><th>Habitación / punto</th><th>Área</th><th>Fecha</th></tr></thead>
+             <tbody>${lista.slice(0, 300).map((x) => `
+               <tr class="clicable" data-insp="${esc(x.inspeccion_id || "")}" style="cursor:pointer">
+                 <td>${esc(x.plaga)}</td><td>${x.cantidad}</td><td>${esc(x.punto)}</td><td>${esc(x.area)}</td><td>${esc(x.fecha || "")}</td>
+               </tr>`).join("")}</tbody>
+           </table></div>
+           ${lista.length > 300 ? `<p class="pl-nota">Se muestran 300 de ${lista.length}. Elige una plaga para ver solo esa.</p>` : ""}`
+        : `<p class="pl-nota">Sin registros.</p>`;
+      raiz.querySelectorAll("#pl-donde tr[data-insp]").forEach((tr) => {
+        if (tr.dataset.insp && typeof abrirServicio === "function") tr.addEventListener("click", () => abrirServicio(tr.dataset.insp));
+      });
+    };
+    sel.addEventListener("change", pintarDonde);
+    pintarDonde();
   }
 
   $("#pl-rango", raiz).addEventListener("change", cargar);

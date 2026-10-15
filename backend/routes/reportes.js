@@ -78,7 +78,7 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
   for (const r of respuestas) {
     const insp = r.asa_inspecciones;
     if (!insp) continue;
-    if (!porInsp.has(insp.id)) porInsp.set(insp.id, { insp, numeros: new Map(), vistas: new Set(), sinEvidencia: false });
+    if (!porInsp.has(insp.id)) porInsp.set(insp.id, { insp, numeros: new Map(), vistas: new Set(), pregunta: new Map(), sinEvidencia: false });
     const x = porInsp.get(insp.id);
     const texto = sinAcentos(r.pregunta_texto);
     const tipo = insp.asa_puntos_control?.asa_tipos_punto?.codigo;
@@ -96,30 +96,36 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
     if (n > 0 && !NO_ES_CONTEO.test(texto) && /conteo|cuant|cantidad|captura|insecto|individuo|plaga|mosca|cucaracha|roedor|raton|hormiga|chinche|mosquito/.test(texto)) {
       const codigo = plagaDeTexto(texto) || plagaDelTipoPunto(tipo) || "otro";
       x.numeros.set(codigo, (x.numeros.get(codigo) || 0) + Math.round(n));
+      x.pregunta.set(codigo, r.pregunta_texto);
       continue;
     }
     if (r.valor_bool === true && /captur/.test(texto) && /roedor|raton|rata/.test(texto)) {
-      x.vistas.add(plagaDeTexto(texto) || "roedor_raton");
+      const codigo = plagaDeTexto(texto) || "roedor_raton";
+      x.vistas.add(codigo);
+      if (!x.pregunta.has(codigo)) x.pregunta.set(codigo, r.pregunta_texto);
       continue;
     }
     if (ES_HALLAZGO.test(texto) && !/condicion|favorec/.test(texto)) {
       const opciones = Array.isArray(r.valor_opciones) ? r.valor_opciones : [];
       for (const o of [...opciones, r.valor_texto].filter(Boolean)) {
         const codigo = plagaDeTexto(o);
-        if (codigo) x.vistas.add(codigo);
+        if (codigo) {
+          x.vistas.add(codigo);
+          if (!x.pregunta.has(codigo)) x.pregunta.set(codigo, r.pregunta_texto);
+        }
       }
     }
   }
 
   const salida = [];
-  const fila = (codigo, cantidad, insp, sinConteo) => {
+  const fila = (codigo, cantidad, insp, sinConteo, pregunta) => {
     const p = plagaPorCodigo.get(codigo) || plagaPorCodigo.get("otro") || { codigo, nombre: "Otra plaga", grupo: "otra" };
-    salida.push({ cantidad, asa_plagas: p, asa_inspecciones: insp, sin_conteo: sinConteo });
+    salida.push({ cantidad, asa_plagas: p, asa_inspecciones: insp, sin_conteo: sinConteo, pregunta: pregunta || null });
   };
-  for (const { insp, numeros, vistas, sinEvidencia } of porInsp.values()) {
-    for (const [codigo, n] of numeros) fila(codigo, n, insp, false);
+  for (const { insp, numeros, vistas, pregunta, sinEvidencia } of porInsp.values()) {
+    for (const [codigo, n] of numeros) fila(codigo, n, insp, false, pregunta.get(codigo));
     if (sinEvidencia) continue; // dijo que no había plagas: las marcas sueltas no cuentan
-    for (const codigo of vistas) if (!numeros.has(codigo)) fila(codigo, 1, insp, true);
+    for (const codigo of vistas) if (!numeros.has(codigo)) fila(codigo, 1, insp, true, pregunta.get(codigo));
   }
   return salida;
 }
@@ -179,9 +185,32 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
   const delChecklist = plagasDelChecklist(respuestas.filter((r) => !conContador.has(r.asa_inspecciones?.id)), plagaPorCodigo);
 
   const filas = [
-    ...capturas.map((c) => ({ cantidad: c.cantidad, asa_plagas: c.asa_plagas, asa_inspecciones: c.asa_inspecciones, sin_conteo: false })),
+    ...capturas.map((c) => ({ cantidad: c.cantidad, asa_plagas: c.asa_plagas, asa_inspecciones: c.asa_inspecciones, sin_conteo: false, contador: true })),
     ...delChecklist,
   ];
+
+  // Dónde se encontró cada plaga: habitación o punto, área, día, técnico y de
+  // dónde salió el número (contador de la app o una marca del checklist). Sin
+  // esto, una rata o una chinche en el total no había forma de ubicarla.
+  const donde = filas
+    .filter((c) => Number(c.cantidad) > 0)
+    .map((c) => {
+      const insp = c.asa_inspecciones || {};
+      const pc = insp.asa_puntos_control || {};
+      return {
+        plaga: c.asa_plagas?.nombre || "Sin clasificar",
+        cantidad: Number(c.cantidad) || 0,
+        fecha: insp.fecha_local || null,
+        punto: pc.numero_habitacion ? `Habitación ${pc.numero_habitacion}` : pc.codigo_visible || "Sin punto",
+        codigo: pc.codigo_visible || null,
+        area: insp.asa_areas?.nombre || "Sin área",
+        planta: !sitio_id ? insp.asa_sitios?.nombre || null : null,
+        tecnico: insp.asa_empleados?.nombre_completo || "Sin técnico registrado",
+        inspeccion_id: insp.id || null,
+        origen: c.contador ? "Contador de plagas" : c.sin_conteo ? "Marcada en el checklist (sin cantidad)" : "Número en el checklist",
+        pregunta: c.pregunta || null,
+      };
+    });
 
   const porPlaga = new Map();
   const porPeriodo = new Map();
@@ -311,6 +340,12 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     por_tecnico: [...porTecnico.values()].sort((a, b) => b.total - a.total),
     por_area: [...porArea.values()].sort((a, b) => b.total - a.total),
     por_area_nombre: [...porAreaNombre.values()].sort((a, b) => b.total - a.total),
+    // Las plagas menos frecuentes primero (una rata, una chinche son las que se
+    // buscan), y dentro de cada plaga lo más reciente arriba.
+    donde: donde.sort((a, b) =>
+      (porPlaga.get(a.plaga)?.total || 0) - (porPlaga.get(b.plaga)?.total || 0) ||
+      a.plaga.localeCompare(b.plaga, "es") ||
+      String(b.fecha).localeCompare(String(a.fecha))),
   };
 }
 
@@ -330,7 +365,10 @@ router.get("/plagas", async (req, res) => {
   const hasta = req.query.hasta || hoyRD();
   try {
     const conteo = await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id });
-    if (externo) delete conteo.por_tecnico;
+    if (externo) {
+      delete conteo.por_tecnico;
+      for (const x of conteo.donde) delete x.tecnico;
+    }
     res.json(conteo);
   } catch (e) {
     res.status(500).json({ error: true, mensaje: e.message });
@@ -1103,6 +1141,7 @@ async function juntarEvidencia(req) {
       total: conteo.total_individuos,
     },
     plagas_por_tecnico: conteo.por_tecnico,
+    plagas_donde: conteo.donde,
     por_area: [...porArea.values()].sort((a, b) => b.servicios - a.servicios),
     servicios: serviciosCompletos,
     no_realizados: noRealizados,

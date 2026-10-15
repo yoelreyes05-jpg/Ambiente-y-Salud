@@ -754,6 +754,35 @@ export async function construirReporte(d, opciones = {}) {
     );
   }
 
+  // ── Dónde se encontró cada plaga ──────────────────────────────────────────
+  // Habitación o punto de cada registro. Sin esto, una rata o una chinche del
+  // total no había forma de ubicarla. Las plagas con menos registros van
+  // primero, que son las que se buscan.
+  if (d.plagas_donde?.length) {
+    const TOPE_DONDE = 250;
+    tituloSeccion(doc, "Donde se encontro cada plaga");
+    parrafo(doc, "Habitacion o punto, area, dia y tecnico de cada registro de plaga. \"Checklist\" quiere decir que el tecnico la marco en una pregunta del servicio; si no puso cantidad, cuenta como 1.");
+    tabla(doc,
+      [
+        { titulo: "Plaga", ancho: 80, negrita: true },
+        { titulo: "Cant.", ancho: 32, alineacion: "right" },
+        { titulo: "Habitacion / punto", ancho: 82 },
+        { titulo: "Area", ancho: 88 },
+        { titulo: "Fecha", ancho: 52 },
+        { titulo: "Tecnico", ancho: 80 },
+        { titulo: "Registrado en", ancho: 101 },
+      ],
+      d.plagas_donde.slice(0, TOPE_DONDE).map((x) => [
+        x.plaga, x.cantidad, x.punto, x.planta ? `${x.planta} · ${x.area}` : x.area, fechaCorta(x.fecha), x.tecnico || "—",
+        x.origen.startsWith("Contador") ? "Contador" : `Checklist${x.origen.includes("sin cantidad") ? " (sin cantidad)" : ""}${x.pregunta ? `: ${x.pregunta}` : ""}`,
+      ]),
+      { tam: 7.5 }
+    );
+    if (d.plagas_donde.length > TOPE_DONDE) {
+      parrafo(doc, `Se muestran ${TOPE_DONDE} de ${d.plagas_donde.length} registros (primero las plagas menos frecuentes). La lista completa esta en Plagas encontradas del panel.`, { color: C.gris, tam: 7.5 });
+    }
+  }
+
   // ── Por area ──────────────────────────────────────────────────────────────
   if (d.por_area?.length) {
     tituloSeccion(doc, "Servicios por area");

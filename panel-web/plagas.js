@@ -232,7 +232,52 @@ async function viewPlagasEncontradas(content) {
           d.por_area.slice(0, 40)
         )}
         ${d.por_area.length > 40 ? `<p class="text-muted">Se muestran las 40 áreas con más plagas de ${d.por_area.length}.</p>` : ""}
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Dónde se encontró cada plaga</h2>
+          <select id="pl-donde-plaga">
+            <option value="">Todas las plagas (${(d.donde || []).length})</option>
+            ${d.plagas.map((p) => `<option value="${esc(p.plaga)}">${esc(p.plaga)} (${(d.donde || []).filter((x) => x.plaga === p.plaga).length})</option>`).join("")}
+          </select>
+        </div>
+        <p class="text-muted" style="margin:0 0 8px">Habitación o punto de cada registro. Toca una fila para abrir el servicio. "Checklist" = el técnico la marcó en una pregunta; si no puso cantidad, cuenta 1.</p>
+        <div id="pl-donde"></div>
       </div>`;
+    pintarDonde(d.donde || []);
+  }
+
+  function pintarDonde(todos) {
+    const caja = $("#pl-donde");
+    const sel = $("#pl-donde-plaga");
+    if (!caja || !sel) return;
+    const pintar = () => {
+      const lista = sel.value ? todos.filter((x) => x.plaga === sel.value) : todos;
+      const TOPE = 300;
+      caja.innerHTML = lista.length
+        ? `<div style="overflow-x:auto"><table class="data"><thead><tr>
+             <th>Plaga</th><th style="text-align:right">Cant.</th><th>Habitación / punto</th><th>Área</th><th>Fecha</th><th>Técnico</th><th>Registrado en</th>
+           </tr></thead><tbody>
+           ${lista.slice(0, TOPE).map((x) => `
+             <tr class="clickable" data-insp="${esc(x.inspeccion_id || "")}" title="Abrir el servicio">
+               <td><strong>${esc(x.plaga)}</strong></td>
+               <td style="text-align:right">${x.cantidad}</td>
+               <td>${esc(x.punto)}</td>
+               <td>${esc(x.planta ? `${x.planta} · ${x.area}` : x.area)}</td>
+               <td>${esc(x.fecha || "")}</td>
+               <td>${esc(x.tecnico || "—")}</td>
+               <td>${esc(x.origen)}${x.pregunta ? `<div class="text-muted" style="font-size:12px">${esc(x.pregunta)}</div>` : ""}</td>
+             </tr>`).join("")}
+           </tbody></table></div>
+           ${lista.length > TOPE ? `<p class="text-muted">Se muestran ${TOPE} de ${lista.length}. Elige una plaga para ver solo esa.</p>` : ""}`
+        : `<div class="center-msg">Sin registros.</div>`;
+      caja.querySelectorAll("tr[data-insp]").forEach((tr) => {
+        if (tr.dataset.insp && typeof abrirDesglose === "function") tr.addEventListener("click", () => abrirDesglose(tr.dataset.insp));
+      });
+    };
+    sel.addEventListener("change", pintar);
+    pintar();
   }
 
   // Período rápido: llena las fechas y, para rangos largos, agrupa por mes.
