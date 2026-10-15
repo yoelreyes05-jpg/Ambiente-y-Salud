@@ -1,6 +1,10 @@
-// comun/acceso-correo.js — Entrar con Google, Microsoft (Hotmail/Outlook) o un
+// acceso-correo.js — Entrar con Google, Microsoft (Hotmail/Outlook) o un
 // código por correo. Lo usan las tres apps: panel (/admin), portal del hotel
 // (/hotel) y app del técnico (/tecnico).
+//
+// HAY UNA COPIA IGUAL EN panel-web/, portal-hotel/ y app-tecnico/: cada app se
+// publica sola en Vercel y no ve las carpetas de las otras. Si cambias una,
+// copia el archivo a las otras dos.
 //
 // Supabase Auth hace la parte difícil (OAuth y el código por correo) y nos da
 // un token que solo prueba "esta persona es dueña de este correo". El backend
