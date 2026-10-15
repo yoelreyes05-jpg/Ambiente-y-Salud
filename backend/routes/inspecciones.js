@@ -341,10 +341,11 @@ router.get("/:id", async (req, res) => {
 // agrega. Cada fila corregida guarda en su observación qué decía antes y
 // quién lo cambió, y la bitácora guarda el antes y el después completos.
 router.put("/:id/capturas", requireRol("operaciones"), async (req, res) => {
-  const { capturas = [], motivo, nivel_actividad } = req.body || {};
+  const { capturas = [], motivo, nivel_actividad, respuestas: corregirResp = [] } = req.body || {};
   const razon = String(motivo || "").trim();
   if (!razon) return res.status(400).json({ error: true, mensaje: "Escribe por qué se corrige el conteo" });
   if (!Array.isArray(capturas)) return res.status(400).json({ error: true, mensaje: "capturas tiene que ser una lista" });
+  if (!Array.isArray(corregirResp)) return res.status(400).json({ error: true, mensaje: "respuestas tiene que ser una lista" });
   if (nivel_actividad && !["ninguna", "bajo", "medio", "alto"].includes(nivel_actividad)) {
     return res.status(400).json({ error: true, mensaje: "Nivel de actividad no válido" });
   }
@@ -409,12 +410,50 @@ router.put("/:id/capturas", requireRol("operaciones"), async (req, res) => {
     for (const [plaga_id, n] of agregar) cambios.push({ plaga: plaga_id, antes: 0, despues: n });
   }
 
+  // Marcas del checklist ("Evidencia de plagas: Moscas, Ratas, Chinches"):
+  // solo se pueden QUITAR opciones o pasar un "Sí" a "No"; nunca agregar algo
+  // que el técnico no puso. Queda en la bitácora qué decía.
+  let quedanMarcas = false;
+  if (corregirResp.length) {
+    const ids = corregirResp.map((r) => r?.id).filter(Boolean);
+    const { data: actuales, error: eR } = await supabase
+      .from("asa_inspeccion_respuestas")
+      .select("id, pregunta_texto, valor_bool, valor_opciones, valor_texto")
+      .eq("inspeccion_id", insp.id)
+      .in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+    if (eR) return res.status(500).json({ error: true, mensaje: eR.message });
+    const porId = new Map((actuales || []).map((r) => [String(r.id), r]));
+    for (const c of corregirResp) {
+      const r = porId.get(String(c?.id));
+      if (!r) continue;
+      const cambio = {};
+      if (Array.isArray(c.valor_opciones) && Array.isArray(r.valor_opciones)) {
+        const quedan = r.valor_opciones.filter((o) => c.valor_opciones.includes(o));
+        if (quedan.length !== r.valor_opciones.length) {
+          cambio.valor_opciones = quedan;
+          if (r.valor_texto && r.valor_texto === r.valor_opciones.join(", ")) cambio.valor_texto = quedan.join(", ") || null;
+        }
+        if (quedan.length) quedanMarcas = true;
+      } else if (c.valor_bool === false && r.valor_bool === true) {
+        cambio.valor_bool = false;
+      } else if (r.valor_bool === true || (Array.isArray(r.valor_opciones) && r.valor_opciones.length)) {
+        quedanMarcas = true;
+      }
+      if (!Object.keys(cambio).length) continue;
+      const antesTxt = Array.isArray(r.valor_opciones) && r.valor_opciones.length ? r.valor_opciones.join(", ") : r.valor_bool ? "Sí" : "—";
+      const { error } = await supabase.from("asa_inspeccion_respuestas").update(cambio).eq("id", r.id);
+      if (error) return res.status(500).json({ error: true, mensaje: error.message });
+      const despuesTxt = cambio.valor_opciones ? cambio.valor_opciones.join(", ") || "(nada)" : "No";
+      cambios.push({ plaga: `checklist "${r.pregunta_texto}"`, antes: antesTxt, despues: despuesTxt });
+    }
+  }
+
   // Nivel de actividad: el que se elija; si no se elige y ya no queda ninguna
   // plaga, pasa a "sin actividad" para que el servicio deje de salir en rojo.
   const totalFinal = (antes || []).length || agregar.length
     ? (await supabase.from("asa_capturas").select("cantidad").eq("inspeccion_id", insp.id)).data?.reduce((s2, f) => s2 + f.cantidad, 0) || 0
     : 0;
-  const nivelNuevo = nivel_actividad || (totalFinal === 0 && !insp.motivo_no_realizado ? "ninguna" : null);
+  const nivelNuevo = nivel_actividad || (totalFinal === 0 && !quedanMarcas && !insp.motivo_no_realizado ? "ninguna" : null);
   if (nivelNuevo && nivelNuevo !== insp.nivel_actividad) {
     await supabase.from("asa_inspecciones").update({ nivel_actividad: nivelNuevo }).eq("id", insp.id);
     cambios.push({ plaga: "nivel de actividad", antes: insp.nivel_actividad, despues: nivelNuevo });
@@ -424,7 +463,7 @@ router.put("/:id/capturas", requireRol("operaciones"), async (req, res) => {
     accion: "actualizar",
     modulo: "inspecciones",
     registroId: insp.id,
-    descripcion: `Conteo de plagas corregido en ${insp.asa_puntos_control?.codigo_visible || "servicio"}: ${
+    descripcion: `Plagas corregidas en ${insp.asa_puntos_control?.codigo_visible || "servicio"}: ${
       cambios.map((c) => `${c.plaga} ${c.antes}→${c.despues}`).join(", ") || "sin cambios"}`,
     detalle: { motivo: razon, cambios },
   });

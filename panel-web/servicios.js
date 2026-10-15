@@ -282,7 +282,7 @@ async function abrirDesglose(inspeccionId) {
   $(".modal-body").innerHTML = fichaServicioHTML(d) + `
     <div class="actions" style="margin-top:18px">
       <button type="button" class="btn" id="dg-imprimir">Imprimir / guardar en PDF</button>
-      ${puedeCorregir ? `<button type="button" class="btn" id="dg-corregir">✏️ Corregir conteo de plagas</button>` : ""}
+      ${puedeCorregir ? `<button type="button" class="btn" id="dg-corregir">✏️ Corregir plagas</button>` : ""}
     </div>`;
 
   $("#dg-imprimir").addEventListener("click", () => imprimirServicio(d));
@@ -311,8 +311,18 @@ async function modalCorregirConteo(inspeccionId, d) {
       <td style="width:110px"><input type="number" min="0" step="1" value="${c.cantidad}" data-cant style="width:100%;text-align:right" /></td>
     </tr>`;
 
+  // Respuestas del checklist donde el técnico marcó plagas ("Evidencia de
+  // plagas: Moscas, Ratas, Chinches", "¿Se encontró evidencia? Sí"). No las de
+  // tratamiento ("Plagas tratadas"), que no cuentan como encontradas.
+  const marcas = (d.respuestas || []).filter((r) => {
+    const t = String(r.pregunta_texto || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    if (/tratad|tratar|tratamiento|aplicad|objetivo|controlad|prevenc|preventiv|dirigid/.test(t)) return false;
+    if (!/evidencia|encontr|observ|plaga|hallaz|indicio|detect|avist|presencia|visto|actividad|captur/.test(t)) return false;
+    return (Array.isArray(r.valor_opciones) && r.valor_opciones.length) || r.valor_bool === true;
+  });
+
   openModal({
-    title: `Corregir conteo — ${d.punto.codigo}`,
+    title: `Corregir plagas — ${d.punto.codigo}`,
     bodyHTML: `
       <p class="text-muted">Pon la cantidad real de cada plaga. <strong>0</strong> la quita del servicio.
         El cambio se ve enseguida en el reporte, las estadísticas y el portal del hotel, y queda
@@ -330,6 +340,22 @@ async function modalCorregirConteo(inspeccionId, d) {
           ${catalogo.filter((p) => !actuales.has(p.id)).map((p) => `<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join("")}
         </select>
       </div>` +
+      (marcas.length ? `
+      <h4 style="margin:16px 0 4px">Marcas del checklist</h4>
+      <p class="text-muted" style="margin:0 0 8px">Lo que el técnico marcó en el checklist también cuenta como plaga encontrada (1 por marca).
+        <strong>Desmarca</strong> lo que no era cierto. Solo se puede quitar, no agregar.</p>
+      ${marcas.map((r) => `
+        <div class="cc-marca" data-resp="${esc(r.id)}" style="border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:8px 10px;margin-bottom:8px">
+          <div style="font-weight:600;margin-bottom:4px">${esc(r.pregunta_texto)}</div>
+          ${Array.isArray(r.valor_opciones) && r.valor_opciones.length
+            ? r.valor_opciones.map((o) => `
+              <label style="display:inline-flex;align-items:center;gap:6px;margin:2px 14px 2px 0;font-weight:400">
+                <input type="checkbox" data-opcion="${esc(o)}" checked /> ${esc(o)}
+              </label>`).join("")
+            : `<label style="display:inline-flex;align-items:center;gap:6px;font-weight:400">
+                 <input type="checkbox" data-bool checked /> Sí (desmarca para dejarlo en "No")
+               </label>`}
+        </div>`).join("")}` : "") +
       campo("Nivel de actividad",
         `<select name="nivel_actividad">
            <option value="">Dejarlo como está${d.nivel_actividad ? ` (${esc(NIVEL_TEXTO[d.nivel_actividad] || d.nivel_actividad)})` : ""}</option>
@@ -357,13 +383,20 @@ async function modalCorregirConteo(inspeccionId, d) {
         plaga_id: tr.dataset.plaga,
         cantidad: Number(tr.querySelector("[data-cant]").value) || 0,
       }));
+      const respuestas = [...overlay.querySelectorAll(".cc-marca")].map((div) => {
+        const ops = [...div.querySelectorAll("[data-opcion]")];
+        return ops.length
+          ? { id: div.dataset.resp, valor_opciones: ops.filter((x) => x.checked).map((x) => x.dataset.opcion) }
+          : { id: div.dataset.resp, valor_bool: div.querySelector("[data-bool]").checked };
+      });
       const r = await put(`/inspecciones/${inspeccionId}/capturas`, {
         capturas,
+        respuestas,
         motivo: String(fd.get("motivo") || "").trim(),
         nivel_actividad: fd.get("nivel_actividad") || undefined,
       });
       closeModal();
-      toast(r.cambios?.length ? `Conteo corregido (${r.cambios.length} cambio${r.cambios.length === 1 ? "" : "s"})` : "No había nada que cambiar");
+      toast(r.cambios?.length ? `Plagas corregidas (${r.cambios.length} cambio${r.cambios.length === 1 ? "" : "s"})` : "No había nada que cambiar");
       abrirDesglose(inspeccionId);
     },
   });
