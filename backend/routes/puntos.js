@@ -13,6 +13,8 @@ import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES
 import { traerTodo } from "../lib/paginar.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
+import { datosAgrupacion, normalizarAgrupacion, pisoDeNumero } from "../lib/agrupacion.js";
+import { leerSabana, cuadriculaDeHoja, cuadriculaDeCSV } from "../lib/leerHabitaciones.js";
 
 const router = express.Router();
 
@@ -312,7 +314,10 @@ router.get("/estado", async (req, res) => {
       .in("estado", ["pendiente", "no_realizado"])
       .then((r) => r.data || [], () => []),
   ]);
-  const textosHoy = await motivosDeInspecciones([...intentoHoy.values()].map((x) => x.inspeccion_id));
+  const [textosHoy, agrup] = await Promise.all([
+    motivosDeInspecciones([...intentoHoy.values()].map((x) => x.inspeccion_id)),
+    datosAgrupacion(sitio_id), // bloque / villa del área y piso de cada habitación
+  ]);
   const enSolicitud = new Map(enviadas.map((x) => [x.punto_id, x.asa_ordenes_trabajo?.numero_orden || "solicitud"]));
 
   const tipos = new Map();
@@ -339,6 +344,8 @@ router.get("/estado", async (req, res) => {
       numero_habitacion: p.numero_habitacion,
       area_id: p.area_id,
       area_nombre: p.area_nombre || "Sin área",
+      area_agrupacion: agrup.areas.get(p.area_id) || null,
+      piso: agrup.pisos.get(p.id) || null,
       tipo_codigo: p.tipo_codigo,
       tipo_nombre: p.tipo_nombre,
       tipo_icono: p.tipo_icono,
@@ -360,7 +367,7 @@ router.get("/estado", async (req, res) => {
   const areas = new Map();
   for (const p of lista) {
     const k = p.area_id || "sin_area";
-    if (!areas.has(k)) areas.set(k, { id: p.area_id, nombre: p.area_nombre, total: 0, hechos: 0, por_hacer: 0 });
+    if (!areas.has(k)) areas.set(k, { id: p.area_id, nombre: p.area_nombre, agrupacion: p.area_agrupacion, total: 0, hechos: 0, por_hacer: 0 });
     const a = areas.get(k);
     a.total++;
     if (p.estado === "hecho_hoy" || p.estado === "al_dia") a.hechos++;
@@ -1254,6 +1261,8 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   const areasPorNombre = new Map((areasExistentes || []).map((a) => [normalizar(a.nombre), a]));
   const estrategiasPorNombre = new Map((estrategiasExistentes || []).map((e) => [normalizar(e.nombre), e]));
   const areasNuevas = [];
+  let hayAgrupacion = false, hayPiso = false;
+  const agrupacionAreas = new Map(); // área existente → bloque / villa que trae el Excel
 
   // A qué área de la planta va cada área del Excel. El hotel casi siempre ya
   // tiene sus áreas creadas con otro nombre ("Cocina central en general" en el
@@ -1300,6 +1309,9 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   const estrategiasNuevas = [];
   const puntos = [];
   const errores = [];
+  // Lo que se notó al leer una sábana (habitaciones repetidas, nombres de
+  // villa escritos de dos formas…): se muestra en la vista previa.
+  for (const a of filas.avisos || []) errores.push({ linea: "-", mensaje: a });
   const qrVistos = new Set();
 
   for (const [i, f] of filas.entries()) {
@@ -1348,10 +1360,20 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
       }
     }
 
+    // Bloque / villa del área y piso de la habitación (40_bloques_villas.sql)
+    const agrupTexto = valor(f, ["agrupacion", "bloqueovilla", "bloquevilla", "tipoarea", "tipodearea", "tipodeagrupacion"]);
+    // Sin columna de tipo: "Villa Mayor" o "Bloque C" ya lo dicen en el nombre
+    const porNombre = normalizarAgrupacion(nombreArea);
+    const agrupacion = normalizarAgrupacion(agrupTexto) || (porNombre !== "otro" ? porNombre : null);
+    const pisoTexto = valor(f, ["piso"]);
+    if (agrupTexto) hayAgrupacion = true;
+    if (pisoTexto != null) hayPiso = true;
+
     const claveExcel = nombreArea ? normalizar(nombreArea) : null;
     const destino = claveExcel ? destinoArea.get(claveExcel) : null;
     if (destino?.area) {
       nombreArea = destino.area.nombre;            // el punto va al área que ya existe
+      if (agrupacion && destino.area.agrupacion !== agrupacion) agrupacionAreas.set(destino.area.id, agrupacion);
     } else if (nombreArea) {
       const clave = normalizar(nombreArea);
       if (!destino) destinoArea.set(clave, { area: null, como: "nueva" });
@@ -1361,8 +1383,9 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
           sitio_id,
           nombre: String(nombreArea).trim(),
           codigo: siglas(nombreArea),
-          nivel: valor(f, ["nivel", "piso", "planta"]) || null,
+          nivel: valor(f, ["nivel", "planta"]) || null,
           orden: areasPorNombre.size,
+          ...(agrupacion ? { agrupacion } : {}),
         };
         areasPorNombre.set(clave, nueva);
         areasNuevas.push(nueva);
@@ -1400,7 +1423,30 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
       codigo_contrato_origen: contrato ? String(contrato).trim() : null,
       notas: valor(f, ["nota", "notas", "observacion", "observaciones", "comentario"]) || null,
       activo: estado ? !/inactiv|baja|elimin/i.test(String(estado)) : true,
+      ...(pisoTexto != null ? { piso: String(pisoTexto).replace(/\D/g, "") || String(pisoTexto).trim() }
+        : esHabitacion && (hayPiso || agrupacion) && pisoDeNumero(numeroHab) ? { piso: pisoDeNumero(numeroHab) } : {}),
     });
+  }
+
+  // ── Habitaciones/puntos que YA existen en la planta ──────────────────────
+  // Se reconocen por el código ("H1101") o, en habitaciones, por el número.
+  // No se duplican: se les asigna el área (bloque / villa), el piso y el número.
+  const existentes = await traerTodo(() =>
+    supabase.from("asa_puntos_control").select("id, codigo_visible, numero_habitacion, tipo_punto_id").eq("sitio_id", sitio_id).order("id")
+  ).catch(() => []);
+  const tipoHab = (tipos || []).find((t) => t.codigo === "habitacion")?.id;
+  const porCodigo = new Map(existentes.map((e) => [normalizar(e.codigo_visible), e]));
+  const porHab = new Map(existentes.filter((e) => e.tipo_punto_id === tipoHab && e.numero_habitacion)
+    .map((e) => [String(e.numero_habitacion).replace(/^0+/, ""), e]));
+  const aActualizar = [];
+  for (let i = puntos.length - 1; i >= 0; i--) {
+    const p = puntos[i];
+    const ya = porCodigo.get(normalizar(p.codigo_visible)) ||
+      (p.tipo_punto_id === tipoHab && p.numero_habitacion ? porHab.get(String(p.numero_habitacion).replace(/^0+/, "")) : null);
+    if (ya) {
+      aActualizar.unshift({ ...p, _id: ya.id, _codigo_actual: ya.codigo_visible });
+      puntos.splice(i, 1);
+    }
   }
 
   // Códigos visibles repetidos: se desambiguan en vez de romper la carga,
@@ -1420,7 +1466,10 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
 
   const resumen = {
     filas_leidas: filas.length,
+    formato: filas.formato || "tabla",
+    hojas_leidas: filas.hojas || null,
     puntos_a_crear: puntos.length,
+    puntos_a_actualizar: aActualizar.length,
     qr_conservados: qrVistos.size,
     areas_nuevas: areasNuevas.map((a) => a.nombre),
     // Para la vista previa: cada área del Excel, a qué área irá y por qué
@@ -1431,7 +1480,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
         area_id: d?.area?.id || null,
         area_nombre: d?.area?.nombre || null,
         como: d?.como || "nueva",
-        puntos: puntos.filter((p) => p._area_excel === clave).length,
+        puntos: [...puntos, ...aActualizar].filter((p) => p._area_excel === clave).length,
       };
     }),
     areas_existentes: areasActivas
@@ -1454,7 +1503,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
       })),
     });
   }
-  if (!puntos.length) {
+  if (!puntos.length && !aActualizar.length) {
     return res.status(400).json({ error: true, mensaje: "No se pudo interpretar ninguna fila", ...resumen });
   }
 
@@ -1477,6 +1526,11 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     if (error) return res.status(500).json({ error: true, mensaje: error.message });
     for (const a of creadas || []) areasPorNombre.set(normalizar(a.nombre), a);
   }
+  // Áreas que ya existían: se marcan como bloque / villa si el Excel lo dice
+  for (const [areaId, agrupacion] of agrupacionAreas) {
+    const { error } = await supabase.from("asa_areas").update({ agrupacion }).eq("id", areaId);
+    if (error) return res.status(500).json({ error: true, mensaje: /agrupacion/.test(error.message) ? "Falta correr supabase/40_bloques_villas.sql en Supabase." : error.message });
+  }
 
   // 3) Puntos, resolviendo área y estrategia por nombre
   const aInsertar = puntos.map(({ _area_nombre, _area_excel, _estrategia_nombre, _tipo_nombre, ...p }) => ({
@@ -1485,6 +1539,29 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     estrategia_id: _estrategia_nombre ? estrategiasPorNombre.get(normalizar(_estrategia_nombre))?.id || null : null,
   }));
 
+  // 3b) Los que ya existían: área, piso y número (agrupados para pocas llamadas)
+  const grupos = new Map();
+  for (const p of aActualizar) {
+    const cambios = {
+      area_id: p._area_nombre ? areasPorNombre.get(normalizar(p._area_nombre))?.id || null : null,
+      ...(p.piso !== undefined ? { piso: p.piso } : {}),
+      ...(p.numero_habitacion ? { numero_habitacion: p.numero_habitacion } : {}),
+    };
+    if (!cambios.area_id) delete cambios.area_id;
+    const k = JSON.stringify(cambios);
+    if (!grupos.has(k)) grupos.set(k, { cambios, ids: [] });
+    grupos.get(k).ids.push(p._id);
+  }
+  let actualizados = 0;
+  for (const { cambios, ids } of grupos.values()) {
+    if (!Object.keys(cambios).length) continue;
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabase.from("asa_puntos_control").update(cambios).in("id", ids.slice(i, i + 200));
+      if (error) return res.status(500).json({ error: true, mensaje: /piso/.test(error.message) ? "Falta correr supabase/40_bloques_villas.sql en Supabase." : mensajeAmable(error), ...resumen });
+      actualizados += ids.slice(i, i + 200).length;
+    }
+  }
+
   const creados = [];
   for (let i = 0; i < aInsertar.length; i += 200) {
     const lote = aInsertar.slice(i, i + 200);
@@ -1492,7 +1569,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     if (error) {
       return res.status(500).json({
         error: true,
-        mensaje: mensajeAmable(error),
+        mensaje: /piso|agrupacion/.test(error.message) ? "Falta correr supabase/40_bloques_villas.sql en Supabase." : mensajeAmable(error),
         creados_antes_del_error: creados.length,
         ...resumen,
       });
@@ -1504,12 +1581,13 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
     accion: "crear",
     modulo: "puntos",
     registroId: sitio_id,
-    descripcion: `Importación de ${creados.length} puntos desde Excel (${qrVistos.size} QR conservados)`,
+    descripcion: `Importación de ${creados.length} puntos desde Excel (${qrVistos.size} QR conservados, ${actualizados} actualizados)`,
   });
 
   res.status(201).json({
     ...resumen,
     creados: creados.length,
+    actualizados,
     puntos: creados.slice(0, 50).map((p) => ({ id: p.id, codigo_visible: p.codigo_visible, url_qr: urlQR(p.qr_token) })),
   });
 });
@@ -2164,53 +2242,149 @@ async function leerExcel(base64, nombreHoja) {
   const limpio = String(base64).replace(/^data:[^;]+;base64,/, "");
   const buffer = Buffer.from(limpio, "base64");
 
+  // Excel viejo (.xls, formato binario de antes de 2007): no se puede leer
+  if (buffer[0] === 0xd0 && buffer[1] === 0xcf) {
+    throw new Error("Es un Excel viejo (.xls). Ábrelo en Excel y guárdalo como .xlsx (Guardar como → Libro de Excel)");
+  }
+
+  // CSV: cualquier archivo que no sea un .xlsx (un .xlsx es un zip, empieza por "PK")
+  if (!(buffer[0] === 0x50 && buffer[1] === 0x4b)) {
+    const g = cuadriculaDeCSV(buffer.toString("utf8"));
+    const tabla = tablaDeCuadricula(g);
+    if (tabla && tablaReconocida(tabla.encabezados)) return columnasDeArea(tabla.filas);
+    const s = leerSabana([g]);
+    if (s) return conFormato(s);
+    if (!tabla) throw new Error("No se encontró una fila de encabezados con al menos dos columnas");
+    return tabla.filas;
+  }
+
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
 
   const ws = nombreHoja ? wb.getWorksheet(nombreHoja) : wb.worksheets[0];
   if (!ws) throw new Error(`No se encontró la hoja ${nombreHoja || "(la primera)"}`);
 
-  // Encabezado: la fila con MÁS celdas llenas de las primeras 20.
-  //
-  // No sirve "la primera fila con 2 o más celdas": los export de ASA empiezan
-  // con un título ("LISTA DE PUNTOS DE CONTROL"), una fila "DESCARGADO EL |
-  // fecha" y varias de filtros. Esa segunda fila tiene 2 celdas y se colaría
-  // como encabezado, dejando columnas llamadas "DESCARGADO EL" y la fecha.
-  // La fila de encabezados real es la más ancha de todas.
+  // 1) Tabla normal (una fila por punto). Si trae área, código o QR, es eso.
+  const tabla = tablaDeCuadricula(cuadriculaSimple(ws));
+  const claves = (tabla?.encabezados || []).map(normalizar);
+  const tieneArea = claves.some((k) => CLAVES_AREA.includes(k) || CLAVES_GRUPO.includes(k));
+  if (tabla && tablaReconocida(tabla.encabezados) && (tieneArea || nombreHoja || wb.worksheets.length === 1)) {
+    return columnasDeArea(tabla.filas);
+  }
+
+  // 2) Tabla de habitaciones SIN columna de área, repartida en pestañas (una
+  //    por villa o bloque): el nombre de la pestaña es el área.
+  if (!nombreHoja && wb.worksheets.length > 1 && claves.some((k) => CLAVES_HAB.includes(k))) {
+    const todas = [];
+    for (const h of wb.worksheets) {
+      const t = tablaDeCuadricula(cuadriculaSimple(h));
+      if (!t || !t.encabezados.map(normalizar).some((k) => CLAVES_HAB.includes(k))) continue;
+      const area = /^(hoja|sheet|tabla)\s*\d*$/i.test(h.name.trim()) ? null : h.name.trim();
+      for (const f of columnasDeArea(t.filas)) todas.push(area && !valor(f, CLAVES_AREA) ? { "Área": area, ...f } : f);
+    }
+    if (todas.length) return todas;
+  }
+
+  // 3) Sábana: bloques de habitaciones bajo un título ("Villa Azua 1er piso"),
+  //    en todas las pestañas del archivo (o solo en la elegida).
+  const s = leerSabana((nombreHoja ? [ws] : wb.worksheets).map(cuadriculaDeHoja));
+  if (s) return conFormato(s);
+
+  if (!tabla) throw new Error("No se encontró una fila de encabezados con al menos dos columnas");
+  return tablaReconocida(tabla.encabezados) ? columnasDeArea(tabla.filas) : tabla.filas;
+}
+
+// Columna "Villa", "Bloque", "Edificio" o "Torre" en vez de "Área": su valor
+// es el área ("A" en la columna Bloque → "Bloque A") y el tipo de área.
+const CLAVES_GRUPO = ["villa", "villas", "bloque", "bloques", "edificio", "edificios", "torre", "torres", "villaobloque", "bloqueovilla"];
+function columnasDeArea(filas) {
+  return filas.map((f) => {
+    if (valor(f, CLAVES_AREA)) return f;
+    const col = Object.keys(f).find((k) => CLAVES_GRUPO.includes(normalizar(k)));
+    if (!col) return f;
+    const v = String(f[col]).trim();
+    const palabra = normalizar(col).replace(/s$/, "");
+    const grupo = ["villa", "bloque", "edificio", "torre"].includes(palabra) ? palabra : null;
+    const nombre = grupo && !normalizar(v).startsWith(grupo) ? `${grupo[0].toUpperCase()}${grupo.slice(1)} ${v}` : v;
+    const { [col]: _, ...resto } = f;
+    return { "Área": nombre, ...(grupo && !valor(f, ["agrupacion", "tipodearea", "tipoarea"]) ? { "Tipo de área": grupo } : {}), ...resto };
+  });
+}
+
+const CLAVES_AREA = ["area", "zona", "ubicacion", "sector", "departamento"];
+const CLAVES_HAB = ["habitacion", "hab", "cuarto", "room"];
+const CLAVES_PUNTO = ["codigo", "punto", "estacion", "codigoqr", "qr", "codigoqrunico", "token", "estrategia", "servicio", "programa", "tipo", "tipopunto", "dispositivo", "equipo"];
+const CLAVES_EXTRA = ["piso", "agrupacion", "bloqueovilla", "tipodearea", "tipoarea", "frecuencia", "periodicidad", "nombre", "descripcion"];
+
+// ¿La hoja es una tabla de puntos que el importador entiende tal cual?
+function tablaReconocida(encabezados) {
+  const k = encabezados.map(normalizar);
+  if (k.some((x) => CLAVES_AREA.includes(x) || CLAVES_PUNTO.includes(x))) return true;
+  if (k.some((x) => CLAVES_GRUPO.includes(x)) && k.some((x) => CLAVES_HAB.includes(x))) return true;
+  return k.some((x) => CLAVES_HAB.includes(x)) && k.some((x) => CLAVES_EXTRA.includes(x));
+}
+
+function conFormato(s) {
+  const filas = s.filas;
+  filas.formato = "sabana";
+  filas.avisos = s.avisos;
+  filas.hojas = s.hojas;
+  return filas;
+}
+
+// Cuadrícula sin resolver combinaciones (para leer tablas)
+function cuadriculaSimple(ws) {
+  const celdas = [];
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const fila = [];
+    ws.getRow(r).eachCell({ includeEmpty: false }, (celda, col) => {
+      let v = celda.value;
+      if (v && typeof v === "object" && !(v instanceof Date)) v = v.text ?? v.result ?? v.hyperlink ?? String(v);
+      fila[col] = { v };
+    });
+    celdas[r] = fila;
+  }
+  return { nombre: ws.name, filas: ws.rowCount, celdas };
+}
+
+// Tabla: encabezado = la fila con MÁS celdas llenas de las primeras 20.
+//
+// No sirve "la primera fila con 2 o más celdas": los export de ASA empiezan
+// con un título ("LISTA DE PUNTOS DE CONTROL"), una fila "DESCARGADO EL |
+// fecha" y varias de filtros. Esa segunda fila tiene 2 celdas y se colaría
+// como encabezado, dejando columnas llamadas "DESCARGADO EL" y la fecha.
+// La fila de encabezados real es la más ancha de todas.
+function tablaDeCuadricula(g) {
+  const lleno = (x) => x && x.v !== null && x.v !== undefined && String(x.v).trim() !== "";
   let filaEncabezado = 1;
   let mejorAncho = 0;
-  const limite = Math.min(ws.rowCount, 20);
-  for (let r = 1; r <= limite; r++) {
-    const celdas = (ws.getRow(r).values || []).filter(
-      (v) => v !== null && v !== undefined && String(v.text ?? v).trim() !== ""
-    );
-    if (celdas.length > mejorAncho) {
-      mejorAncho = celdas.length;
+  for (let r = 1; r <= Math.min(g.filas, 20); r++) {
+    const ancho = (g.celdas[r] || []).filter(lleno).length;
+    if (ancho > mejorAncho) {
+      mejorAncho = ancho;
       filaEncabezado = r;
     }
   }
-  if (mejorAncho < 2) throw new Error("No se encontró una fila de encabezados con al menos dos columnas");
+  if (mejorAncho < 2) return null;
 
   const encabezados = [];
-  ws.getRow(filaEncabezado).eachCell({ includeEmpty: true }, (celda, col) => {
-    encabezados[col] = String(celda.value ?? "").trim();
+  (g.celdas[filaEncabezado] || []).forEach((x, col) => {
+    if (x) encabezados[col] = String(x.v ?? "").trim();
   });
 
   const filas = [];
-  for (let r = filaEncabezado + 1; r <= ws.rowCount; r++) {
+  for (let r = filaEncabezado + 1; r <= g.filas; r++) {
     const fila = {};
     let tieneAlgo = false;
-    ws.getRow(r).eachCell({ includeEmpty: false }, (celda, col) => {
+    (g.celdas[r] || []).forEach((x, col) => {
       const clave = encabezados[col];
-      if (!clave) return;
-      let v = celda.value;
-      if (v && typeof v === "object") v = v.text ?? v.result ?? v.hyperlink ?? String(v);
-      if (v !== null && String(v).trim() !== "") tieneAlgo = true;
-      fila[clave] = v;
+      if (!clave || !lleno(x)) return;
+      tieneAlgo = true;
+      fila[clave] = x.v;
     });
     if (tieneAlgo) filas.push(fila);
   }
-  return filas;
+  return { encabezados: encabezados.filter(Boolean), filas };
 }
 
 export default router;

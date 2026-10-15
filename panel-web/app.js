@@ -1870,7 +1870,8 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
 
   $("#areas-tabla").innerHTML = tableHTML(
     [
-      { key: "nombre", label: "Área" },
+      { key: "nombre", label: "Área", fmt: (a) => etiquetaArea(a.nombre, a.agrupacion) },
+      { key: "agrupacion", label: "Tipo", fmt: (a) => esc(AGRUPACION_INFO[a.agrupacion]?.txt || "—") },
       { key: "codigo", label: "Código", fmt: (a) => esc(a.codigo || "—") },
       { key: "nivel", label: "Nivel", fmt: (a) => esc(a.nivel || "—") },
       { key: "puntos_total", label: "Puntos", fmt: (a) => a.puntos_total ?? "—" },
@@ -1893,6 +1894,39 @@ async function tabAreas(cuerpo, areas, sitioId, recargar) {
 }
 
 // ── Utilidades ───────────────────────────────────────────────────────────
+// ── Bloques, villas y pisos (40_bloques_villas.sql) ──────────────────────
+const AGRUPACION_INFO = {
+  bloque: { ic: "🏢", txt: "Bloque" },
+  villa: { ic: "🏡", txt: "Villa" },
+  edificio: { ic: "🏬", txt: "Edificio" },
+  torre: { ic: "🏙️", txt: "Torre" },
+  otro: { ic: "📍", txt: "Área" },
+};
+// "🏡 Villa Barahona"; si el nombre no dice el tipo, se agrega: "🏡 Las Palmas (villa)"
+function etiquetaArea(nombre, agrupacion) {
+  const info = AGRUPACION_INFO[agrupacion];
+  if (!info || agrupacion === "otro") return esc(nombre || "Sin área");
+  const dice = String(nombre || "").toLowerCase().startsWith(info.txt.toLowerCase());
+  return `${info.ic} ${esc(nombre || "")}${dice ? "" : ` <small class="text-muted">(${info.txt.toLowerCase()})</small>`}`;
+}
+// 1 → "1er piso", 2 → "2do piso", 4 → "4to piso"
+function textoPiso(p) {
+  const n = Number(String(p || "").replace(/\D/g, ""));
+  if (!n) return p ? `Piso ${p}` : "";
+  const suf = { 1: "er", 2: "do", 3: "er", 4: "to", 5: "to", 6: "to", 7: "mo", 8: "vo", 9: "no", 10: "mo" }[n] || "°";
+  return `${n}${suf} piso`;
+}
+// Lista de puntos → [[piso, puntos], …] ordenado; sin piso va al final
+function porPiso(lista) {
+  const m = new Map();
+  for (const p of lista) {
+    const k = p.piso ? String(p.piso) : "";
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(p);
+  }
+  return [...m.entries()].sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : Number(a[0]) - Number(b[0]) || a[0].localeCompare(b[0])));
+}
+
 function hoyLocal() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
 }

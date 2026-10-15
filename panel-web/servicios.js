@@ -711,7 +711,7 @@ async function tabPendientesArea(cuerpo, sitioId) {
       d.areas
         .map((a) => {
           const k = a.id || "sin_area";
-          return `<option value="${esc(k)}"${k === areaSel ? " selected" : ""}>${esc(a.nombre)} — ${a.por_hacer ? `${a.por_hacer} por hacer` : "completa"}</option>`;
+          return `<option value="${esc(k)}"${k === areaSel ? " selected" : ""}>${AGRUPACION_INFO[a.agrupacion] && a.agrupacion !== "otro" ? `${AGRUPACION_INFO[a.agrupacion].ic} ` : ""}${esc(a.nombre)} — ${a.por_hacer ? `${a.por_hacer} por hacer` : "completa"}</option>`;
         })
         .join("");
 
@@ -775,12 +775,14 @@ async function tabPendientesArea(cuerpo, sitioId) {
                 return `
             <div class="dia-bloque">
               <div class="dia-cabecera">
-                ${esc(a.nombre)} —
+                ${etiquetaArea(a.nombre, a.agrupacion)} —
                 ${a.por_hacer ? `<span class="estado-chip pendiente">${a.por_hacer} por hacer</span>` : `<span class="estado-chip hecho">Completa</span>`}
                 <span class="text-muted">${a.hechos} de ${a.total} en verde</span>
               </div>
+              ${porPiso(ps).map(([piso, lista]) => `
+              ${piso ? `<div class="sub-piso">${esc(textoPiso(piso))}</div>` : ""}
               <div class="grid-habitaciones">
-                ${ps
+                ${lista
                   .map(
                     (p) => `<div class="hab ${ESTADO_CELDA[p.estado].clase}"
                               title="${esc(ayuda(p))}"
@@ -790,7 +792,7 @@ async function tabPendientesArea(cuerpo, sitioId) {
                             </div>`
                   )
                   .join("")}
-              </div>
+              </div>`).join("")}
             </div>`;
               })
               .join("")

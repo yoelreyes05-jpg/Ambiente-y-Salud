@@ -405,3 +405,6 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .pl-tabla th,.pl-tabla td{padding:7px 8px;border-bottom:1px solid var(--borde);text-align:right;white-space:nowrap}
 .pl-tabla th:first-child,.pl-tabla td:first-child{text-align:left;white-space:normal}
 .pl-tabla th{color:var(--suave);font-weight:600;font-size:12px}
+
+/* Bloques y villas: subtítulo de piso dentro de cada área */
+.sub-piso{font-size:11.5px;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px}

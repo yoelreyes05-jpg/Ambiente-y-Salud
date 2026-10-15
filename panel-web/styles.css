@@ -762,3 +762,6 @@ tr.sem-fila-amarillo{background:#fefce8}
 .rt-kpis div{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:8px 10px}
 .rt-kpis strong{display:block;font-size:17px;color:var(--asa-azul-osc,#24407C)}
 .rt-kpis span{font-size:12px;color:var(--text-muted,#64748b)}
+
+/* Bloques y villas: subtítulo de piso dentro de cada área */
+.sub-piso{font-size:12px;font-weight:700;color:var(--text-muted,#64748b);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px}

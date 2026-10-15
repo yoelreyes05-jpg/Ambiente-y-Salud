@@ -14,6 +14,7 @@ import { traerTodoComoRespuesta } from "../lib/paginar.js";
 
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_REALIZO } from "../lib/motivoEstrategia.js";
+import { datosAgrupacion } from "../lib/agrupacion.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -470,12 +471,17 @@ router.get("/avance/hoy", async (req, res) => {
     ? await intentosPendientes(sitio_id, new Map((puntos.data || []).map((p) => [p.punto_id, p.ultima_inspeccion])))
     : new Map();
 
-  // El motivo tal como lo escribió el técnico en la estrategia
-  const textos = await motivosDeInspecciones([...intentos.values()].map((i) => i.id));
+  // El motivo tal como lo escribió el técnico en la estrategia, y el bloque /
+  // villa y el piso de cada habitación
+  const [textos, agrup] = await Promise.all([
+    motivosDeInspecciones([...intentos.values()].map((i) => i.id)),
+    datosAgrupacion(sitio_id),
+  ]);
 
   const realizados = [];
   const pendientes = [];
-  for (const p of puntos.data || []) {
+  for (const p0 of puntos.data || []) {
+    const p = { ...p0, area_agrupacion: agrup.areas.get(p0.area_id) || null, piso: agrup.pisos.get(p0.punto_id) || null };
     const insp = porPunto.get(p.punto_id);
     if (insp) realizados.push({ ...p, inspeccion: insp });
     else {

@@ -154,6 +154,9 @@ router.post("/:id/areas", requireRol("comercial", "operaciones"), async (req, re
       nivel: a.nivel || null,
       descripcion: a.descripcion || null,
       orden: a.orden ?? i,
+      // Bloque / villa (40_bloques_villas.sql). Solo si viene: así una base sin
+      // la migración sigue aceptando áreas nuevas.
+      ...(a.agrupacion !== undefined ? { agrupacion: a.agrupacion || null } : {}),
     }));
 
   if (!filas.length) return res.status(400).json({ error: true, mensaje: "Se requiere al menos un nombre de área" });

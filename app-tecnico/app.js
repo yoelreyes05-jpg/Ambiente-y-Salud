@@ -453,7 +453,7 @@ const normalizar = (v) =>
 function textoDePunto(p) {
   return normalizar([
     p.codigo_visible, p.punto_nombre, p.numero_habitacion, p.area_nombre,
-    p.tipo_nombre, p.ubicacion_descripcion, p.inspeccion?.tecnico,
+    p.area_agrupacion, textoPiso(p.piso), p.tipo_nombre, p.ubicacion_descripcion, p.inspeccion?.tecnico,
   ].filter(Boolean).join(" "));
 }
 
@@ -601,13 +601,27 @@ function listaDelDia(caja, pendientes, realizados) {
   pintar();
 }
 
+const AGRUPACION_ICONO = { bloque: "🏢", villa: "🏡", edificio: "🏬", torre: "🏙️", otro: "📍" };
+function textoPiso(piso) {
+  if (piso === null || piso === undefined || piso === "") return "";
+  const n = Number(piso);
+  if (!Number.isInteger(n)) return `Piso ${piso}`;
+  if (n === 0) return "Planta baja";
+  return `${n}${{ 1: "er", 2: "do", 3: "er", 4: "to", 5: "to", 6: "to", 7: "mo", 8: "vo", 9: "no" }[n] || "°"} piso`;
+}
+
 function filaPunto(p, hecho) {
   const nombre = p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.tipo_nombre || "";
   // No se pudo hacer = amarillo y pendiente. Le toca = rojo. Hecho = verde.
   const clases = ["punto", hecho ? "hecho" : "", !hecho && p.intento ? "nopudo" : !hecho && p.vencido ? "vencido" : ""].filter(Boolean).join(" ");
   const marca = hecho ? (p._local ? "⏳" : "✓") : p.intento ? "⚠️" : "›";
 
-  let linea2 = esc([nombre, p.area_nombre && !hecho ? null : p.area_nombre].filter(Boolean).join(" · "));
+  // En hoteles por bloques o villas el técnico necesita saber a dónde caminar:
+  // "🏡 Villa Barahona · 2do piso". Si el área no tiene agrupación, como antes.
+  const donde = p.area_agrupacion
+    ? [`${AGRUPACION_ICONO[p.area_agrupacion] || "📍"} ${p.area_nombre || ""}`.trim(), textoPiso(p.piso)]
+    : [hecho ? p.area_nombre : null, textoPiso(p.piso)];
+  let linea2 = esc([nombre, ...donde].filter(Boolean).join(" · "));
   if (hecho) {
     // Quién lo hizo y a qué hora: es lo primero que pregunta el supervisor.
     const i = p.inspeccion || {};

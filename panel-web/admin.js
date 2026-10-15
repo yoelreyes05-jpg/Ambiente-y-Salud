@@ -714,6 +714,13 @@ function modalArea(sitioId, area, onSaved) {
         "Aquí se corrigen los nombres que vinieron mal del sistema anterior.") +
       campo("Código", `<input name="codigo" value="${esc(area?.codigo || "")}" placeholder="COC" />`,
         "Se usa como prefijo al generar códigos de puntos en masa.") +
+      campo("Tipo de área",
+        `<select name="agrupacion">
+           <option value="">Área normal</option>
+           ${Object.entries(AGRUPACION_INFO).filter(([k]) => k !== "otro").map(([k, v]) =>
+             `<option value="${k}"${area?.agrupacion === k ? " selected" : ""}>${v.ic} ${v.txt}</option>`).join("")}
+         </select>`,
+        "Para hoteles con habitaciones por bloques o villas (Catalonia Bayahibe, Royal…). Se ve en el panel, en el portal del hotel y en la app del técnico.") +
       campo("Nivel / planta física", `<input name="nivel" value="${esc(area?.nivel || "")}" placeholder="Piso 3" />`) +
       campo("Descripción", `<textarea name="descripcion" rows="2">${esc(area?.descripcion || "")}</textarea>`) +
       (esNueva
@@ -730,9 +737,17 @@ function modalArea(sitioId, area, onSaved) {
         codigo: (fd.get("codigo") || "").trim().toUpperCase() || null,
         nivel: (fd.get("nivel") || "").trim() || null,
         descripcion: (fd.get("descripcion") || "").trim() || null,
+        // Solo si se eligió (o había uno): así se puede editar áreas aunque la
+        // migración 40 no se haya corrido todavía.
+        ...(fd.get("agrupacion") || area?.agrupacion ? { agrupacion: fd.get("agrupacion") || null } : {}),
       };
-      if (esNueva) await post(`/sitios/${sitioId}/areas`, cuerpo);
-      else await put(`/sitios/areas/${area.id}`, cuerpo);
+      try {
+        if (esNueva) await post(`/sitios/${sitioId}/areas`, cuerpo);
+        else await put(`/sitios/areas/${area.id}`, cuerpo);
+      } catch (e) {
+        if (/agrupacion/.test(e.message)) throw new Error("Falta correr supabase/40_bloques_villas.sql en Supabase para guardar el tipo de área.");
+        throw e;
+      }
       closeModal();
       toast("Área guardada");
       onSaved?.();
@@ -781,6 +796,8 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
       campo("Ubicación", `<input name="ubicacion_descripcion" value="${esc(punto?.ubicacion_descripcion || "")}" placeholder="Detrás de la nevera industrial" />`) +
       campo("Número de habitación", `<input name="numero_habitacion" value="${esc(punto?.numero_habitacion || "")}" />`,
         "Solo si el tipo es Habitación.") +
+      campo("Piso", `<input name="piso" value="${esc(punto?.piso || "")}" placeholder="1, 2, 3…" />`,
+        "Para habitaciones en bloques o villas: así se agrupan por piso.") +
       campo("Frecuencia", `<select name="frecuencia">${opcionesFrecuencia(punto?.frecuencia)}</select>`) +
       campo("Estrategia",
         `<select name="estrategia_id">
@@ -817,6 +834,7 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
         ubicacion_descripcion: (fd.get("ubicacion_descripcion") || "").trim() || null,
         numero_habitacion: (fd.get("numero_habitacion") || "").trim() || null,
         frecuencia: fd.get("frecuencia"),
+        ...((fd.get("piso") || "").trim() || punto?.piso ? { piso: (fd.get("piso") || "").trim() || null } : {}),
         estrategia_id: fd.get("estrategia_id") || null,
       };
       if (esNuevo) {
@@ -970,9 +988,15 @@ function modalImportarPuntos(sitioId, onSaved) {
          Reconoce las columnas del export del sistema anterior (CÓDIGO, ESTRATEGIA,
          ÁREA, CONTRATO, CODIGO QR) y también hojas armadas a mano. <strong>Los QR ya
          impresos se conservan tal cual</strong>: la columna CODIGO QR se respeta.
+       </p>
+       <p class="text-muted">
+         <strong>Habitaciones por villas o bloques:</strong> sube la hoja del hotel como
+         esté (la sábana con "Villa Azua 1er piso" arriba de cada lista, una pestaña por
+         villa, o una columna Villa / Bloque). Se leen todas las pestañas y el piso sale
+         del título o del número de la habitación.
        </p>` +
-      campo("Archivo .xlsx", `<input name="archivo" type="file" accept=".xlsx,.xls,.csv" required />`) +
-      campo("Hoja", `<input name="hoja" placeholder="La primera, si lo dejas vacío" />`) +
+      campo("Archivo (.xlsx o .csv)", `<input name="archivo" type="file" accept=".xlsx,.xls,.csv" required />`) +
+      campo("Hoja", `<input name="hoja" placeholder="Todas / la primera, si lo dejas vacío" />`) +
       campo("Prefijo a recortar de las áreas", `<input name="prefijo_area" placeholder="Iberostar Coral Bavaro" />`,
         "El export repite el nombre del hotel en cada área. Si lo pones aquí, se recorta.") +
       `<div id="previsualizacion"></div>`,
@@ -1005,7 +1029,9 @@ function modalImportarPuntos(sitioId, onSaved) {
         const etiqueta = { igual: "mismo nombre", parecida: "nombre parecido: revísala", elegida: "elegida", nueva: "se creará nueva" };
         previa.innerHTML = `
           <div class="resumen-import">
+            ${r.formato === "sabana" ? `<div>📄 Leído como hoja de habitaciones por villa / bloque${r.hojas_leidas?.length ? ` (${r.hojas_leidas.length} pestaña${r.hojas_leidas.length === 1 ? "" : "s"}: ${esc(r.hojas_leidas.join(", "))})` : ""}</div>` : ""}
             <div><strong>${r.puntos_a_crear ?? r.puntos_nuevos ?? 0}</strong> puntos se crearían</div>
+            ${r.puntos_a_actualizar ? `<div><strong>${r.puntos_a_actualizar}</strong> ya existen: se les asigna el área (bloque / villa) y el piso, sin duplicarlos</div>` : ""}
             <div><strong>${r.qr_conservados ?? 0}</strong> QR impresos se conservarían</div>
             <div><strong>${mapeo.filter((a) => a.area_id).length}</strong> áreas reconocidas · <strong>${mapeo.filter((a) => !a.area_id).length}</strong> áreas nuevas</div>
             <div><strong>${(r.estrategias_nuevas || []).length}</strong> estrategias nuevas${(r.estrategias_nuevas || []).length ? `: ${esc(r.estrategias_nuevas.join(", "))}` : ""}</div>
@@ -1013,7 +1039,8 @@ function modalImportarPuntos(sitioId, onSaved) {
               avisos.length
                 ? `<div class="form-error" style="display:block;margin-top:10px">
                      ${avisos.length} aviso(s):<br>
-                     ${avisos.slice(0, 8).map((e) => `línea ${e.linea}: ${esc(e.mensaje)}`).join("<br>")}
+                     ${avisos.slice(0, 12).map((e) => `${e.linea && e.linea !== "-" ? `línea ${e.linea}: ` : "• "}${esc(e.mensaje)}`).join("<br>")}
+                     ${avisos.length > 12 ? `<br>… y ${avisos.length - 12} más` : ""}
                    </div>`
                 : `<div class="estado-chip hecho" style="margin-top:10px">Sin errores</div>`
             }
@@ -1042,7 +1069,7 @@ function modalImportarPuntos(sitioId, onSaved) {
 
       const r = await post("/puntos/importar", { ...cuerpo, mapa_areas: mapaElegido() });
       closeModal();
-      toast(`${r.creados ?? r.puntos_nuevos ?? 0} puntos importados`);
+      toast(`${r.creados ?? r.puntos_nuevos ?? 0} puntos importados${r.actualizados ? ` · ${r.actualizados} actualizados` : ""}`);
       onSaved?.();
     },
   });

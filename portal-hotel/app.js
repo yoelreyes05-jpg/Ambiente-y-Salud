@@ -308,6 +308,32 @@ function engancharServicios(raiz) {
 let PH_TIPO = null;
 let PH_VER = "";
 
+// ── Bloques, villas y pisos ───────────────────────────────────────────────
+const AGRUPACION_INFO = {
+  bloque: { ic: "🏢", txt: "Bloque" }, villa: { ic: "🏡", txt: "Villa" },
+  edificio: { ic: "🏬", txt: "Edificio" }, torre: { ic: "🏙️", txt: "Torre" },
+};
+function etiquetaArea(nombre, agrupacion) {
+  const info = AGRUPACION_INFO[agrupacion];
+  if (!info) return esc(nombre || "Sin área");
+  const dice = String(nombre || "").toLowerCase().startsWith(info.txt.toLowerCase());
+  return `${info.ic} ${esc(nombre || "")}${dice ? "" : ` <small style="color:var(--suave);font-weight:500">(${info.txt.toLowerCase()})</small>`}`;
+}
+function textoPiso(p) {
+  const n = Number(String(p || "").replace(/\D/g, ""));
+  if (!n) return p ? `Piso ${p}` : "";
+  return `${n}${{ 1: "er", 2: "do", 3: "er", 4: "to", 5: "to", 6: "to", 7: "mo", 8: "vo", 9: "no", 10: "mo" }[n] || "°"} piso`;
+}
+function porPiso(lista) {
+  const m = new Map();
+  for (const p of lista) {
+    const k = p.piso ? String(p.piso) : "";
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(p);
+  }
+  return [...m.entries()].sort((a, b) => (a[0] === "" ? 1 : b[0] === "" ? -1 : Number(a[0]) - Number(b[0]) || a[0].localeCompare(b[0])));
+}
+
 // "No se pudo hoy: Huésped en la habitación" o "No se pudo el 12/10: …"
 function textoNoSePudo(p) {
   const motivo = (p.motivo_texto || MOTIVOS_TEXTO[p.motivo_no_realizado]) || p.motivo_no_realizado || "sin motivo";
@@ -385,17 +411,19 @@ async function vistaPendientes(cuerpo) {
           const ps = grupos.get(a.id || "sin_area");
           return `
         <div class="tarjeta">
-          <h2>${esc(a.nombre)}
+          <h2>${etiquetaArea(a.nombre, a.agrupacion)}
             ${a.por_hacer ? `<span class="marca mal">${a.por_hacer} por hacer</span>` : `<span class="marca ok">Completa</span>`}
           </h2>
+          ${porPiso(ps).map(([piso, lista]) => `
+          ${piso ? `<div class="sub-piso">${esc(textoPiso(piso))}</div>` : ""}
           <div class="semaforo">
-            ${ps.map((p) => `
+            ${lista.map((p) => `
               <div class="celda ${esVerde(p) ? "verde" : p.estado === "no_realizado" ? "amarillo" : "rojo"}${p.inspeccion_id ? " clicable" : ""}"
                    title="${esc(detalle(p))}"
                    ${p.inspeccion_id ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
                 ${esc(p.numero_habitacion || p.codigo_visible)}
               </div>`).join("")}
-          </div>
+          </div>`).join("")}
         </div>`;
         }).join("")
       : `<div class="vacio"><span class="emoji">✅</span>${PH_VER === "rojo" ? "No falta nada por hacer." : "No hay puntos con este filtro."}</div>`}
@@ -1301,6 +1329,7 @@ async function formularioHabitaciones(orden = null) {
     if (!porArea.has(h.area_nombre)) porArea.set(h.area_nombre, []);
     porArea.get(h.area_nombre).push(h);
   }
+  const agrupDe = new Map(habs.map((h) => [h.area_nombre, h.area_agrupacion]));
   // Semáforo para enviar con control: rojo = por hacer, amarillo = no se pudo
   // (sigue pendiente), verde = ya enviada al técnico o ya hecha.
   function colorHabitacion(h) {
@@ -1319,13 +1348,15 @@ async function formularioHabitaciones(orden = null) {
   q("#hab-grid").innerHTML = leyenda + [...porArea.entries()]
     .map(([area, lista]) => `
       <div class="grupo-hab">
-        <div class="grupo-hab-titulo">${esc(area)}</div>
+        <div class="grupo-hab-titulo">${etiquetaArea(area, agrupDe.get(area))}</div>
+        ${porPiso(lista).map(([piso, delPiso]) => `
+        ${piso ? `<div class="sub-piso">${esc(textoPiso(piso))}</div>` : ""}
         <div class="semaforo">
-          ${lista.map((h) => {
+          ${delPiso.map((h) => {
             const c = colorHabitacion(h);
             return `<button type="button" class="celda elegible ${c.clase}" data-id="${esc(h.id)}" title="${esc(c.titulo)}">${esc(h.numero_habitacion || h.codigo_visible)}${c.marca ? `<small>${esc(c.marca)}</small>` : ""}</button>`;
           }).join("")}
-        </div>
+        </div>`).join("")}
       </div>`)
     .join("");
 
