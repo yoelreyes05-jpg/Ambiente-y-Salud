@@ -86,7 +86,14 @@ router.post("/registrar-cliente", requireAuth, requireRol("admin", "comercial"),
 // no vuelve a entrar aunque sepa la clave (ni con una sesión ya abierta: ver
 // middleware/auth.js → vigencia).
 // ─────────────────────────────────────────────────────────────────────────────
-const accesoCorreoConfigurado = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+// La clave pública de Supabase. Se acepta con otros nombres comunes (o en
+// minúsculas) porque en Railway un nombre mal escrito no avisa nada.
+const anonKey = () =>
+  String(
+    process.env.SUPABASE_ANON_KEY || process.env.supabase_anon_key || process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON || process.env.ANON_KEY || ""
+  ).trim();
+const accesoCorreoConfigurado = () => !!(process.env.SUPABASE_URL && anonKey());
 
 async function configAcceso() {
   try {
@@ -149,8 +156,8 @@ router.get("/acceso-config", (req, res) => {
   const ok = accesoCorreoConfigurado();
   res.json({
     oauth: ok,
-    supabase_url: ok ? process.env.SUPABASE_URL : null,
-    anon_key: ok ? process.env.SUPABASE_ANON_KEY : null,
+    supabase_url: ok ? process.env.SUPABASE_URL.trim() : null,
+    anon_key: ok ? anonKey() : null,
     proveedores: String(process.env.ACCESO_PROVEEDORES || "google,azure,email").split(",").map((x) => x.trim()).filter(Boolean),
   });
 });
