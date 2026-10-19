@@ -796,3 +796,12 @@ tr.sem-fila-amarillo{background:#fefce8}
 .chat-p-barra{display:flex;gap:8px;align-items:flex-end;padding:10px 16px;border-top:1px solid var(--border,#e2e8f0)}
 .chat-p-barra textarea{flex:1;resize:none;font:inherit;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px}
 @media (max-width:820px){.chat-p{grid-template-columns:1fr;height:auto}.chat-p-lista{max-height:220px;border-right:none;border-bottom:1px solid #e2e8f0}.chat-p-msgs{min-height:320px;max-height:60vh}.chat-p-msg{max-width:90%}}
+
+/* ── Puntos desde GPS ─────────────────────────────────────────────── */
+.modal.modal-gps{max-width:min(1200px,96vw);width:96vw}
+.gps-barra{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.gps-zonas{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:13px}
+.gps-mapa{height:58vh;min-height:380px;border-radius:10px;border:1px solid #e2e8f0}
+.gps-resumen{margin-top:10px}
+.gps-punto{display:inline-block;width:11px;height:11px;border-radius:50%;border:1px solid #111827;vertical-align:-1px}
+.gps-pop select{max-width:230px}

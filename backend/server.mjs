@@ -78,6 +78,7 @@ import incidenciasRouter from "./routes/incidencias.js";
 import cronogramaRouter from "./routes/cronograma.js";
 import rastreoRouter from "./routes/rastreo.js";
 import chatRouter from "./routes/chat.js";
+import puntosGpsRouter from "./routes/puntosGps.js";
 
 // ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
@@ -113,6 +114,7 @@ app.use(cargarAlcance); // limita al personal del hotel a sus propios sitios
 app.use("/clientes", clientesRouter);
 app.use("/sitios", sitiosRouter);
 app.use("/puntos", puntosRouter);
+app.use("/puntos-gps", puntosGpsRouter);      // puntos desde coordenadas GPS (app de mapas)
 app.use("/inspecciones", inspeccionesRouter);
 app.use("/estrategias", estrategiasRouter);
 app.use("/hallazgos", hallazgosRouter);

@@ -374,7 +374,12 @@ function openModal({ title, bodyHTML, large, onMount, onSubmit, submitLabel = "G
   document.body.appendChild(overlay);
   $("#asa-modal-close").addEventListener("click", closeModal);
   $("#asa-modal-cancel").addEventListener("click", closeModal);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  // Solo cierra un clic que empezó Y terminó en el fondo oscuro: arrastrar
+  // dentro de la ventana (un recuadro en un mapa, seleccionar texto) y soltar
+  // afuera no debe cerrarla.
+  let abajoEnFondo = false;
+  overlay.addEventListener("mousedown", (e) => { abajoEnFondo = e.target === overlay; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && abajoEnFondo) closeModal(); abajoEnFondo = false; });
   if (onMount) onMount(overlay);
   // Una ventana sin onSubmit (por ejemplo el desglose de un servicio) nunca
   // debe "enviar" el formulario: un botón sin type="button" adentro recargaba
@@ -1541,6 +1546,7 @@ async function viewPlantas(content) {
         <h2>Plantas</h2>
         <div class="actions">
           <span class="text-muted" id="plantas-conteo"></span>
+          <button class="btn" id="btn-puntos-gps" title="Crea puntos de control desde el Excel de coordenadas GPS del teléfono">📍 Puntos desde GPS</button>
           <button class="btn" id="btn-exportar-todos" title="Descarga en Excel los puntos de control de todas las plantas">⬇ Excel de todos los puntos</button>
           <button class="btn btn-primary" id="btn-nueva-planta">+ Nueva planta</button>
         </div>
@@ -1593,6 +1599,7 @@ async function viewPlantas(content) {
   pintar();
 
   $("#btn-exportar-todos").addEventListener("click", (e) => exportarPuntosExcel({}, e.currentTarget));
+  $("#btn-puntos-gps")?.addEventListener("click", () => modalPuntosGps(() => navigate("plantas")));
   $("#btn-nueva-planta").addEventListener("click", async () => {
     const clientes = await get("/clientes");
     modalPlanta(clientes, null, () => navigate("plantas"));
