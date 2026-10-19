@@ -11,13 +11,14 @@
 //    inspección pendiente de enviar; un caché genérico aquí solo serviría para
 //    mostrarle al técnico datos viejos sin avisarle.
 
-const VERSION = "asa-tecnico-v25";
+const VERSION = "asa-tecnico-v26";
 const CAPARAZON = [
   "./",
   "./index.html",
   "./estilos.css",
   "./app.js",
   "./acceso-correo.js",
+  "./chat.js",
   "./mapa.js",
   "./chequeo.js",
   "./extras.js",
@@ -66,7 +67,7 @@ self.addEventListener("fetch", (e) => {
   const esAPI = url.pathname.startsWith("/puntos") || url.pathname.startsWith("/inspecciones") ||
                 url.pathname.startsWith("/sitios") || url.pathname.startsWith("/usuarios") ||
                 url.pathname.startsWith("/hallazgos") || url.pathname.startsWith("/flota") ||
-                url.pathname.startsWith("/plagas");
+                url.pathname.startsWith("/plagas") || url.pathname.startsWith("/chat");
   if (esAPI) return; // la API va directo a la red; de lo offline se encarga app.js
   // Inicio de sesión con Google / Microsoft / código: nunca de la caché
   if (url.hostname.endsWith(".supabase.co") || /[?&]code=/.test(url.search)) return;

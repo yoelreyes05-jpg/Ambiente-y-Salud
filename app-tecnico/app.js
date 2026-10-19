@@ -179,6 +179,7 @@ async function sincronizar(silencioso = true) {
 // ── Sesión ───────────────────────────────────────────────────────────────
 function cerrarSesion(mensaje) {
   if (typeof detenerRastreo === "function") detenerRastreo();
+  if (typeof CHAT_AVISO_TIMER !== "undefined") { clearInterval(CHAT_AVISO_TIMER); clearInterval(CHAT_TIMER); pintarAvisoChat(0); }
   TOKEN = null; USUARIO = null; SITIO = null;
   localStorage.removeItem("asa_t_token");
   localStorage.removeItem("asa_t_usuario");
@@ -250,6 +251,7 @@ async function entrarConSesion(r) {
   localStorage.setItem("asa_t_token", TOKEN);
   guardarJSON("asa_t_usuario", USUARIO);
   if (typeof iniciarRastreo === "function") iniciarRastreo();
+  if (typeof vigilarMensajes === "function") vigilarMensajes();
   await elegirHotel();
 }
 
@@ -333,6 +335,7 @@ function pintarEstadoConexion() {
 
 function abrirMenu() {
   const opciones = [
+    [`💬 Mensajes con la oficina${typeof CHAT_NO_LEIDOS !== "undefined" && CHAT_NO_LEIDOS ? ` (${CHAT_NO_LEIDOS} nuevo${CHAT_NO_LEIDOS === 1 ? "" : "s"})` : ""}`, () => { location.hash = "#/chat"; }],
     ["🗺️ Mapa del hotel", () => { location.hash = "#/plano"; }],
     ["📅 Cronograma de la semana", () => { location.hash = "#/cronograma"; }],
     ["🛏️ Chinche / código rosa", () => { location.hash = "#/incidencias"; }],
@@ -1893,6 +1896,7 @@ function enrutar() {
   // El chequeo vehicular no depende del hotel elegido: es del vehículo, no de
   // la planta, así que va antes de la comprobación de SITIO de más abajo.
   if (ruta === "chequeo") return pantallaChequeo();
+  if (ruta === "chat") return pantallaChat();
   if (ruta.startsWith("plano/")) return pantallaPlano(ruta.slice(6));
   if (ruta === "escanear") return pantallaEscanear();
   if (ruta === "buscar") {
@@ -1927,6 +1931,8 @@ async function arrancar() {
   sincronizar(true);
   // Ubicación para el panel ("Técnicos en vivo"), solo con la app abierta
   if (TOKEN && typeof iniciarRastreo === "function") iniciarRastreo();
+  // Aviso de mensajes nuevos de la oficina
+  if (TOKEN && typeof vigilarMensajes === "function") vigilarMensajes();
   // Reintento periódico por si el navegador no soporta Background Sync
   setInterval(() => sincronizar(true), 60_000);
 }

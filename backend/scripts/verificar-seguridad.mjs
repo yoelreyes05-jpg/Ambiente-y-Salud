@@ -34,6 +34,7 @@ const RUTAS = [
   "/inventario/productos", "/notificaciones", "/facturacion",
   "/contabilidad/plan-cuentas", "/nomina/empleados", "/pos/ventas", "/citas",
   "/mascotas", "/veterinaria/tratamientos-catalogo", "/estetica/catalogo",
+  "/chat/no-leidos", "/chat/conversaciones",
 ];
 
 let fallas = 0;

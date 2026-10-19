@@ -283,10 +283,14 @@ async function abrirDesglose(inspeccionId) {
     <div class="actions" style="margin-top:18px">
       <button type="button" class="btn" id="dg-imprimir">Imprimir / guardar en PDF</button>
       ${puedeCorregir ? `<button type="button" class="btn" id="dg-corregir">✏️ Corregir plagas</button>` : ""}
+      ${typeof comentarServicioConTecnico === "function" && ["admin", "operaciones", "comercial"].includes(USUARIO?.rol)
+        ? `<button type="button" class="btn" id="dg-chat">💬 Comentar con el técnico</button>` : ""}
     </div>`;
 
   $("#dg-imprimir").addEventListener("click", () => imprimirServicio(d));
   $("#dg-corregir")?.addEventListener("click", () => modalCorregirConteo(inspeccionId, d));
+  $("#dg-chat")?.addEventListener("click", () =>
+    comentarServicioConTecnico(inspeccionId, [d.punto?.nombre || d.punto?.codigo, d.punto?.area || d.area, d.fecha ? fmtDateTime(d.fecha) : null].filter(Boolean).join(" · ")));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

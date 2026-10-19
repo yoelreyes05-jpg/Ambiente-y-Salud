@@ -130,6 +130,7 @@ export const MODULOS_PERMISOS = [
   ["incidencias", "Chinche / codigo rosa"],
   ["cronograma", "Cronograma de trabajo"],
   ["rastreo", "Técnicos en vivo (ubicación)"],
+  ["chat", "Chat con los técnicos"],
   ["plagas_reporte", "Plagas encontradas"],
   ["documentos", "Documentos y productos"],
   ["puntos", "Puntos de control"],

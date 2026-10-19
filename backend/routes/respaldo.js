@@ -55,7 +55,7 @@ const TABLAS = [
   ["asa_flota_conductores"], ["asa_flota_vehiculos"], ["asa_flota_asignaciones"], ["asa_flota_checklist_items"],
   ["asa_flota_fallas_catalogo"], ["asa_flota_chequeos"], ["asa_flota_chequeo_items"], ["asa_flota_fallas_reportadas"],
   ["asa_flota_fotos"], ["asa_flota_gastos"], ["asa_flota_documentos"], ["asa_flota_mantenimientos"],
-  ["asa_notificaciones"], ["asa_log_auditoria"],
+  ["asa_notificaciones"], ["asa_chat_mensajes"], ["asa_log_auditoria"],
 ].map(([tabla, llave = "id"]) => ({ tabla, llave }));
 
 const TOPE_CELDA = 32000;

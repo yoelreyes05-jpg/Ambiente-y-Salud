@@ -267,6 +267,7 @@ if (typeof MODULOS_EXTRA_10 !== "undefined") MODULES.push(...MODULOS_EXTRA_10);
 if (typeof MODULOS_EXTRA_11 !== "undefined") MODULES.push(...MODULOS_EXTRA_11);
 // rastreo.js aporta Técnicos en vivo (ubicación y recorrido del día).
 if (typeof MODULOS_EXTRA_12 !== "undefined") MODULES.push(...MODULOS_EXTRA_12);
+if (typeof MODULOS_EXTRA_13 !== "undefined") MODULES.push(...MODULOS_EXTRA_13);
 
 // Congelados a propósito (ver comentario arriba). Se deja la lista escrita
 // para que se vea qué existe y no se reimplemente por error:
@@ -336,6 +337,7 @@ function renderShell() {
   });
   $("#btn-logout").addEventListener("click", () => logout());
   navigate("dashboard");
+  if (typeof iniciarAvisoChatPanel === "function") iniciarAvisoChatPanel();
 }
 
 function navigate(key) {
