@@ -162,15 +162,58 @@ router.get("/acceso-config", (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Freno a quien prueba claves. Sin esto se podían probar miles de contraseñas
+// contra una cuenta. Después de 5 claves malas para un mismo correo, ese correo
+// queda bloqueado 15 minutos; y una misma conexión no puede fallar más de 30
+// veces en 15 minutos (aunque cambie de correo). En memoria: si el servidor se
+// reinicia, el contador vuelve a cero, que para esto basta.
+// ─────────────────────────────────────────────────────────────────────────────
+const FALLOS = new Map();          // clave → { n, desde }
+const VENTANA_MS = 15 * 60 * 1000;
+const TOPE_CORREO = 5;
+const TOPE_IP = 30;
+const ipDe = (req) => String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
+function bloqueado(clave, tope) {
+  const f = FALLOS.get(clave);
+  if (!f) return 0;
+  if (Date.now() - f.desde > VENTANA_MS) { FALLOS.delete(clave); return 0; }
+  return f.n >= tope ? Math.ceil((f.desde + VENTANA_MS - Date.now()) / 60000) : 0;
+}
+function anotarFallo(clave) {
+  const f = FALLOS.get(clave);
+  if (!f || Date.now() - f.desde > VENTANA_MS) FALLOS.set(clave, { n: 1, desde: Date.now() });
+  else f.n++;
+  if (FALLOS.size > 20000) FALLOS.clear();
+}
+
 // POST /usuarios/login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+  const kCorreo = `c:${String(email || "").trim().toLowerCase()}`;
+  const kIp = `i:${ipDe(req)}`;
+  const espera = bloqueado(kCorreo, TOPE_CORREO) || bloqueado(kIp, TOPE_IP);
+  if (espera) {
+    return res.status(429).json({ error: true, mensaje: `Demasiados intentos fallidos. Espera ${espera} minuto${espera === 1 ? "" : "s"} y vuelve a intentar.` });
+  }
+  const fallo = (u) => {
+    anotarFallo(kCorreo);
+    anotarFallo(kIp);
+    const f = FALLOS.get(kCorreo);
+    if (f?.n === TOPE_CORREO) {
+      logAccion({ usuario: { id: u?.id || null, nombre: String(email || "") } },
+        { accion: "acceso", modulo: "accesos", registroId: u?.id || null, descripcion: `Correo bloqueado 15 min por ${TOPE_CORREO} claves malas: ${email}`, detalle: { ip: ipDe(req) } });
+    }
+    return res.status(401).json({ error: true, mensaje: "Credenciales inválidas" });
+  };
+
   const { data: usuario, error } = await supabase.from("asa_usuarios").select("*").eq("email", email).eq("activo", true).maybeSingle();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  if (!usuario) return res.status(401).json({ error: true, mensaje: "Credenciales inválidas" });
+  if (!usuario) return fallo(null);
 
-  const valido = await bcrypt.compare(password, usuario.password_hash);
-  if (!valido) return res.status(401).json({ error: true, mensaje: "Credenciales inválidas" });
+  const valido = await bcrypt.compare(String(password || ""), usuario.password_hash);
+  if (!valido) return fallo(usuario);
+  FALLOS.delete(kCorreo);
 
   // Cuenta de hotel con personas autorizadas: falta que la persona diga quién es
   if (usuario.rol === "cliente_calidad" && (await personasActivas(usuario.id)).length) {
