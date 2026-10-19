@@ -44,10 +44,24 @@
     });
   }
 
+  // Qué botones mostrar: los que el servidor ofrece Y que Supabase tiene
+  // activados (Authentication → Providers). Así un proveedor a medio
+  // configurar no muestra el error "provider is not enabled".
   function config(api) {
     if (!configPromesa) {
       configPromesa = fetch(`${api}/usuarios/acceso-config`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
+        .then(async (c) => {
+          if (!c?.oauth) return c;
+          try {
+            const r = await fetch(`${c.supabase_url}/auth/v1/settings`, { headers: { apikey: c.anon_key } });
+            if (!r.ok) return c;
+            const s = await r.json();
+            const activo = (p) => (p === "email" ? s.external?.email !== false : !!s.external?.[p]);
+            c.proveedores = (c.proveedores || []).filter(activo);
+          } catch { /* si no se puede preguntar, se muestran todos */ }
+          return c;
+        })
         .catch(() => null);
     }
     return configPromesa;
@@ -109,7 +123,7 @@
     }
     const pasoPersona = !!sessionStorage.getItem(CLAVE_TICKET);
     const cfg = await config(api);
-    if (!cfg?.oauth) {
+    if (!cfg?.oauth || (!cfg.proveedores?.length && !pasoPersona)) {
       contenedor.innerHTML = pasoPersona
         ? `<div style="color:#b91c1c;margin-top:10px">El acceso con correo no está configurado en el servidor.</div>`
         : "";
