@@ -22,7 +22,7 @@ async function modalPuntosGps(onSaved) {
       <div id="gps-paso1">
         <p class="text-muted">Sube el Excel que exporta la app de mapas del teléfono (columnas <strong>Nombre</strong>, <strong>GPS Lat</strong>, <strong>GPS Lng</strong>).
           Verás cada punto en el mapa con el hotel donde cae, para revisarlo antes de crearlo.</p>
-        ${campo("Excel de puntos GPS", `<input type="file" id="gps-archivo" accept=".xlsx" />`)}
+        ${campo("Excel de puntos GPS", `<input type="file" id="gps-archivo" accept=".xlsx,.csv" />`)}
         <div id="gps-estado" class="text-muted"></div>
       </div>
       <div id="gps-paso2" hidden></div>`,

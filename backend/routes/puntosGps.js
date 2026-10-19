@@ -49,7 +49,26 @@ async function leerPuntosGps(base64) {
   const buffer = Buffer.from(String(base64).replace(/^data:[^;]+;base64,/, ""), "base64");
   const wb = new ExcelJS.Workbook();
   if (buffer[0] === 0x50 && buffer[1] === 0x4b) await wb.xlsx.load(buffer);
-  else throw new Error("Sube el Excel (.xlsx) que exporta la app de mapas");
+  else if (buffer[0] === 0xd0 && buffer[1] === 0xcf) throw new Error("Es un Excel viejo (.xls): guárdalo como .xlsx");
+  else {
+    // CSV (el que descarga el archivo de mapas): coma o punto y coma, con comillas
+    const texto = buffer.toString("utf8").replace(/^\uFEFF/, "");
+    const sep = (texto.split("\n")[0].match(/;/g) || []).length > (texto.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
+    const ws = wb.addWorksheet("CSV");
+    for (const linea of texto.split(/\r?\n/)) {
+      if (!linea.trim()) continue;
+      const celdas = [];
+      let actual = "", comillas = false;
+      for (let k = 0; k < linea.length; k++) {
+        const ch = linea[k];
+        if (ch === '"') { if (comillas && linea[k + 1] === '"') { actual += '"'; k++; } else comillas = !comillas; }
+        else if (ch === sep && !comillas) { celdas.push(actual); actual = ""; }
+        else actual += ch;
+      }
+      celdas.push(actual);
+      ws.addRow(celdas.map((c) => (/^-?\d+(\.\d+)?$/.test(c.trim()) ? Number(c) : c)));
+    }
+  }
   for (const ws of wb.worksheets) {
     for (let r = 1; r <= Math.min(ws.rowCount, 15); r++) {
       const cab = {};
@@ -59,6 +78,7 @@ async function leerPuntosGps(base64) {
       if (!cLat || !cLng) continue;
       const cNom = col(/^(nombre|name|titulo|title|punto)$/), cDesc = col(/^(descripcion|description|nota|notas)$/);
       const cFecha = col(/^(timestamp|fecha|date|creado)$/), cTipo = col(/^tipo$/);
+      const cHotel = col(/^(hotel|planta|sitio|cliente)$/);
       const puntos = [];
       for (let i = r + 1; i <= ws.rowCount; i++) {
         const fila = ws.getRow(i);
@@ -70,6 +90,7 @@ async function leerPuntosGps(base64) {
           nombre: arreglar(v(cNom)) || "Punto",
           descripcion: arreglar(v(cDesc)) || null,
           tipo_app: arreglar(v(cTipo)) || null,
+          hotel: arreglar(v(cHotel)) || null,
           fecha: v(cFecha) ? String(v(cFecha)).slice(0, 19) : null,
           lat, lng,
         });
@@ -118,8 +139,15 @@ router.post("/analizar", PUEDE, async (req, res) => {
   ).catch(() => []);
 
   let tipoNuevo = null;
+  // Columna "Hotel" del Excel (la que trae el archivo de mapas): manda si coincide con una planta
+  const plantaPorNombre = (txt) => {
+    const n = norm(txt);
+    if (n.length < 4) return null;
+    return sitios.find((s) => norm(s.nombre) === n) ||
+      sitios.find((s) => norm(s.nombre).includes(n) || n.includes(norm(s.nombre))) || null;
+  };
   for (const p of puntos) {
-    const t = tipoDe(p.nombre, tipos);
+    const t = tipoDe(p.tipo_app && !/libre/i.test(p.tipo_app) ? `${p.nombre} ${p.tipo_app}` : p.nombre, tipos);
     p.tipo_codigo = t?.codigo || null;
     if (t?.nuevo) tipoNuevo = TIPO_REGISTRO;
 
@@ -131,7 +159,11 @@ router.post("/analizar", PUEDE, async (req, res) => {
       const d = metros(p, s);
       if (!cerca || d < cerca.d) cerca = { s, d };
     }
-    if (enPlanos.length) {
+    const delExcel = p.hotel ? plantaPorNombre(p.hotel) : null;
+    if (delExcel) {
+      p.sitio_id = delExcel.id;
+      p.como = "excel";
+    } else if (enPlanos.length) {
       p.sitio_id = enPlanos[0].sitio_id;
       p.como = "plano";
     } else if (cerca && cerca.d <= Math.max(Number(cerca.s.radio_m) || 400, 400) * 1.5) {
