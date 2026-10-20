@@ -90,9 +90,30 @@ router.post("/", requireRol("comercial", "operaciones"), async (req, res) => {
 router.put("/:id", requireRol("comercial", "operaciones"), async (req, res) => {
   if (!exigirSitioPermitido(req, res, req.params.id)) return;
   const { id: _omit, ...cambios } = req.body;
+
+  // Cambio de cliente: el nuevo tiene que existir y queda en la auditoría de quién a quién
+  let clienteAntes = null, clienteNuevo = null;
+  if (cambios.cliente_id !== undefined) {
+    if (!cambios.cliente_id) return res.status(400).json({ error: true, mensaje: "La planta necesita un cliente" });
+    const [{ data: actual }, { data: nuevo }] = await Promise.all([
+      supabase.from("asa_sitios").select("cliente_id, asa_clientes(razon_social, nombre_comercial, nombre_contacto)").eq("id", req.params.id).maybeSingle(),
+      supabase.from("asa_clientes").select("id, razon_social, nombre_comercial, nombre_contacto").eq("id", cambios.cliente_id).maybeSingle(),
+    ]);
+    if (!nuevo) return res.status(400).json({ error: true, mensaje: "Ese cliente no existe" });
+    if (actual?.cliente_id === cambios.cliente_id) delete cambios.cliente_id;
+    else {
+      const nombre = (c) => c?.razon_social || c?.nombre_comercial || c?.nombre_contacto || "";
+      clienteAntes = nombre(actual?.asa_clientes);
+      clienteNuevo = nombre(nuevo);
+    }
+  }
+
   const { data, error } = await supabase.from("asa_sitios").update(cambios).eq("id", req.params.id).select().single();
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
-  logAccion(req, { accion: "actualizar", modulo: "sitios", registroId: req.params.id });
+  logAccion(req, {
+    accion: "actualizar", modulo: "sitios", registroId: req.params.id,
+    ...(clienteNuevo !== null ? { descripcion: `${data.nombre}: cliente ${clienteAntes} → ${clienteNuevo}`, detalle: { cliente_antes: clienteAntes, cliente_nuevo: clienteNuevo } } : {}),
+  });
   res.json(data);
 });
 

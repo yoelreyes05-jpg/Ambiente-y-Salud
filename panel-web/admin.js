@@ -1228,13 +1228,17 @@ const TIPOS_SITIO = {
 function modalPlanta(clientes, planta, onSaved) {
   const esNueva = !planta;
   const tipoActual = planta?.tipo_sitio || "hotel";
+  // /clientes trae solo los activos: si el de la planta no está, se agrega para no mostrar otro
+  if (planta?.cliente_id && !clientes.some((c) => c.id === planta.cliente_id)) {
+    clientes = [{ id: planta.cliente_id, ...(planta.asa_clientes || { razon_social: "(cliente actual)" }) }, ...clientes];
+  }
   openModal({
     title: esNueva ? "Nueva planta" : `Editar ${planta.nombre}`,
     large: true,
     bodyHTML:
-      campo("Cliente", `<select name="cliente_id" required ${planta ? "disabled" : ""}>
+      campo("Cliente", `<select name="cliente_id" required>
           ${opciones(clientes, planta?.cliente_id, (c) => c.id, (c) => c.razon_social || c.nombre_comercial || c.nombre_contacto)}
-        </select>`) +
+        </select>`, esNueva ? "" : "Puedes cambiarlo si la planta quedó con el cliente equivocado o cambió de dueño.") +
       campo("Nombre de la planta", `<input name="nombre" required value="${esc(planta?.nombre || "")}" />`) +
       campo("Dirección", `<input name="direccion" required value="${esc(planta?.direccion || "")}" />`) +
       campo("Tipo de planta", `<select name="tipo_sitio">
@@ -1255,8 +1259,17 @@ function modalPlanta(clientes, planta, onSaved) {
         email_calidad: (fd.get("email_calidad") || "").trim() || null,
         tipo_sitio: fd.get("tipo_sitio") || "hotel",
       };
-      if (esNueva) await post("/sitios", { ...cuerpo, cliente_id: fd.get("cliente_id") });
-      else await put(`/sitios/${planta.id}`, cuerpo);
+      const clienteId = fd.get("cliente_id");
+      if (esNueva) await post("/sitios", { ...cuerpo, cliente_id: clienteId });
+      else {
+        if (clienteId && clienteId !== planta.cliente_id) {
+          const c = clientes.find((x) => x.id === clienteId);
+          const nombre = c?.razon_social || c?.nombre_comercial || c?.nombre_contacto || "el cliente elegido";
+          if (!confirm(`¿Pasar ${planta.nombre} a ${nombre}?\n\nSus áreas, puntos, servicios y reportes se quedan con la planta. Los contratos ya vinculados no cambian: revísalos si eran del cliente anterior.`)) return;
+          cuerpo.cliente_id = clienteId;
+        }
+        await put(`/sitios/${planta.id}`, cuerpo);
+      }
       closeModal();
       toast("Planta guardada");
       onSaved?.();
