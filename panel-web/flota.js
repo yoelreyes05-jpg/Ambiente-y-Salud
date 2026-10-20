@@ -357,7 +357,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         ${r.conductor ? ` · Conductor: <strong>${esc(r.conductor)}</strong>` : " · Sin conductor asignado"}
       </p>
 
-      <div class="kpi-grid">
+      <div class="kpi-grid kpi-compacta">
         <div class="kpi-card"><div class="lbl">Km recorridos</div><div class="val">${NUM(r.km_recorridos)}</div></div>
         <div class="kpi-card"><div class="lbl">Gasto acumulado</div><div class="val">${MONEDA(r.total_gastado)}</div></div>
         <div class="kpi-card"><div class="lbl">Costo por km</div><div class="val">${r.costo_por_km == null ? "—" : MONEDA(r.costo_por_km)}</div></div>
@@ -378,7 +378,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         <button class="tab" data-t="docs">Documentos</button>
         <button class="tab" data-t="fotos">Fotos (${f.fotos.length})</button>
       </div>
-      <div id="ficha-cuerpo"></div>
+      <div id="ficha-cuerpo" class="tabla-tarjetas"></div>
     </div>`;
 
   const cf = $("#ficha-cuerpo");
@@ -417,7 +417,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         { key: "km", label: "Km", fmt: (g) => (g.km ? NUM(g.km) : "—") },
         { key: "monto", label: "Monto", fmt: (g) => MONEDA(g.monto) },
         { key: "suplidor", label: "Suplidor", fmt: (g) => esc(g.suplidor || "—") },
-        { key: "_t", label: "", fmt: (g) => `<button class="btn btn-sm" data-ticket="${g.id}" title="Imprimir ticket">🧾</button>` },
+        { key: "_t", label: "", fmt: (g) => `<button class="btn btn-sm" data-ticket="${g.id}" title="Imprimir ticket">🧾 Ticket</button>` },
       ],
       f.gastos,
       "Sin gastos registrados."
@@ -924,7 +924,7 @@ async function flotaGastos(cuerpo) {
         <input type="date" id="fg-hasta" value="${hoyLocal()}" />
         <span class="text-muted" id="fg-total"></span>
       </div>
-      <div id="fg-tabla"><div class="center-msg">Cargando…</div></div>
+      <div id="fg-tabla" class="tabla-tarjetas"><div class="center-msg">Cargando…</div></div>
     </div>`;
 
   async function cargar() {
@@ -1517,7 +1517,7 @@ function vistaTanqueos(t) {
       { key: "km_galon", label: "Km/gal", fmt: (c) => (c.km_galon == null ? "—" : NUM(c.km_galon, 1)) },
       { key: "costo_km", label: "Costo/km", fmt: (c) => (c.costo_km == null ? "—" : MONEDA(c.costo_km)) },
       { key: "vs", label: "Vs promedio", fmt: textoVsPromedio },
-      { key: "_t", label: "", fmt: (c) => `<button class="btn btn-sm" data-ticket="${c.id}" title="Imprimir ticket">🧾</button>` },
+      { key: "_t", label: "", fmt: (c) => `<button class="btn btn-sm" data-ticket="${c.id}" title="Imprimir ticket">🧾 Ticket</button>` },
     ], filas, "")}
     <p class="text-muted" style="margin-top:10px">
       Km/galón: de tanque lleno a tanque lleno, sumando las cargas parciales del medio.
@@ -1533,7 +1533,13 @@ async function imprimirTicketGasto(gastoId) {
   w.document.write("<p style='font-family:sans-serif'>Preparando ticket…</p>");
   let d;
   try { d = await apiFlota.get(`/gastos/${gastoId}/ticket`); }
-  catch (e) { w.document.body.innerHTML = `<p style='font-family:sans-serif'>No se pudo cargar: ${esc(e.message)}</p>`; return; }
+  catch (e) {
+    const viejo = /404/.test(e.message || "") || e.status === 404;
+    w.document.body.innerHTML = `<p style='font-family:sans-serif'>${viejo
+      ? "El servidor todavía no tiene la actualización del ticket. Espera a que Railway termine de publicar (unos minutos) y vuelve a intentarlo."
+      : `No se pudo cargar: ${esc(e.message)}`}</p>`;
+    return;
+  }
   const g = d.gasto, v = d.vehiculo || {}, c = d.tanqueo, p = d.promedio || {};
   const M = (n) => (n == null ? "—" : `${d.moneda} ${Number(n).toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   const N = (n, dec = 0) => (n == null ? "—" : Number(n).toLocaleString("es-DO", { minimumFractionDigits: dec, maximumFractionDigits: dec }));

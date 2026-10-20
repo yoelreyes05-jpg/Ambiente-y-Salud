@@ -418,7 +418,8 @@ function tableHTML(columns, rows, emptyText = "Sin registros todavía.") {
   const head = columns.map((c) => `<th>${esc(c.label)}</th>`).join("");
   const body = rows
     .map((r) => {
-      const cells = columns.map((c) => `<td>${c.fmt ? c.fmt(r) : esc(r[c.key] ?? "—")}</td>`).join("");
+      // data-label: en el celular, las tablas con .tabla-tarjetas se ven como tarjetas "Campo: valor"
+      const cells = columns.map((c) => `<td data-label="${esc(c.label)}"><span>${c.fmt ? c.fmt(r) : esc(r[c.key] ?? "—")}</span></td>`).join("");
       return `<tr data-id="${esc(r.id ?? "")}" class="${r._clickable === false ? "" : "clickable"}">${cells}</tr>`;
     })
     .join("");

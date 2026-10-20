@@ -805,3 +805,18 @@ tr.sem-fila-amarillo{background:#fefce8}
 .gps-resumen{margin-top:10px}
 .gps-punto{display:inline-block;width:11px;height:11px;border-radius:50%;border:1px solid #111827;vertical-align:-1px}
 .gps-pop select{max-width:230px}
+
+/* Tablas como tarjetas en el celular: cada fila es una tarjeta con todos sus
+   datos ("Campo: valor"), así se ve todo sin desplazarse de lado. */
+@media (max-width:700px){
+  .tabla-tarjetas .table-wrap{overflow:visible}
+  .tabla-tarjetas table.data thead{display:none}
+  .tabla-tarjetas table.data,.tabla-tarjetas table.data tbody,.tabla-tarjetas table.data tr,.tabla-tarjetas table.data td{display:block;width:100%}
+  .tabla-tarjetas table.data tr{border:1px solid #e2e8f0;border-radius:10px;margin:0 0 10px;padding:8px 12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .tabla-tarjetas table.data td{display:flex;justify-content:space-between;align-items:center;gap:12px;border:none;padding:4px 0;text-align:right;white-space:normal}
+  .tabla-tarjetas table.data td::before{content:attr(data-label);font-weight:600;color:#64748b;text-align:left;flex:0 0 auto;font-size:13px}
+  .tabla-tarjetas table.data td[data-label=""]{justify-content:flex-end}
+  .tabla-tarjetas table.data td[data-label=""]::before{display:none}
+  .tabla-tarjetas .kpi-grid,.kpi-compacta{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .tabla-tarjetas .kpi-card .val,.kpi-compacta .kpi-card .val{font-size:18px}
+}
