@@ -19,7 +19,11 @@ const RASTREO = {
   ultimo: null,
   bateria: null,
   enviando: false,
+  error: null,          // último error del GPS: 1 permiso, 2 sin ubicación, 3 tiempo, "sin_gps"
+  ultimoReporte: 0,
+  firmaReporte: "",
 };
+const VERSION_APP = "t27";
 const CLAVE_COLA_GPS = "asa_t_gps_cola";
 const ROLES_RASTREO = ["tecnico_plagas", "operaciones", "admin"];
 
@@ -57,9 +61,39 @@ function pastillaGps(estado) {
   el.dataset.estado = estado;
 }
 
+// Le dice a la oficina cómo está el GPS de este teléfono: así el panel puede
+// decir "bloqueó la ubicación" en vez de "no ha abierto la app". Se manda al
+// cambiar algo y cada 10 minutos.
+async function reportarEstadoGps(forzar) {
+  if (!TOKEN || !navigator.onLine) return;
+  let permiso = null;
+  try { permiso = (await navigator.permissions?.query({ name: "geolocation" }))?.state || null; } catch {}
+  const estado = {
+    permiso,
+    error: RASTREO.error,
+    gps_ok: !!RASTREO.ultimo && RASTREO.error === null,
+    en_horario: RASTREO.cfg ? gpsEnHorario(RASTREO.cfg) : true,
+    cola: colaGps().length,
+    version: VERSION_APP,
+    plataforma: navigator.userAgent,
+  };
+  const firma = [permiso, estado.error, estado.gps_ok, estado.en_horario].join("|");
+  if (!forzar && firma === RASTREO.firmaReporte && Date.now() - RASTREO.ultimoReporte < 10 * 60000) return;
+  RASTREO.firmaReporte = firma;
+  RASTREO.ultimoReporte = Date.now();
+  try { await POST("/rastreo/estado", estado); } catch {}
+}
+
+// La ubicación de hace menos de 5 minutos (se guarda con cada servicio)
+function ubicacionActual() {
+  const u = RASTREO.ultimo;
+  if (!u || Date.now() - new Date(u.t) > 5 * 60000) return null;
+  return { lat: u.lat, lng: u.lng };
+}
+
 async function iniciarRastreo() {
   if (!TOKEN || !USUARIO || !ROLES_RASTREO.includes(USUARIO.rol)) return;
-  if (!("geolocation" in navigator)) return;
+  if (!("geolocation" in navigator)) { RASTREO.error = "sin_gps"; reportarEstadoGps(true); return; }
   if (RASTREO.watch !== null) return;
 
   try {
@@ -95,9 +129,11 @@ async function iniciarRastreo() {
       guardarPunto(RASTREO.ultimo);
     }
     enviarGps();
+    reportarEstadoGps(false);
   }, Math.max(15, Number(RASTREO.cfg.intervalo_seg) || 45) * 1000);
   pastillaGps(gpsEnHorario(RASTREO.cfg) ? "activo" : "fuera");
   enviarGps();
+  reportarEstadoGps(true);
 }
 
 function detenerRastreo() {
@@ -110,6 +146,7 @@ function detenerRastreo() {
 
 function alMoverse(pos) {
   const c = pos.coords;
+  if (RASTREO.error !== null || !RASTREO.ultimo) { RASTREO.error = null; setTimeout(() => reportarEstadoGps(true), 0); }
   const p = {
     lat: c.latitude,
     lng: c.longitude,
@@ -161,6 +198,10 @@ async function enviarGps() {
 }
 
 function errorGps(err) {
+  if (err?.code && err.code !== RASTREO.error) {
+    RASTREO.error = err.code;
+    reportarEstadoGps(true);
+  }
   if (err?.code === 1) {
     pastillaGps("permiso");
     aviso("Activa la ubicación del teléfono para la app (Ajustes → Ubicación).", "error");

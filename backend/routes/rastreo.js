@@ -8,6 +8,7 @@
 //   GET  /rastreo/config        — horario y frecuencia (la app lo lee al abrir)
 //   PUT  /rastreo/config        — cambiarlos (admin)
 //   POST /rastreo/ubicaciones   — la app manda un lote de ubicaciones
+//   POST /rastreo/estado        — el teléfono dice cómo está su GPS (permiso, error)
 //   GET  /rastreo/en-vivo       — última ubicación de cada técnico hoy (panel)
 //   GET  /rastreo/recorrido     — el recorrido de un técnico en un día (panel)
 // ═════════════════════════════════════════════════════════════════════════
@@ -172,6 +173,46 @@ router.post("/ubicaciones", async (req, res) => {
   res.json({ guardados: filas.length });
 });
 
+// ── El teléfono dice cómo está su GPS ────────────────────────────────────
+// Si el técnico bloquea la ubicación, la app no puede mandar nada y el panel
+// solo vería "no ha abierto la app" aunque esté subiendo servicios. Con esto
+// el panel dice por qué. Se guarda en memoria: la app lo repite cada 10 min
+// mientras está abierta, así que tras reiniciar el servidor se rellena solo.
+const ESTADO_GPS = new Map();
+router.post("/estado", (req, res) => {
+  if (ROLES_EXTERNOS.includes(req.usuario?.rol)) return res.status(403).json({ error: true, mensaje: "Solo el personal de ASA" });
+  const b = req.body || {};
+  const corto = (v, n) => (v == null ? null : String(v).slice(0, n));
+  ESTADO_GPS.set(req.usuario.id, {
+    permiso: ["granted", "denied", "prompt"].includes(b.permiso) ? b.permiso : null,
+    error: [1, 2, 3].includes(Number(b.error)) ? Number(b.error) : b.error === "sin_gps" ? "sin_gps" : null,
+    gps_ok: !!b.gps_ok,
+    en_horario: b.en_horario !== false,
+    cola: Number.isFinite(Number(b.cola)) ? Number(b.cola) : 0,
+    version: corto(b.version, 20),
+    plataforma: corto(b.plataforma, 160),
+    at: new Date().toISOString(),
+  });
+  res.json({ ok: true });
+});
+
+// Por qué un técnico no tiene ubicación (lo que se muestra en el panel)
+export function motivoSinGps(est, servicios) {
+  if (est) {
+    if (est.permiso === "denied" || est.error === 1) return "Bloqueó el permiso de ubicación en el teléfono";
+    if (est.error === "sin_gps") return "Su navegador no da la ubicación";
+    if (est.error === 2) return "El GPS del teléfono está apagado o no da la ubicación";
+    if (est.error === 3) return "El GPS no encuentra señal";
+    if (est.en_horario === false) return "Su teléfono tiene la hora fuera del horario de trabajo";
+    if (est.cola > 0) return `Tiene ${est.cola} ubicación(es) guardadas en el teléfono sin enviar`;
+    if (est.permiso === "prompt") return "No ha aceptado el permiso de ubicación";
+    return "Su teléfono tiene el GPS activo pero todavía no llega ninguna ubicación";
+  }
+  return servicios > 0
+    ? "Su teléfono no reporta el GPS: puede tener la ubicación bloqueada o la app sin actualizar (que la cierre y la vuelva a abrir con señal)"
+    : null;
+}
+
 // ── Panel: dónde está cada técnico ahora ─────────────────────────────────
 router.get("/en-vivo", OFICINA, async (req, res) => {
   const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha || "") ? req.query.fecha : fechaRD();
@@ -186,7 +227,7 @@ router.get("/en-vivo", OFICINA, async (req, res) => {
       ),
       supabase.from("asa_usuarios").select("id, nombre_completo, rol, activo").eq("rol", "tecnico_plagas"),
       traerTodo(() =>
-        supabase.from("asa_inspecciones").select("id, usuario_id, motivo_no_realizado").eq("fecha_local", fecha).order("id")
+        supabase.from("asa_inspecciones").select("id, usuario_id, motivo_no_realizado, sitio_id, fecha, lat, lng, sincronizada_offline").eq("fecha_local", fecha).order("id")
       ),
       hoteles().catch(() => []),
     ]);
@@ -198,15 +239,20 @@ router.get("/en-vivo", OFICINA, async (req, res) => {
       puntosDia.set(u.usuario_id, (puntosDia.get(u.usuario_id) || 0) + 1);
     }
     const servicios = new Map();
+    const ultimoServicio = new Map();
     for (const i of insp) {
       if (!i.usuario_id) continue;
-      const s = servicios.get(i.usuario_id) || { hechos: 0, no_realizados: 0 };
+      const s = servicios.get(i.usuario_id) || { hechos: 0, no_realizados: 0, sin_senal: 0 };
       i.motivo_no_realizado ? s.no_realizados++ : s.hechos++;
+      if (i.sincronizada_offline) s.sin_senal++;
       servicios.set(i.usuario_id, s);
+      const u = ultimoServicio.get(i.usuario_id);
+      if (!u || String(i.fecha) > String(u.fecha)) ultimoServicio.set(i.usuario_id, i);
     }
     const nombreHotel = new Map(lista.map((h) => [h.id, h.nombre]));
     // Nombres de hoteles que no tienen coordenadas pero aparecen
-    const faltan = [...new Set(ubic.map((u) => u.sitio_id).filter((id) => id && !nombreHotel.has(id)))];
+    const faltan = [...new Set([...ubic.map((u) => u.sitio_id), ...[...ultimoServicio.values()].map((i) => i.sitio_id)]
+      .filter((id) => id && !nombreHotel.has(id)))];
     if (faltan.length) {
       const { data } = await supabase.from("asa_sitios").select("id, nombre").in("id", faltan);
       for (const s of data || []) nombreHotel.set(s.id, s.nombre);
@@ -221,21 +267,36 @@ router.get("/en-vivo", OFICINA, async (req, res) => {
     }
 
     const ahora = Date.now();
+    const esHoy = fecha === fechaRD();
+    const centroHotel = new Map(lista.map((h) => [h.id, h]));
     const tecnicos = [...ids].map((id) => {
       const u = ultima.get(id);
       const min = u ? Math.floor((ahora - new Date(u.registrado_at)) / 60000) : null;
+      const sv = servicios.get(id) || { hechos: 0, no_realizados: 0, sin_senal: 0 };
+      const total = sv.hechos + sv.no_realizados;
+      const us = ultimoServicio.get(id);
+      // Dónde fue su último servicio: la ubicación que guardó la app con el
+      // servicio, o si no, el centro del hotel
+      const lugar = us ? (us.lat != null && us.lng != null ? { lat: Number(us.lat), lng: Number(us.lng), aprox: false }
+        : centroHotel.has(us.sitio_id) ? { lat: centroHotel.get(us.sitio_id).lat, lng: centroHotel.get(us.sitio_id).lng, aprox: true } : null) : null;
+      const est = esHoy ? ESTADO_GPS.get(id) || null : null;
       return {
+        ultimo_servicio: us ? { hora: us.fecha, hotel: nombreHotel.get(us.sitio_id) || null, ...(lugar || {}) } : null,
+        gps: est,
+        motivo_gps: !u && total ? (esHoy ? motivoSinGps(est, total) : "Ese día su teléfono no mandó ubicación") : null,
         usuario_id: id,
         nombre: nombres.get(id) || "Técnico",
         ultima: u ? { lat: u.lat, lng: u.lng, precision_m: u.precision_m, hora: u.registrado_at } : null,
         minutos: min,
-        estado: !u ? "sin_datos" : fecha !== fechaRD() ? "dia_pasado" : min <= 3 ? "en_linea" : min <= 20 ? "reciente" : "sin_senal",
+        estado: !u ? (total ? "sin_gps" : "sin_datos") : !esHoy ? "dia_pasado" : min <= 3 ? "en_linea" : min <= 20 ? "reciente" : "sin_senal",
         bateria: u?.bateria ?? null,
         hotel: u?.sitio_id ? nombreHotel.get(u.sitio_id) || null : null,
         puntos_gps: puntosDia.get(id) || 0,
-        servicios: servicios.get(id) || { hechos: 0, no_realizados: 0 },
+        servicios: sv,
       };
-    }).sort((a, b) => (a.minutos ?? 1e9) - (b.minutos ?? 1e9) || a.nombre.localeCompare(b.nombre, "es"));
+    }).sort((a, b) => (a.minutos ?? 1e9) - (b.minutos ?? 1e9)
+      || (b.servicios.hechos + b.servicios.no_realizados) - (a.servicios.hechos + a.servicios.no_realizados)
+      || a.nombre.localeCompare(b.nombre, "es"));
 
     res.json({ fecha, tecnicos, hoteles: lista });
   } catch (e) {

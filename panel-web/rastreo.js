@@ -27,6 +27,7 @@ const RT_ESTADO = {
   reciente: { txt: "Hace poco", color: "#ca8a04" },
   sin_senal: { txt: "Sin señal", color: "#94a3b8" },
   sin_datos: { txt: "Sin datos hoy", color: "#cbd5e1" },
+  sin_gps: { txt: "Trabaja sin ubicación", color: "#ea580c" },
   dia_pasado: { txt: "", color: "#32539C" },
 };
 
@@ -123,15 +124,19 @@ async function rtCargar(encuadrar) {
     ? lista.map((t) => {
         const e = RT_ESTADO[t.estado] || RT_ESTADO.sin_datos;
         return `
-        <button type="button" class="rt-tec${RT.sel === t.usuario_id ? " activo" : ""}" data-id="${esc(t.usuario_id)}" ${t.ultima ? "" : "disabled"}>
+        <button type="button" class="rt-tec${RT.sel === t.usuario_id ? " activo" : ""}${t.estado === "sin_gps" ? " rt-sin-gps" : ""}" data-id="${esc(t.usuario_id)}" ${t.ultima ? "" : "disabled"}>
           <span class="rt-punto" style="background:${e.color}"></span>
           <span class="rt-tec-txt">
             <strong>${esc(t.nombre)}</strong>
+            ${t.estado === "sin_gps" ? `<small class="rt-motivo">⚠️ ${esc(t.motivo_gps || "Sube servicios pero su teléfono no manda ubicación")}</small>
+              ${t.ultimo_servicio ? `<small>Último servicio: ${rtHora(t.ultimo_servicio.hora)}${t.ultimo_servicio.hotel ? ` · 🏨 ${esc(t.ultimo_servicio.hotel)}` : ""}</small>` : ""}` : ""}
             <small>${
-              !t.ultima ? "No ha abierto la app hoy"
+              t.estado === "sin_gps" ? "Sin ubicación del GPS"
+              : !t.ultima ? "No ha abierto la app hoy"
               : esHoy ? `${e.txt}${t.minutos > 0 ? ` · hace ${rtDur(t.minutos)}` : ""}`
               : `Última: ${rtHora(t.ultima.hora)}`}${t.hotel ? ` · 🏨 ${esc(t.hotel)}` : ""}</small>
             <small>${t.servicios.hechos} servicio(s)${t.servicios.no_realizados ? ` · ${t.servicios.no_realizados} no se pudo` : ""}${
+              t.servicios.sin_senal ? ` · ${t.servicios.sin_senal} subido(s) sin señal` : ""}${
               t.bateria != null ? ` · 🔋 ${Math.round(t.bateria * 100)}%` : ""}</small>
           </span>
         </button>`;
@@ -164,6 +169,22 @@ async function rtCargar(encuadrar) {
       .on("click", () => rtSeleccionar(t.usuario_id));
     m.addTo(RT.capaTec);
     marcas.push([t.ultima.lat, t.ultima.lng]);
+  }
+  // Sin GPS pero con servicios: se marca donde hizo el último (hueco, para no
+  // confundirlo con una ubicación del GPS)
+  for (const t of d.tecnicos) {
+    const us = t.ultimo_servicio;
+    if (t.ultima || !us || us.lat == null) continue;
+    const icono = L.divIcon({
+      className: "rt-marca",
+      html: `<div class="rt-marca-punto rt-marca-hueca"></div><div class="rt-marca-nombre">${esc(t.nombre.split(" ")[0])} (servicio)</div>`,
+      iconSize: [0, 0],
+    });
+    L.marker([us.lat, us.lng], { icon: icono })
+      .bindPopup(`<strong>${esc(t.nombre)}</strong><br>Sin GPS: ${esc(t.motivo_gps || "")}<br>Último servicio: ${rtHora(us.hora)}${
+        us.hotel ? `<br>🏨 ${esc(us.hotel)}` : ""}${us.aprox ? "<br><small>Posición aproximada: centro del hotel</small>" : ""}`)
+      .addTo(RT.capaTec);
+    marcas.push([us.lat, us.lng]);
   }
   if (encuadrar && !RT.sel) {
     const todo = [...marcas, ...(d.hoteles || []).map((h) => [h.lat, h.lng])];

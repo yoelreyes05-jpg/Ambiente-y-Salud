@@ -1445,6 +1445,8 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO, 
       metodo_acceso: sessionStorage.getItem("asa_via") || "qr",
       respuestas,
       capturas: noEntro ? [] : capturas,
+      // Dónde estaba el teléfono al guardar el servicio (si el GPS está activo)
+      ...(typeof ubicacionActual === "function" ? ubicacionActual() || {} : {}),
     };
 
     boton.disabled = true;

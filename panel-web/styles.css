@@ -820,3 +820,8 @@ tr.sem-fila-amarillo{background:#fefce8}
   .tabla-tarjetas .kpi-grid,.kpi-compacta{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .tabla-tarjetas .kpi-card .val,.kpi-compacta .kpi-card .val{font-size:18px}
 }
+
+/* Técnicos en vivo: sube servicios pero su teléfono no manda ubicación */
+.rt-tec.rt-sin-gps{border-color:#fdba74;background:#fff7ed;opacity:1;color:#0f172a}
+.rt-tec .rt-motivo{color:#c2410c;font-weight:600}
+.rt-marca-hueca{background:#fff !important;border:3px solid #ea580c}
