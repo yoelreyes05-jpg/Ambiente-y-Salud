@@ -38,6 +38,7 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
+import { analizarTanqueos } from "../lib/tanqueos.js";
 
 const router = express.Router();
 
@@ -775,6 +776,42 @@ router.get("/vehiculos/:id/ficha", ruta(async (req, res) => {
     mantenimientos,
     asignaciones: asign.data || [],
     rendimientos,
+    tanqueos: analizarTanqueos(gastos.data || []),
+  });
+}));
+
+/**
+ * GET /asa/gastos/:id/ticket — todo lo que va en el ticket de un gasto.
+ * Si es combustible, además: cuánto recorrió y cuántos días pasaron desde la
+ * carga anterior, km/galón, costo por km y cómo quedó contra el promedio.
+ */
+router.get("/gastos/:id/ticket", ruta(async (req, res) => {
+  const { data: g, error } = await supabase.from("asa_flota_gastos")
+    .select("*, asa_flota_conductores(nombre)").eq("id", Number(req.params.id)).maybeSingle();
+  if (error) return fallo(res, 500, error.message);
+  if (!g) return fallo(res, 404, "Ese gasto no existe.");
+  const [veh, resumen, config] = await Promise.all([
+    supabase.from("asa_flota_vehiculos").select("id,codigo,placa,marca,modelo,anio,color,combustible,km_actual").eq("id", g.vehiculo_id).maybeSingle(),
+    supabase.from("asa_flota_v_resumen_vehiculo").select("conductor").eq("id", g.vehiculo_id).maybeSingle(),
+    leerConfig(),
+  ]);
+  let tanqueo = null, promedio = null, es_peor = false, cargas_analizadas = 0;
+  if (g.tipo === "COMBUSTIBLE") {
+    const { data: comb } = await supabase.from("asa_flota_gastos").select("*")
+      .eq("vehiculo_id", g.vehiculo_id).eq("tipo", "COMBUSTIBLE");
+    const a = analizarTanqueos(comb || []);
+    tanqueo = a.cargas.find((c) => String(c.id) === String(g.id)) || null;
+    promedio = a.promedio;
+    es_peor = String(a.peor_id) === String(g.id);
+    cargas_analizadas = a.cargas.length;
+  }
+  res.json({
+    error: false,
+    gasto: { ...g, conductor: g.asa_flota_conductores?.nombre || null, asa_flota_conductores: undefined },
+    vehiculo: veh.data || null,
+    conductor_asignado: resumen.data?.conductor || null,
+    moneda: config?.moneda || "RD$",
+    tanqueo, promedio, es_peor, cargas_analizadas,
   });
 }));
 

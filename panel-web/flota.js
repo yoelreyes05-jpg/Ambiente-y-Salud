@@ -369,6 +369,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         <button class="tab active" data-t="partes">Partes (${f.chequeos.length})</button>
         <button class="tab" data-t="fallas">Fallas (${f.fallas.length})</button>
         <button class="tab" data-t="gastos">Gastos (${f.gastos.length})</button>
+        <button class="tab" data-t="tanqueos">Tanqueos (${f.tanqueos?.cargas.length || 0})</button>
         <button class="tab" data-t="mant">Mantenimiento${(() => {
           const n = f.mantenimientos.filter((m) => m.nivel === "rojo").length;
           const a = f.mantenimientos.filter((m) => m.nivel === "amarillo").length;
@@ -416,10 +417,12 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         { key: "km", label: "Km", fmt: (g) => (g.km ? NUM(g.km) : "—") },
         { key: "monto", label: "Monto", fmt: (g) => MONEDA(g.monto) },
         { key: "suplidor", label: "Suplidor", fmt: (g) => esc(g.suplidor || "—") },
+        { key: "_t", label: "", fmt: (g) => `<button class="btn btn-sm" data-ticket="${g.id}" title="Imprimir ticket">🧾</button>` },
       ],
       f.gastos,
       "Sin gastos registrados."
     ),
+    tanqueos: () => vistaTanqueos(f.tanqueos),
     mant: () => `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
         <span class="text-muted">Vence por km o por tiempo, lo que llegue primero. Toca un plan para marcarlo como hecho.</span>
@@ -457,9 +460,11 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
       cf.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () =>
         modalChequeo(f.chequeos.find((c) => String(c.id) === tr.dataset.id), () => fichaVehiculo(id, contenedor, "partes"))));
     }
-    if (t === "gastos") {
+    cf.querySelectorAll("[data-ticket]").forEach((b) =>
+      b.addEventListener("click", (ev) => { ev.stopPropagation(); imprimirTicketGasto(b.dataset.ticket); }));
+    if (t === "gastos" || t === "tanqueos") {
       cf.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () =>
-        modalGasto(f.gastos.find((g) => String(g.id) === tr.dataset.id), v.id, () => fichaVehiculo(id, contenedor, "gastos"))));
+        modalGasto(f.gastos.find((g) => String(g.id) === tr.dataset.id), v.id, () => fichaVehiculo(id, contenedor, t))));
     }
     if (t === "mant") {
       mantMarcarFilas($("#fm-ficha-tabla"), f.mantenimientos);
@@ -900,7 +905,7 @@ function modalFalla(f, onSaved) {
 // ── Gastos ───────────────────────────────────────────────────────────────
 async function flotaGastos(cuerpo) {
   const veh = (await apiFlota.get("/vehiculos")).vehiculos || [];
-  const mes = new Date().toISOString().slice(0, 8) + "01";
+  const mes = hoyLocal().slice(0, 8) + "01";
 
   cuerpo.innerHTML = `
     <div class="card">
@@ -942,13 +947,17 @@ async function flotaGastos(cuerpo) {
         { key: "galones", label: "Galones", fmt: (g) => (g.galones ? NUM(g.galones, 2) : "—") },
         { key: "monto", label: "Monto", fmt: (g) => `<strong>${MONEDA(g.monto)}</strong>` },
         { key: "suplidor", label: "Suplidor", fmt: (g) => esc(g.suplidor || "—") },
-        { key: "_x", label: "", fmt: (g) => `<button class="btn btn-sm btn-danger" data-borrar="${g.id}">Borrar</button>` },
+        { key: "_x", label: "", fmt: (g) => `<span style="white-space:nowrap"><button class="btn btn-sm" data-ticket="${g.id}" title="Imprimir ticket">🧾 Ticket</button>
+          <button class="btn btn-sm btn-danger" data-borrar="${g.id}">Borrar</button></span>` },
       ],
       lista, "Sin gastos en ese rango."
     );
 
     $("#fg-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
       tr.addEventListener("click", () => modalGasto(lista.find((g) => String(g.id) === tr.dataset.id), null, cargar))
+    );
+    $$("#fg-tabla [data-ticket]").forEach((b) =>
+      b.addEventListener("click", (ev) => { ev.stopPropagation(); imprimirTicketGasto(b.dataset.ticket); })
     );
     $$("#fg-tabla [data-borrar]").forEach((b) =>
       b.addEventListener("click", async (ev) => {
@@ -967,7 +976,10 @@ async function flotaGastos(cuerpo) {
 }
 
 async function modalGasto(g, vehiculoId, onSaved) {
-  const veh = (await apiFlota.get("/vehiculos")).vehiculos || [];
+  const [veh, conductores] = await Promise.all([
+    apiFlota.get("/vehiculos").then((r) => r.vehiculos || []),
+    apiFlota.get("/conductores?incluir_inactivos=1").then((r) => r.conductores || []),
+  ]);
   const esNuevo = !g;
 
   openModal({
@@ -985,6 +997,11 @@ async function modalGasto(g, vehiculoId, onSaved) {
           <select name="tipo" id="fg-m-tipo">${TIPOS_GASTO.map((t) => `<option${g?.tipo === t ? " selected" : ""}>${t}</option>`).join("")}</select></div>
         <div class="form-group"><label>Monto *</label><input name="monto" type="number" step="any" required value="${esc(g?.monto ?? "")}" /></div>
         <div class="form-group full"><label>Descripción</label><input name="descripcion" value="${esc(g?.descripcion || "")}" /></div>
+        <div class="form-group"><label>Conductor</label>
+          <select name="conductor_id"><option value="">—</option>
+            ${conductores.filter((c) => c.activo !== false || String(c.id) === String(g?.conductor_id))
+              .map((c) => `<option value="${c.id}"${String(g?.conductor_id) === String(c.id) ? " selected" : ""}>${esc(c.nombre)}</option>`).join("")}
+          </select></div>
         <div class="form-group"><label>Suplidor</label><input name="suplidor" value="${esc(g?.suplidor || "")}" /></div>
         <div class="form-group"><label>NCF</label><input name="ncf" value="${esc(g?.ncf || "")}" /></div>
       </div>
@@ -1017,6 +1034,7 @@ async function modalGasto(g, vehiculoId, onSaved) {
         descripcion: (fd.get("descripcion") || "").trim() || null,
         suplidor: (fd.get("suplidor") || "").trim() || null,
         ncf: (fd.get("ncf") || "").trim() || null,
+        conductor_id: fd.get("conductor_id") ? Number(fd.get("conductor_id")) : null,
       };
       if (cuerpo.tipo === "COMBUSTIBLE") {
         cuerpo.galones = fd.get("galones") ? Number(fd.get("galones")) : null;
@@ -1024,11 +1042,12 @@ async function modalGasto(g, vehiculoId, onSaved) {
         cuerpo.km = fd.get("km") ? Number(fd.get("km")) : null;
         cuerpo.tanque_lleno = fd.get("tanque_lleno") === "on";
       }
-      if (esNuevo) await apiFlota.post("/gastos", cuerpo);
-      else await apiFlota.patch(`/gastos/${g.id}`, cuerpo);
+      const r = esNuevo ? await apiFlota.post("/gastos", cuerpo) : await apiFlota.patch(`/gastos/${g.id}`, cuerpo);
       closeModal();
       toast("Gasto guardado");
       onSaved?.();
+      const id = r?.registro?.id || g?.id;
+      if (id && esNuevo && confirm("Gasto guardado. ¿Imprimir el ticket?")) imprimirTicketGasto(id);
     },
   });
 }
@@ -1458,4 +1477,134 @@ async function importarFlota(simular, contenedor) {
   } catch (e) {
     salida.innerHTML = `<div class="form-error" style="display:block">${esc(e.message)}</div>`;
   }
+}
+
+
+// ── Tanqueos y ticket de gasto ───────────────────────────────────────────
+// Cada carga de combustible contra la anterior: km recorridos, días, km/galón
+// (de lleno a lleno) y costo por km. Las que quedaron 10% peor que el
+// promedio de la unidad salen marcadas como "consumió más".
+function textoVsPromedio(c) {
+  if (!c.vs_promedio) return "—";
+  const p = c.vs_promedio.pct;
+  const bien = c.vs_promedio.medida === "km_galon" ? p >= 0 : p <= 0;
+  const txt = c.vs_promedio.medida === "km_galon"
+    ? `${p > 0 ? "+" : ""}${NUM(p, 0)}% km/gal`
+    : `${p > 0 ? "+" : ""}${NUM(p, 0)}% costo/km`;
+  return `<span class="badge ${c.consumio_mas ? "badge-red" : bien ? "badge-green" : "badge-warn"}">${txt}</span>`;
+}
+
+function vistaTanqueos(t) {
+  if (!t || !t.cargas.length) return `<div class="center-msg">Sin cargas de combustible registradas.</div>`;
+  const p = t.promedio;
+  const peor = t.cargas.find((c) => c.id === t.peor_id);
+  const filas = [...t.cargas].reverse();
+  return `
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="lbl">Km/galón promedio</div><div class="val">${p.km_galon == null ? "—" : NUM(p.km_galon, 1)}</div></div>
+      <div class="kpi-card"><div class="lbl">Costo por km promedio</div><div class="val">${p.costo_km == null ? "—" : MONEDA(p.costo_km)}</div></div>
+      <div class="kpi-card"><div class="lbl">Entre cargas (promedio)</div><div class="val">${p.km_recorridos == null ? "—" : NUM(p.km_recorridos) + " km"} · ${p.dias == null ? "—" : NUM(p.dias, 1) + " días"}</div></div>
+      <div class="kpi-card"><div class="lbl">Donde más consumió</div><div class="val" style="font-size:15px">${peor
+        ? `${fmtDate(peor.fecha)} · ${peor.km_galon != null ? NUM(peor.km_galon, 1) + " km/gal" : MONEDA(peor.costo_km) + "/km"}` : "—"}</div></div>
+    </div>
+    ${tableHTML([
+      { key: "fecha", label: "Fecha", fmt: (c) => `${fmtDate(c.fecha)}${c.id === t.peor_id ? ' <span class="badge badge-red">más consumo</span>' : ""}` },
+      { key: "km", label: "Km al tanquear", fmt: (c) => (c.km == null ? "—" : NUM(c.km)) },
+      { key: "km_recorridos", label: "Recorrió", fmt: (c) => (c.km_recorridos == null ? "—" : `${NUM(c.km_recorridos)} km`) },
+      { key: "dias", label: "Días", fmt: (c) => (c.dias == null ? "—" : NUM(c.dias)) },
+      { key: "galones", label: "Galones", fmt: (c) => (c.galones ? NUM(c.galones, 2) : "—") + (c.tanque_lleno ? "" : " <small>(parcial)</small>") },
+      { key: "monto", label: "Monto", fmt: (c) => MONEDA(c.monto) },
+      { key: "km_galon", label: "Km/gal", fmt: (c) => (c.km_galon == null ? "—" : NUM(c.km_galon, 1)) },
+      { key: "costo_km", label: "Costo/km", fmt: (c) => (c.costo_km == null ? "—" : MONEDA(c.costo_km)) },
+      { key: "vs", label: "Vs promedio", fmt: textoVsPromedio },
+      { key: "_t", label: "", fmt: (c) => `<button class="btn btn-sm" data-ticket="${c.id}" title="Imprimir ticket">🧾</button>` },
+    ], filas, "")}
+    <p class="text-muted" style="margin-top:10px">
+      Km/galón: de tanque lleno a tanque lleno, sumando las cargas parciales del medio.
+      Costo/km: lo pagado en esa carga entre los km recorridos desde la anterior.
+      “Consumió más” = 10% o más por debajo del km/galón promedio de la unidad.
+    </p>`;
+}
+
+async function imprimirTicketGasto(gastoId) {
+  // La ventana se abre antes de esperar a la red: si no, el navegador la bloquea
+  const w = window.open("", "_blank", "width=420,height=760");
+  if (!w) return toast("Permite las ventanas emergentes para imprimir el ticket", "error");
+  w.document.write("<p style='font-family:sans-serif'>Preparando ticket…</p>");
+  let d;
+  try { d = await apiFlota.get(`/gastos/${gastoId}/ticket`); }
+  catch (e) { w.document.body.innerHTML = `<p style='font-family:sans-serif'>No se pudo cargar: ${esc(e.message)}</p>`; return; }
+  const g = d.gasto, v = d.vehiculo || {}, c = d.tanqueo, p = d.promedio || {};
+  const M = (n) => (n == null ? "—" : `${d.moneda} ${Number(n).toLocaleString("es-DO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  const N = (n, dec = 0) => (n == null ? "—" : Number(n).toLocaleString("es-DO", { minimumFractionDigits: dec, maximumFractionDigits: dec }));
+  const fila = (a, b) => `<tr><td>${esc(a)}</td><td>${b}</td></tr>`;
+  let comb = "";
+  if (g.tipo === "COMBUSTIBLE") {
+    const ver = !c?.vs_promedio ? "Sin datos suficientes para comparar"
+      : c.consumio_mas ? "CONSUMIÓ MÁS QUE SU PROMEDIO"
+      : (c.vs_promedio.medida === "km_galon" ? c.vs_promedio.pct >= 0 : c.vs_promedio.pct <= 0) ? "Dentro o mejor que su promedio" : "Algo por debajo de su promedio";
+    comb = `
+      <h3>Combustible</h3>
+      <table>
+        ${fila("Galones", `${N(g.galones, 3)}${g.tanque_lleno === false ? " (parcial)" : " (lleno)"}`)}
+        ${fila("Precio por galón", M(g.precio_galon))}
+        ${fila("Km al tanquear", N(g.km))}
+      </table>
+      <h3>Desde la carga anterior</h3>
+      ${c?.anterior ? `<table>
+        ${fila("Carga anterior", `${fmtDate(c.anterior.fecha)}${c.anterior.km != null ? ` · ${N(c.anterior.km)} km` : ""}`)}
+        ${fila("Km recorridos", c.km_recorridos == null ? "—" : `${N(c.km_recorridos)} km`)}
+        ${fila("Días transcurridos", N(c.dias))}
+        ${fila("Km por día", N(c.km_dia, 1))}
+        ${fila("Km por galón", c.km_galon == null ? "—" : N(c.km_galon, 2))}
+        ${fila("Costo por km", M(c.costo_km))}
+        ${fila("Costo por día", M(c.costo_dia))}
+      </table>` : `<p>Es la primera carga registrada de esta unidad.</p>`}
+      <h3>Contra el promedio de la unidad</h3>
+      <table>
+        ${fila("Km/galón promedio", N(p.km_galon, 2))}
+        ${fila("Costo/km promedio", M(p.costo_km))}
+        ${fila("Km entre cargas", N(p.km_recorridos))}
+        ${fila("Días entre cargas", N(p.dias, 1))}
+        ${fila("Monto promedio", M(p.monto))}
+        ${c?.vs_promedio ? fila("Diferencia", `${c.vs_promedio.pct > 0 ? "+" : ""}${N(c.vs_promedio.pct, 1)}% ${c.vs_promedio.medida === "km_galon" ? "km/gal" : "costo/km"}`) : ""}
+      </table>
+      <div class="veredicto ${c?.consumio_mas ? "mal" : ""}">${esc(ver)}${d.es_peor ? "<br>Es la carga de mayor consumo registrada" : ""}</div>
+      <p class="nota">Basado en ${d.cargas_analizadas} cargas registradas. Km/galón de tanque lleno a tanque lleno.</p>`;
+  }
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Ticket de gasto #${esc(g.id)}</title>
+<style>
+  @page { size: 80mm auto; margin: 4mm; }
+  body { font-family: "DejaVu Sans Mono", "Courier New", monospace; font-size: 12px; width: 72mm; margin: 0 auto; color: #000; }
+  h1 { font-size: 15px; text-align: center; margin: 4px 0 2px; } h2 { font-size: 12px; text-align: center; margin: 0 0 6px; font-weight: normal; }
+  h3 { font-size: 12px; margin: 10px 0 3px; border-top: 1px dashed #000; padding-top: 6px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; } td { padding: 1px 0; vertical-align: top; } td:last-child { text-align: right; font-weight: bold; }
+  .total { font-size: 16px; text-align: right; font-weight: bold; margin: 6px 0; border-top: 1px dashed #000; padding-top: 6px; }
+  .veredicto { margin-top: 8px; padding: 5px; border: 1px solid #000; text-align: center; font-weight: bold; }
+  .veredicto.mal { background: #000; color: #fff; }
+  .nota { font-size: 10px; margin: 6px 0; } .firmas { margin-top: 26px; display: flex; gap: 10px; }
+  .firmas div { flex: 1; border-top: 1px solid #000; text-align: center; font-size: 10px; padding-top: 2px; }
+  .bar { text-align: center; margin: 10px 0; } @media print { .bar { display: none; } }
+</style></head><body>
+  <div class="bar"><button onclick="window.print()">Imprimir</button></div>
+  <h1>AMBIENTE Y SALUD</h1>
+  <h2>Ticket de gasto de flota · #${esc(g.id)}</h2>
+  <table>
+    ${fila("Fecha", fmtDate(g.fecha))}
+    ${fila("Unidad", esc(`${v.codigo || ""} · ${v.placa || ""}`))}
+    ${fila("Vehículo", esc([v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "—"))}
+    ${fila("Conductor", esc(g.conductor || d.conductor_asignado || "—"))}
+    ${fila("Tipo", esc(g.tipo))}
+    ${g.descripcion ? fila("Detalle", esc(g.descripcion)) : ""}
+    ${g.suplidor ? fila("Suplidor", esc(g.suplidor)) : ""}
+    ${g.ncf ? fila("NCF", esc(g.ncf)) : ""}
+  </table>
+  <div class="total">TOTAL ${M(g.monto)}</div>
+  ${comb}
+  <p class="nota">Registrado por: ${esc(g.registrado_por || "—")}<br>Impreso: ${esc(new Date().toLocaleString("es-DO", { timeZone: "America/Santo_Domingo" }))}</p>
+  <div class="firmas"><div>Conductor</div><div>Autorizado</div></div>
+  <script>setTimeout(() => window.print(), 300);<\/script>
+</body></html>`);
+  w.document.close();
 }

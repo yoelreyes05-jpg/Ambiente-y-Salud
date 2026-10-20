@@ -37,6 +37,10 @@ function fmtMoney(n) {
 }
 function fmtDate(d) {
   if (!d) return "—";
+  // Una fecha sola ("2026-10-20") JavaScript la toma como medianoche UTC, que en
+  // RD (UTC-4) es el día anterior. Se arma con sus partes para no correrla.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d));
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("es-DO");
   try { return new Date(d).toLocaleDateString("es-DO"); } catch { return d; }
 }
 function fmtDateTime(d) {
