@@ -1713,7 +1713,14 @@ async function abrirPlanta(sitioId) {
 // Técnicos de la planta: el técnico con plantas asignadas solo ve esas en la
 // app y no puede cargar servicios en otras. Sin ninguna asignada, ve todas.
 async function modalTecnicosPlanta(sitio) {
-  const lista = await get(`/sitios/${sitio.id}/tecnicos`);
+  let lista;
+  try {
+    lista = await get(`/sitios/${sitio.id}/tecnicos`);
+  } catch (e) {
+    return toast(/404/.test(e.message)
+      ? "El servidor todavía no tiene esta función: falta que Railway publique la última versión."
+      : e.message, true);
+  }
   openModal({
     title: `Técnicos de ${sitio.nombre}`,
     bodyHTML: `

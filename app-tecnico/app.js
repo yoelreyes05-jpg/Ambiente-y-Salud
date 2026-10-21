@@ -365,8 +365,25 @@ function abrirMenu() {
 // ─────────────────────────────────────────────────────────────────────────
 // Ruta del día
 // ─────────────────────────────────────────────────────────────────────────
+let HOTELES_REVISADOS = 0;
 async function pantallaRuta() {
   if (!SITIO) return elegirHotel();
+  // Si la oficina lo cambió de hotel, el que tenía guardado ya no vale: se le
+  // pide elegir de nuevo (si no, la app lo deja ahí y el servidor le rechaza
+  // cada servicio). Se revisa con señal, cada 5 minutos como mucho.
+  if (navigator.onLine && Date.now() - HOTELES_REVISADOS > 5 * 60000) {
+    try {
+      const hoteles = await GET("/sitios");
+      HOTELES_REVISADOS = Date.now();
+      await guardarCache("hoteles", hoteles);
+      if (Array.isArray(hoteles) && !hoteles.some((h) => h.id === SITIO.id)) {
+        aviso(`Ya no estás asignado a ${SITIO.nombre}. Elige el hotel donde vas a trabajar.`, "error");
+        SITIO = null;
+        localStorage.removeItem("asa_t_sitio");
+        return elegirHotel();
+      }
+    } catch {}
+  }
 
   // El nombre del técnico a la vista: así sabe con qué cuenta está subiendo
   // (en un teléfono compartido, cada registro sale a nombre de quien entró).
