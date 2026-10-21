@@ -57,6 +57,13 @@ console.log("\nCuenta de hotel (solo lectura)");
 const tokenHotel = jwt.sign({ id: "u1", rol: "cliente_calidad", nombre: "Calidad" }, process.env.JWT_SECRET);
 revisar((await pedir("POST", "/puntos", tokenHotel)) === 403, "no puede crear puntos");
 revisar((await pedir("POST", "/inspecciones", tokenHotel)) === 403, "no puede registrar inspecciones");
+revisar((await pedir("POST", "/inspecciones/eliminar", tokenHotel)) === 403, "no puede eliminar servicios");
+revisar((await pedir("PUT", "/sitios/x/tecnicos", tokenHotel)) === 403, "no puede asignar técnicos");
+
+console.log("\nTécnico (no administra)");
+const tokenTec = jwt.sign({ id: "u2", rol: "tecnico_plagas", nombre: "Técnico" }, process.env.JWT_SECRET);
+revisar((await pedir("POST", "/inspecciones/eliminar", tokenTec)) === 403, "no puede eliminar servicios");
+revisar((await pedir("PUT", "/sitios/x/tecnicos", tokenTec)) === 403, "no puede asignarse plantas");
 
 console.log("\nToken inválido");
 revisar((await pedir("GET", "/clientes", "token-falso")) === 401, "se rechaza");

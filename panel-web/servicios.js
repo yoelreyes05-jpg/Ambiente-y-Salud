@@ -285,10 +285,12 @@ async function abrirDesglose(inspeccionId) {
       ${puedeCorregir ? `<button type="button" class="btn" id="dg-corregir">✏️ Corregir plagas</button>` : ""}
       ${typeof comentarServicioConTecnico === "function" && ["admin", "operaciones", "comercial"].includes(USUARIO?.rol)
         ? `<button type="button" class="btn" id="dg-chat">💬 Comentar con el técnico</button>` : ""}
+      ${["admin", "operaciones"].includes(USUARIO?.rol) ? `<button type="button" class="btn btn-danger" id="dg-eliminar">🗑 Eliminar servicio</button>` : ""}
     </div>`;
 
   $("#dg-imprimir").addEventListener("click", () => imprimirServicio(d));
   $("#dg-corregir")?.addEventListener("click", () => modalCorregirConteo(inspeccionId, d));
+  $("#dg-eliminar")?.addEventListener("click", () => modalEliminarServicio(inspeccionId, d));
   $("#dg-chat")?.addEventListener("click", () =>
     comentarServicioConTecnico(inspeccionId, [d.punto?.nombre || d.punto?.codigo, d.punto?.area || d.area, d.fecha ? fmtDateTime(d.fecha) : null].filter(Boolean).join(" · ")));
 }
@@ -917,4 +919,50 @@ async function tabDiasAnteriores(cuerpo, sitioId, dias = 30) {
       })
     )
   );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// Eliminar un servicio hecho por equivocación (por ejemplo, el técnico cargó
+// en esta planta lo que hizo en otra). Se puede borrar solo este o todos los
+// del mismo técnico en esta planta ese día. El motivo es obligatorio y en la
+// bitácora queda una copia de lo borrado.
+// ═════════════════════════════════════════════════════════════════════════
+async function modalEliminarServicio(inspeccionId, d) {
+  const md = await get(`/inspecciones/${inspeccionId}/mismo-dia`).catch(() => ({ ids: [inspeccionId], total: 1, hallazgos: 0 }));
+  const dia = md.fecha_local ? fmtDate(md.fecha_local) : "ese día";
+  const punto = [d.punto?.nombre || d.punto?.codigo, d.area].filter(Boolean).join(" · ");
+  openModal({
+    title: "Eliminar servicio",
+    submitLabel: "🗑 Eliminar",
+    bodyHTML: `
+      <p style="margin-top:0"><strong>${esc(punto || "Servicio")}</strong><br>
+        <span class="text-muted">${esc(d.planta || "")} · ${esc(d.tecnico || "técnico sin nombre")} · ${d.fecha ? esc(fmtDateTime(d.fecha)) : ""}</span></p>
+      <div class="form-group">
+        <label class="campo-check"><input type="radio" name="alcance" value="uno" checked /> Solo este servicio</label>
+        ${md.total > 1 ? `<label class="campo-check"><input type="radio" name="alcance" value="dia" />
+          Los <strong>${md.total}</strong> servicios de ${esc(d.tecnico || "este técnico")} en ${esc(d.planta || "esta planta")} el ${esc(dia)}</label>
+          <div class="form-hint">Úsalo si cargó en esta planta todo lo que hizo en otra.</div>` : ""}
+      </div>
+      ${md.hallazgos ? `<div class="form-group"><label class="campo-check"><input type="checkbox" name="con_hallazgos" />
+        Borrar también los hallazgos que se crearon desde ${md.total > 1 ? "estos servicios" : "este servicio"}</label>
+        <div class="form-hint">Si no lo marcas, los hallazgos se quedan (sin el servicio de origen).</div></div>` : ""}
+      <div class="form-group"><label>Motivo *</label>
+        <input name="motivo" required minlength="5" placeholder="Ej.: el técnico lo cargó en la planta equivocada" /></div>
+      <p class="form-hint">No se puede deshacer desde el panel. En la bitácora de auditoría queda quién lo eliminó, el motivo y una copia de lo que tenía.</p>`,
+    onMount() { $("#asa-modal-submit")?.classList.replace("btn-primary", "btn-danger"); },
+    async onSubmit(fd) {
+      const todos = fd.get("alcance") === "dia";
+      const ids = todos ? md.ids : [inspeccionId];
+      if (!confirm(todos ? `¿Eliminar los ${ids.length} servicios? No se puede deshacer.` : "¿Eliminar este servicio? No se puede deshacer.")) return;
+      const r = await post("/inspecciones/eliminar", {
+        ids, motivo: (fd.get("motivo") || "").trim(), con_hallazgos: fd.get("con_hallazgos") === "on",
+      });
+      closeModal();
+      toast(`${r.eliminados} servicio${r.eliminados === 1 ? "" : "s"} eliminado${r.eliminados === 1 ? "" : "s"}`);
+      // Refrescar lo que se estaba viendo
+      if (typeof PLANTA_ACTUAL !== "undefined" && PLANTA_ACTUAL && document.getElementById("btn-editar-planta")) abrirPlanta(PLANTA_ACTUAL);
+      else if (typeof ACTIVE_MODULE !== "undefined" && ACTIVE_MODULE) navigate(ACTIVE_MODULE);
+    },
+  });
 }

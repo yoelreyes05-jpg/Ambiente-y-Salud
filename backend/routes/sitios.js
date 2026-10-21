@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido } from "../middleware/auth.js";
 import { traerTodoComoRespuesta } from "../lib/paginar.js";
+import { sitiosDelTecnico, olvidarSitiosTecnico } from "../lib/sitiosTecnico.js";
 
 const router = express.Router();
 
@@ -25,6 +26,9 @@ router.get("/", async (req, res) => {
   if (req.query.cliente_id) q = q.eq("cliente_id", req.query.cliente_id);
   if (req.query.tipo) q = q.eq("tipo_sitio", req.query.tipo);
   q = filtrarPorSitio(q, req, "id");
+  // El técnico con hoteles asignados solo ve esos
+  const delTecnico = await sitiosDelTecnico(req);
+  if (delTecnico) q = q.in("id", delTecnico);
 
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
@@ -115,6 +119,72 @@ router.put("/:id", requireRol("comercial", "operaciones"), async (req, res) => {
     ...(clienteNuevo !== null ? { descripcion: `${data.nombre}: cliente ${clienteAntes} → ${clienteNuevo}`, detalle: { cliente_antes: clienteAntes, cliente_nuevo: clienteNuevo } } : {}),
   });
   res.json(data);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TÉCNICOS ASIGNADOS A LA PLANTA
+// (asa_usuario_sitios, la misma tabla del portal; aquí solo se tocan las filas
+// de técnicos, nunca las de las cuentas del hotel)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /sitios/:id/tecnicos — todos los técnicos, si están asignados aquí y a qué otras plantas
+router.get("/:id/tecnicos", requireRol("operaciones"), async (req, res) => {
+  const [{ data: tecnicos, error }, { data: asign, error: e2 }] = await Promise.all([
+    supabase.from("asa_usuarios").select("id, nombre_completo, activo").eq("rol", "tecnico_plagas").order("nombre_completo"),
+    supabase.from("asa_usuario_sitios").select("usuario_id, sitio_id, asa_sitios(nombre)"),
+  ]);
+  if (error || e2) return res.status(500).json({ error: true, mensaje: (error || e2).message });
+  const porUsuario = new Map();
+  for (const a of asign || []) {
+    if (!porUsuario.has(a.usuario_id)) porUsuario.set(a.usuario_id, []);
+    porUsuario.get(a.usuario_id).push(a);
+  }
+  res.json((tecnicos || []).filter((t) => t.activo !== false).map((t) => {
+    const suyas = porUsuario.get(t.id) || [];
+    return {
+      id: t.id,
+      nombre: t.nombre_completo,
+      asignado: suyas.some((a) => a.sitio_id === req.params.id),
+      otras: suyas.filter((a) => a.sitio_id !== req.params.id).map((a) => a.asa_sitios?.nombre).filter(Boolean),
+    };
+  }));
+});
+
+// PUT /sitios/:id/tecnicos { usuarios: [id, ...] } — quiénes trabajan en esta planta
+router.put("/:id/tecnicos", requireRol("operaciones"), async (req, res) => {
+  const elegidos = new Set(Array.isArray(req.body?.usuarios) ? req.body.usuarios.map(String) : []);
+  const [{ data: sitio }, { data: tecnicos, error }] = await Promise.all([
+    supabase.from("asa_sitios").select("id, nombre").eq("id", req.params.id).maybeSingle(),
+    supabase.from("asa_usuarios").select("id, nombre_completo").eq("rol", "tecnico_plagas"),
+  ]);
+  if (!sitio) return res.status(404).json({ error: true, mensaje: "Planta no encontrada" });
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  const idsTec = (tecnicos || []).map((t) => t.id);
+  const raros = [...elegidos].filter((id) => !idsTec.includes(id));
+  if (raros.length) return res.status(400).json({ error: true, mensaje: "Solo se pueden asignar técnicos" });
+
+  const { data: antes } = await supabase.from("asa_usuario_sitios").select("usuario_id")
+    .eq("sitio_id", sitio.id).in("usuario_id", idsTec.length ? idsTec : ["00000000-0000-0000-0000-000000000000"]);
+  const yaEstaban = new Set((antes || []).map((a) => a.usuario_id));
+  const quitar = [...yaEstaban].filter((id) => !elegidos.has(id));
+  const poner = [...elegidos].filter((id) => !yaEstaban.has(id));
+  if (quitar.length) {
+    const { error: e } = await supabase.from("asa_usuario_sitios").delete().eq("sitio_id", sitio.id).in("usuario_id", quitar);
+    if (e) return res.status(500).json({ error: true, mensaje: e.message });
+  }
+  if (poner.length) {
+    const { error: e } = await supabase.from("asa_usuario_sitios").insert(poner.map((usuario_id) => ({ usuario_id, sitio_id: sitio.id })));
+    if (e) return res.status(500).json({ error: true, mensaje: e.message });
+  }
+  olvidarSitiosTecnico();
+  const nombre = new Map((tecnicos || []).map((t) => [t.id, t.nombre_completo]));
+  if (quitar.length || poner.length) {
+    logAccion(req, {
+      accion: "actualizar", modulo: "sitios", registroId: sitio.id,
+      descripcion: `${sitio.nombre}: técnicos asignados${poner.length ? ` +${poner.map((i) => nombre.get(i)).join(", ")}` : ""}${quitar.length ? ` −${quitar.map((i) => nombre.get(i)).join(", ")}` : ""}`,
+    });
+  }
+  res.json({ ok: true, asignados: elegidos.size, agregados: poner.length, quitados: quitar.length });
 });
 
 // POST /sitios/:id/contratos — vincular el hotel a un contrato existente

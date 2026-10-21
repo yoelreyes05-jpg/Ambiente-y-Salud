@@ -15,6 +15,7 @@ import { traerTodoComoRespuesta } from "../lib/paginar.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_REALIZO } from "../lib/motivoEstrategia.js";
 import { datosAgrupacion } from "../lib/agrupacion.js";
+import { sitiosDelTecnico } from "../lib/sitiosTecnico.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -240,6 +241,81 @@ router.get("/dias", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// ELIMINAR SERVICIOS HECHOS POR EQUIVOCACIÓN
+//
+// Por ejemplo: el técnico cargó en una planta lo que hizo en otra. Se borra el
+// servicio con sus respuestas y conteos; en la bitácora queda una copia
+// completa (quién, cuándo, el motivo y lo que tenía). Los hallazgos que creó
+// se borran solo si se pide; si no, quedan sueltos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /inspecciones/:id/mismo-dia — los servicios del mismo técnico, planta y día
+router.get("/:id/mismo-dia", requireRol("operaciones"), async (req, res) => {
+  const { data: i } = await supabase.from("asa_inspecciones")
+    .select("id, sitio_id, fecha_local, usuario_id, tecnico_id").eq("id", req.params.id).maybeSingle();
+  if (!i) return res.status(404).json({ error: true, mensaje: "Servicio no encontrado" });
+  let q = supabase.from("asa_inspecciones").select("id").eq("sitio_id", i.sitio_id).eq("fecha_local", i.fecha_local);
+  if (i.usuario_id) q = q.eq("usuario_id", i.usuario_id);
+  else if (i.tecnico_id) q = q.eq("tecnico_id", i.tecnico_id);
+  else q = q.eq("id", i.id);
+  const { data, error } = await q.limit(2000);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  const ids = (data || []).map((x) => x.id);
+  const { count } = await supabase.from("asa_hallazgos").select("id", { count: "exact", head: true }).in("inspeccion_id", ids);
+  res.json({ ids, total: ids.length, fecha_local: i.fecha_local, hallazgos: count || 0 });
+});
+
+// POST /inspecciones/eliminar { ids: [...], motivo, con_hallazgos? }
+router.post("/eliminar", requireRol("operaciones"), async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))].slice(0, 2000);
+  const motivo = String(req.body?.motivo || "").trim();
+  if (!ids.length) return res.status(400).json({ error: true, mensaje: "No hay servicios para eliminar" });
+  if (motivo.length < 5) return res.status(400).json({ error: true, mensaje: "Escribe el motivo (para la bitácora)" });
+
+  const { data: insp, error } = await supabase.from("asa_inspecciones")
+    .select("*, asa_sitios(nombre), asa_usuarios(nombre_completo), asa_puntos_control(codigo_visible, nombre, numero_habitacion)")
+    .in("id", ids);
+  if (error) return res.status(500).json({ error: true, mensaje: error.message });
+  if (!insp?.length) return res.status(404).json({ error: true, mensaje: "Esos servicios ya no existen" });
+  for (const i of insp) if (!puedeVerSitio(req, i.sitio_id)) return res.status(403).json({ error: true, mensaje: "Sin acceso a esa planta" });
+
+  const encontrados = insp.map((i) => i.id);
+  const [resp, capt, hall] = await Promise.all([
+    supabase.from("asa_inspeccion_respuestas").select("*").in("inspeccion_id", encontrados),
+    supabase.from("asa_capturas").select("*").in("inspeccion_id", encontrados),
+    supabase.from("asa_hallazgos").select("*").in("inspeccion_id", encontrados),
+  ]);
+
+  if (req.body?.con_hallazgos && (hall.data || []).length) {
+    const { error: eh } = await supabase.from("asa_hallazgos").delete().in("inspeccion_id", encontrados);
+    if (eh) return res.status(500).json({ error: true, mensaje: `No se pudieron borrar los hallazgos: ${eh.message}` });
+  }
+  // Respuestas y capturas se van solas (on delete cascade)
+  const { error: ed } = await supabase.from("asa_inspecciones").delete().in("id", encontrados);
+  if (ed) return res.status(500).json({ error: true, mensaje: ed.message });
+
+  const plantas = [...new Set(insp.map((i) => i.asa_sitios?.nombre).filter(Boolean))];
+  const tecnicos = [...new Set(insp.map((i) => i.asa_usuarios?.nombre_completo).filter(Boolean))];
+  const dias = [...new Set(insp.map((i) => i.fecha_local))].sort();
+  const punto = (i) => i.asa_puntos_control?.numero_habitacion ? `Hab. ${i.asa_puntos_control.numero_habitacion}` : i.asa_puntos_control?.nombre || i.asa_puntos_control?.codigo_visible;
+  logAccion(req, {
+    accion: "eliminar", modulo: "inspecciones", registroId: insp.length === 1 ? insp[0].id : null,
+    descripcion: `Eliminó ${insp.length} servicio(s) de ${tecnicos.join(", ") || "técnico sin nombre"} en ${plantas.join(", ")} (${dias.join(", ")})`
+      + `${insp.length === 1 ? ` · ${punto(insp[0])}` : ""}. Motivo: ${motivo}`,
+    detalle: {
+      motivo,
+      con_hallazgos: !!req.body?.con_hallazgos,
+      // Copia de lo borrado, por si hay que reconstruirlo
+      inspecciones: insp.map(({ asa_sitios, asa_usuarios, asa_puntos_control, ...i }) => i),
+      respuestas: resp.data || [],
+      capturas: capt.data || [],
+      hallazgos: hall.data || [],
+    },
+  });
+  res.json({ ok: true, eliminados: insp.length, hallazgos: req.body?.con_hallazgos ? (hall.data || []).length : 0, hallazgos_sueltos: req.body?.con_hallazgos ? 0 : (hall.data || []).length });
+});
+
 // GET /inspecciones/:id/desglose — TODO lo de un servicio, para la tarjeta que
 // se abre al hacerle clic y para imprimirlo en PDF.
 //
@@ -661,6 +737,15 @@ async function registrarInspeccion(req, cuerpo) {
   if (!punto) return { error: true, codigo: 404, mensaje: "El punto de control no existe" };
   if (!punto.activo) return { error: true, codigo: 410, mensaje: `El punto ${punto.codigo_visible} está dado de baja` };
   if (!puedeVerSitio(req, punto.sitio_id)) return { error: true, codigo: 403, mensaje: "Sin acceso a este hotel" };
+  // Técnico asignado a ciertos hoteles: no se le acepta un servicio de otro (así
+  // no carga un hotel por otro). Lo que trabajó sin señal sí entra: ya lo hizo.
+  if (!cuerpo.sincronizada_offline) {
+    const permitidos = await sitiosDelTecnico(req);
+    if (permitidos && !permitidos.includes(punto.sitio_id)) {
+      const { data: s } = await supabase.from("asa_sitios").select("nombre").eq("id", punto.sitio_id).maybeSingle();
+      return { error: true, codigo: 403, mensaje: `El punto ${punto.codigo_visible} es de ${s?.nombre || "otro hotel"} y no estás asignado ahí. Revisa el hotel o pide a la oficina que te asigne.` };
+    }
+  }
 
   // Las fotos llegan en base64 desde el celular; se suben al bucket y en la
   // tabla queda la URL. Ver lib/evidencias.js para el por que.

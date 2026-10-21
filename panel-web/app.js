@@ -1624,7 +1624,9 @@ function etiquetaTipoSitio(tipo) {
 }
 
 // ── Ficha de una planta ──────────────────────────────────────────────────
+let PLANTA_ACTUAL = null; // para refrescarla después de eliminar servicios
 async function abrirPlanta(sitioId) {
+  PLANTA_ACTUAL = sitioId;
   const content = $("#content");
   content.innerHTML = `<div class="center-msg">Cargando planta…</div>`;
 
@@ -1646,6 +1648,7 @@ async function abrirPlanta(sitioId) {
         <div class="actions">
           <button class="btn" id="btn-editar-planta">Editar planta</button>
           <button class="btn" id="btn-supervisor" title="Supervisor de área de esta planta; sale en el reporte">👤 Supervisor</button>
+          ${["admin", "operaciones"].includes(USUARIO?.rol) ? `<button class="btn" id="btn-tecnicos-planta" title="Qué técnicos trabajan en esta planta">👷 Técnicos</button>` : ""}
           <button class="btn" id="btn-portal-visible" title="Qué tipos de punto ve el hotel en su portal">👁 Qué ve el hotel</button>
           <button class="btn btn-primary" id="btn-reporte">Generar reporte</button>
           <button class="btn" id="btn-excel">Excel</button>
@@ -1673,6 +1676,7 @@ async function abrirPlanta(sitioId) {
 
   $("#btn-portal-visible").addEventListener("click", () => modalPortalVisible(sitioId, sitio.nombre));
   $("#btn-supervisor").addEventListener("click", () => modalSupervisorPlanta(sitio, () => abrirPlanta(sitioId)));
+  $("#btn-tecnicos-planta")?.addEventListener("click", () => modalTecnicosPlanta(sitio));
 
   const cuerpo = $("#tab-cuerpo");
   const pintores = {
@@ -1706,6 +1710,39 @@ async function abrirPlanta(sitioId) {
 // Cada hotel tiene su supervisor de área. Sale en el reporte de servicios y
 // evidencias como "Supervisor asignado". La lista de usuarios es solo una
 // ayuda para escribir el nombre (la ve el admin); se puede poner cualquiera.
+// Técnicos de la planta: el técnico con plantas asignadas solo ve esas en la
+// app y no puede cargar servicios en otras. Sin ninguna asignada, ve todas.
+async function modalTecnicosPlanta(sitio) {
+  const lista = await get(`/sitios/${sitio.id}/tecnicos`);
+  openModal({
+    title: `Técnicos de ${sitio.nombre}`,
+    bodyHTML: `
+      <p class="text-muted" style="margin-top:0">Marca quiénes trabajan en esta planta. Un técnico con plantas
+        asignadas <strong>solo ve esas plantas en la app</strong> y no puede cargar servicios en otras.
+        Si no tiene ninguna asignada, ve todas (como hasta ahora).</p>
+      <input type="search" id="tp-buscar" placeholder="Buscar técnico…" style="width:100%;margin-bottom:8px" />
+      <div id="tp-lista" style="max-height:52vh;overflow:auto;border:1px solid var(--border,#e2e8f0);border-radius:10px">
+        ${lista.length ? lista.map((t) => `
+          <label class="campo-check" data-nombre="${esc((t.nombre || "").toLowerCase())}" style="display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--border,#e2e8f0)">
+            <input type="checkbox" name="tec" value="${esc(t.id)}" ${t.asignado ? "checked" : ""} style="margin-top:3px" />
+            <span><strong>${esc(t.nombre)}</strong><br>
+              <small class="text-muted">${t.otras.length ? `${t.asignado ? "También en" : "Asignado a"}: ${esc(t.otras.join(", "))}` : t.asignado ? "Solo esta planta" : "Sin plantas asignadas: ve todas"}</small></span>
+          </label>`).join("") : `<div class="text-muted" style="padding:12px">No hay técnicos.</div>`}
+      </div>`,
+    onMount() {
+      $("#tp-buscar").addEventListener("input", (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        $$("#tp-lista [data-nombre]").forEach((l) => (l.style.display = !q || l.dataset.nombre.includes(q) ? "" : "none"));
+      });
+    },
+    async onSubmit(fd) {
+      const r = await put(`/sitios/${sitio.id}/tecnicos`, { usuarios: fd.getAll("tec") });
+      closeModal();
+      toast(r.agregados || r.quitados ? `Técnicos actualizados (+${r.agregados} / −${r.quitados})` : "Sin cambios");
+    },
+  });
+}
+
 async function modalSupervisorPlanta(sitio, onSaved) {
   const usuarios = await get("/usuarios").catch(() => []);
   openModal({
