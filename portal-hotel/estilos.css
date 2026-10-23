@@ -408,3 +408,28 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 
 /* Bloques y villas: subtítulo de piso dentro de cada área */
 .sub-piso{font-size:11.5px;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px}
+
+/* ── Por área ─────────────────────────────────────────────────────────── */
+.ar-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.ar-filtros label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--suave);font-weight:600}
+.ar-filtros select{min-width:200px;max-width:100%}
+.ar-rapidos{display:flex;gap:6px;flex-wrap:wrap}
+.ar-tabla tr.clicable{cursor:pointer}
+.ar-tabla tr.clicable:hover td{background:var(--azul-pastel,#EAF0F8)}
+.ar-tabla td,.ar-tabla th{text-align:left}
+.registro.ar-proximo .punto{color:var(--azul-osc)}
+.registro.ar-proximo{background:#f3f7fc;border-radius:10px;padding:12px 10px;margin:0 -10px}
+/* Tarjetas de plaga que se tocan para ver dónde se encontró */
+button.pl-tipo{font:inherit;color:inherit;background:var(--blanco,#fff);text-align:left;width:100%;cursor:pointer}
+button.pl-tipo:hover{background:var(--azul-pastel,#EAF0F8)}
+button.pl-tipo.activa{border-color:var(--azul);box-shadow:0 0 0 2px var(--azul-pastel,#EAF0F8)}
+.pl-tabla tr.clicable{cursor:pointer}
+.pl-tabla tr.clicable:hover td{background:var(--azul-pastel,#EAF0F8)}
+@media (max-width:600px){
+  .ar-filtros label,.ar-filtros select{width:100%}
+}
+@media print{
+  #area-impresion .ar-ficha-imp{break-after:page;page-break-after:always}
+  #area-impresion .ar-ficha-imp:last-child{break-after:auto;page-break-after:auto}
+  #area-impresion button.pl-tipo{border:1px solid #ccc}
+}

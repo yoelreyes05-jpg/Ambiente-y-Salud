@@ -122,12 +122,13 @@ function montarEstadisticasPlagas(raiz) {
       <h3 class="pl-sub">Cuántas hay de cada tipo</h3>
       <div class="pl-tipos">
         ${d.plagas.map((p) => `
-          <div class="pl-tipo">
+          <button type="button" class="pl-tipo clicable" data-plaga="${esc(p.plaga)}">
             <div class="pl-tipo-cab"><span>${esc(p.plaga)}</span><strong>${p.total}</strong></div>
             <div class="pl-barra"><span style="width:${(p.total / mayorTipo) * 100}%;background:${colorPlagaH(p.plaga, d.colores, d.series)}"></span></div>
-            <div class="pl-tipo-pie">${p.puntos} punto(s)${p.mes_pico ? ` · más en ${MESES_H[p.mes_pico - 1]}` : ""}</div>
-          </div>`).join("")}
+            <div class="pl-tipo-pie">${p.puntos} punto(s)${p.mes_pico ? ` · más en ${MESES_H[p.mes_pico - 1]}` : ""} · ver dónde ▾</div>
+          </button>`).join("")}
       </div>
+      <div id="pl-tipo-donde"></div>
 
       <h3 class="pl-sub">Cantidad de plagas por semana</h3>
       ${barrasPlagasH(d.periodos, d.series, d.colores)}
@@ -179,6 +180,19 @@ function montarEstadisticasPlagas(raiz) {
     };
     sel.addEventListener("change", pintarDonde);
     pintarDonde();
+
+    // Tocar una plaga despliega, debajo de las tarjetas, dónde se encontró.
+    const tarjetas = [...raiz.querySelectorAll(".pl-tipo[data-plaga]")];
+    tarjetas.forEach((b) => b.addEventListener("click", () => {
+      const caja = $("#pl-tipo-donde", raiz);
+      const abierta = b.classList.contains("activa");
+      tarjetas.forEach((x) => x.classList.remove("activa"));
+      if (abierta) { caja.innerHTML = ""; return; }
+      b.classList.add("activa");
+      caja.innerHTML = tablaDondePlaga(todos.filter((x) => x.plaga === b.dataset.plaga), b.dataset.plaga);
+      caja.querySelectorAll("tr[data-insp]").forEach((tr) => tr.addEventListener("click", () => abrirServicio(tr.dataset.insp)));
+      caja.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }));
   }
 
   $("#pl-rango", raiz).addEventListener("change", cargar);

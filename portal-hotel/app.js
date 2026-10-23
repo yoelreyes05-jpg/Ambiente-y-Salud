@@ -36,6 +36,8 @@ function esc(s) {
 }
 function fecha(d) {
   if (!d) return "—";
+  // "2026-10-22" solo es fecha: leída como UTC salía un día antes en RD.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(d))) d = `${d}T12:00:00`;
   return new Date(d).toLocaleDateString("es-DO", { day: "numeric", month: "short", year: "numeric" });
 }
 function fechaHora(d) {
@@ -163,6 +165,7 @@ function pintarMarco() {
   const pestanas = [
     ["hoy", "Hoy"],
     ["historial", "Historial"],
+    ["areas", "Por área"],
     ["pendientes", "Por hacer"],
     ["mapa", "Mapa"],
     ["hallazgos", "Hallazgos"],
@@ -210,7 +213,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, areas: vistaAreas, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {

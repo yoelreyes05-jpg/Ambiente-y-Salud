@@ -10,6 +10,7 @@ import { construirReporte, construirReportePendientes } from "../lib/reportePdf.
 import { logAccion } from "../lib/auditoria.js";
 import { leerEstadosPunto } from "./configuracion.js";
 import { traerTodo, traerTodoComoRespuesta } from "../lib/paginar.js";
+import { unificarPlaga } from "../lib/plagasUnificadas.js";
 
 const router = express.Router();
 
@@ -142,7 +143,7 @@ function plagasDelChecklist(respuestas, plagaPorCodigo) {
 // va directo a las capturas, por páginas, para que el total sea el real aunque
 // el período tenga miles de inspecciones.
 // ─────────────────────────────────────────────────────────────────────────────
-export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "semana", tecnico_id } = {}) {
+export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "semana", tecnico_id, area_id } = {}) {
   const EMBED_INSP = `asa_inspecciones!inner(id, fecha_local, sitio_id, tecnico_id, area_id, motivo_no_realizado,
           asa_empleados(nombre_completo), asa_areas(nombre), asa_sitios(nombre),
           asa_puntos_control(codigo_visible, numero_habitacion, asa_tipos_punto(codigo)))`;
@@ -153,6 +154,7 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
       .is("asa_inspecciones.motivo_no_realizado", null)
       .order("id");
     if (tecnico_id) q = q.eq("asa_inspecciones.tecnico_id", tecnico_id);
+    if (area_id) q = q.eq("asa_inspecciones.area_id", area_id);
     return sitio_id
       ? q.eq("asa_inspecciones.sitio_id", sitio_id)
       : filtrarPorSitio(q, req, "asa_inspecciones.sitio_id");
@@ -180,12 +182,12 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
     ),
     supabase.from("asa_plagas").select("codigo, nombre, grupo, color, umbral_alerta"),
   ]);
-  const plagaPorCodigo = new Map((catalogo.data || []).map((p) => [p.codigo, p]));
+  const plagaPorCodigo = new Map((catalogo.data || []).map((p) => [p.codigo, unificarPlaga(p)]));
   const conContador = new Set(capturas.map((c) => c.asa_inspecciones?.id));
   const delChecklist = plagasDelChecklist(respuestas.filter((r) => !conContador.has(r.asa_inspecciones?.id)), plagaPorCodigo);
 
   const filas = [
-    ...capturas.map((c) => ({ cantidad: c.cantidad, asa_plagas: c.asa_plagas, asa_inspecciones: c.asa_inspecciones, sin_conteo: false, contador: true })),
+    ...capturas.map((c) => ({ cantidad: c.cantidad, asa_plagas: unificarPlaga(c.asa_plagas), asa_inspecciones: c.asa_inspecciones, sin_conteo: false, contador: true })),
     ...delChecklist,
   ];
 
@@ -204,6 +206,7 @@ export async function contarPlagas(req, { sitio_id, desde, hasta, agrupar = "sem
         punto: pc.numero_habitacion ? `Habitación ${pc.numero_habitacion}` : pc.codigo_visible || "Sin punto",
         codigo: pc.codigo_visible || null,
         area: insp.asa_areas?.nombre || "Sin área",
+        area_id: insp.area_id || null,
         planta: !sitio_id ? insp.asa_sitios?.nombre || null : null,
         tecnico: insp.asa_empleados?.nombre_completo || "Sin técnico registrado",
         inspeccion_id: insp.id || null,
@@ -363,8 +366,9 @@ router.get("/plagas", async (req, res) => {
   const agrupar = ["dia", "semana", "mes"].includes(req.query.agrupar) ? req.query.agrupar : "semana";
   const desde = req.query.desde || haceDias(30);
   const hasta = req.query.hasta || hoyRD();
+  const area_id = /^[0-9a-f-]{36}$/i.test(req.query.area_id || "") ? req.query.area_id : undefined;
   try {
-    const conteo = await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id });
+    const conteo = await contarPlagas(req, { sitio_id, desde, hasta, agrupar, tecnico_id, area_id });
     if (externo) {
       delete conteo.por_tecnico;
       for (const x of conteo.donde) delete x.tecnico;
@@ -532,7 +536,8 @@ router.get("/tablero", async (req, res) => {
 
   // ── Plagas y tendencia ────────────────────────────────────────────────────
   const porPlaga = new Map();
-  for (const c of C) {
+  for (const c0 of C) {
+    const c = { ...c0, asa_plagas: unificarPlaga(c0.asa_plagas) };
     const nombre = c.asa_plagas?.nombre || "Sin clasificar";
     if (!porPlaga.has(nombre)) {
       porPlaga.set(nombre, {
@@ -1004,7 +1009,8 @@ async function juntarEvidencia(req) {
         if (!respuestasPorInsp.has(r.inspeccion_id)) respuestasPorInsp.set(r.inspeccion_id, []);
         respuestasPorInsp.get(r.inspeccion_id).push(r);
       }
-      for (const c of caps.data || []) {
+      for (const c0 of caps.data || []) {
+        const c = { ...c0, asa_plagas: unificarPlaga(c0.asa_plagas) };
         if (!capturasPorInsp.has(c.inspeccion_id)) capturasPorInsp.set(c.inspeccion_id, []);
         capturasPorInsp.get(c.inspeccion_id).push({
           ...c,

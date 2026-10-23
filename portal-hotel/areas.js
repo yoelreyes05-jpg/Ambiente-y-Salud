@@ -1,0 +1,380 @@
+// areas.js — Portal del hotel: pestaña "Por área"
+//
+// Lo que pide un auditor: "muéstrame la última fumigación del buffet cocina
+// central". Se elige el área y salen, en una sola pantalla:
+//   · el último servicio (o la última fumigación) con lo que hizo el técnico y
+//     sus fotos, para abrirlo o imprimirlo con las evidencias;
+//   · lo próximo programado en el cronograma para esa área;
+//   · las plagas encontradas en el rango de fechas (al tocar una, dónde);
+//   · todos los servicios del rango, por día.
+// Sin área elegida, una tabla con cada área: su último servicio y lo próximo.
+//
+// Se carga antes de app.js; usa sus utilidades (GET, esc, fecha, PLANTA…) en
+// tiempo de ejecución, y fechaRDp / horaRDp / masDiasP de extras.js.
+
+let AREA_P = { area: "", desde: null, hasta: null };
+
+// Tipos de punto o servicios del cronograma que son una fumigación / aplicación
+const ES_FUMIGACION = /fumig|aplicaci|asperj|aspers|nebuliz|termonebul|tratamiento|desinsect|roci/;
+const normP = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+
+// ¿Esta fila del cronograma es para esta área? El cronograma no guarda el área:
+// se busca su nombre (o todas sus palabras largas) en el título y las notas.
+function cronoDelArea(f, area) {
+  const texto = normP(`${f.titulo} ${f.notas || ""} ${f.tipo || ""}`);
+  const nombre = normP(area.nombre);
+  if (!nombre) return false;
+  if (texto.includes(nombre)) return true;
+  const palabras = nombre.split(" ").filter((p) => p.length >= 4);
+  return palabras.length > 0 && palabras.every((p) => texto.includes(p));
+}
+
+const esFumigacionInsp = (i) => ES_FUMIGACION.test(normP(i.asa_puntos_control?.asa_tipos_punto?.nombre));
+const esFumigacionCrono = (f) => ES_FUMIGACION.test(normP(`${f.tipo} ${f.titulo} ${f.notas || ""}`));
+const tituloPunto = (i) => {
+  const p = i.asa_puntos_control || {};
+  return p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre || p.codigo_visible || "Punto";
+};
+const fechaHoraCrono = (f) =>
+  `${fecha(fechaRDp(f.fecha_inicio))} · ${horaRDp(f.fecha_inicio)}${f.fecha_fin ? `–${horaRDp(f.fecha_fin)}` : ""}`;
+
+async function vistaAreas(cuerpo) {
+  const hoy = hoyLocal();
+  if (!AREA_P.desde) { AREA_P.desde = masDiasP(hoy, -29); AREA_P.hasta = hoy; }
+  const areas = await GET(`/sitios/${PLANTA.id}/areas`);
+  if (AREA_P.area && !areas.some((a) => a.id === AREA_P.area)) AREA_P.area = "";
+
+  cuerpo.innerHTML = `
+    <div class="tarjeta">
+      <div class="ar-filtros">
+        <label>Área
+          <select class="btn" id="ar-area">
+            <option value="">Todas las áreas</option>
+            ${areas.map((a) => `<option value="${esc(a.id)}"${a.id === AREA_P.area ? " selected" : ""}>${esc(a.nombre)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Desde <input type="date" class="btn" id="ar-desde" value="${esc(AREA_P.desde)}" max="${hoy}" /></label>
+        <label>Hasta <input type="date" class="btn" id="ar-hasta" value="${esc(AREA_P.hasta)}" max="${hoy}" /></label>
+        <div class="ar-rapidos">
+          <button class="btn" data-dias="7">7 días</button>
+          <button class="btn" data-dias="30">30 días</button>
+          <button class="btn" data-dias="90">90 días</button>
+          <button class="btn" data-dias="365">1 año</button>
+        </div>
+        <button class="btn principal" id="ar-imprimir">🖨 Imprimir</button>
+      </div>
+    </div>
+    <div id="ar-cuerpo"><div class="cargando">Cargando…</div></div>`;
+
+  const recargar = () => {
+    AREA_P.area = $("#ar-area").value;
+    AREA_P.desde = $("#ar-desde").value || AREA_P.desde;
+    AREA_P.hasta = $("#ar-hasta").value || AREA_P.hasta;
+    if (AREA_P.hasta < AREA_P.desde) [AREA_P.desde, AREA_P.hasta] = [AREA_P.hasta, AREA_P.desde];
+    cargarArea(areas);
+  };
+  ["#ar-area", "#ar-desde", "#ar-hasta"].forEach((s) => $(s).addEventListener("change", recargar));
+  $$(".ar-rapidos [data-dias]").forEach((b) => b.addEventListener("click", () => {
+    $("#ar-desde").value = masDiasP(hoy, -(Number(b.dataset.dias) - 1));
+    $("#ar-hasta").value = hoy;
+    recargar();
+  }));
+  $("#ar-imprimir").addEventListener("click", () => imprimirAreaP(areas));
+  await cargarArea(areas);
+}
+
+// Todo lo que muestra la pestaña, también lo usa la impresión.
+let DATOS_AREA_P = null;
+
+async function cargarArea(areas) {
+  const caja = $("#ar-cuerpo");
+  caja.innerHTML = `<div class="cargando">Cargando…</div>`;
+  const area = areas.find((a) => a.id === AREA_P.area) || null;
+  const hoy = hoyLocal();
+  const q = (extra) => new URLSearchParams({ sitio_id: PLANTA.id, ...(area ? { area_id: area.id } : {}), ...extra });
+
+  let recientes, servicios, plagas, crono;
+  try {
+    [recientes, servicios, plagas, crono] = await Promise.all([
+      // Lo último de cada área (o de esta), sin límite de fechas: el auditor pide
+      // "la última", aunque haya sido antes del rango elegido.
+      GET(`/inspecciones?${q({ limite: area ? 300 : 1000 })}`),
+      GET(`/inspecciones?${q({ desde: AREA_P.desde, hasta: AREA_P.hasta, limite: 1000 })}`),
+      GET(`/reportes/plagas?${q({ desde: AREA_P.desde, hasta: AREA_P.hasta, agrupar: "semana" })}`).catch(() => null),
+      GET(`/cronograma?sitio_id=${PLANTA.id}&desde=${hoy}&hasta=${masDiasP(hoy, 180)}`).catch(() => ({ filas: [] })),
+    ]);
+  } catch (e) {
+    caja.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    return;
+  }
+  const hechas = (l) => (Array.isArray(l) ? l : l.inspecciones || []).filter((i) => !i.motivo_no_realizado);
+  recientes = hechas(recientes);
+  servicios = Array.isArray(servicios) ? servicios : servicios.inspecciones || [];
+  const proximos = (crono.filas || []).filter((f) => f.estado === "pendiente" || f.estado === "reprogramado");
+
+  DATOS_AREA_P = { area, servicios, plagas, proximos, recientes };
+
+  caja.innerHTML = area
+    ? await htmlUnaArea(area, recientes, proximos)
+    : htmlTodasLasAreas(areas, recientes, proximos);
+  caja.insertAdjacentHTML("beforeend", htmlPlagasArea(plagas) + htmlServiciosRango(servicios));
+
+  engancharServicios(caja);
+  $$("[data-ir-area]", caja).forEach((b) => b.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    $("#ar-area").value = b.dataset.irArea;
+    $("#ar-area").dispatchEvent(new Event("change"));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }));
+  $("#ar-evidencias", caja)?.addEventListener("click", () => imprimirEvidenciasP(DATOS_AREA_P.ultimoDia || []));
+  engancharPlagasArea(caja, plagas);
+}
+
+// ── Un área: último servicio / última fumigación y lo próximo ─────────────
+async function htmlUnaArea(area, recientes, proximos) {
+  const fumig = recientes.find(esFumigacionInsp);
+  const ultima = fumig || recientes[0];
+  let delDia = [];
+  if (ultima) {
+    const dia = String(ultima.fecha_local || ultima.fecha).slice(0, 10);
+    const r = await GET(`/inspecciones?sitio_id=${PLANTA.id}&area_id=${area.id}&desde=${dia}&hasta=${dia}&limite=1000`).catch(() => []);
+    delDia = (Array.isArray(r) ? r : []).filter((i) => !i.motivo_no_realizado);
+    if (fumig) delDia = delDia.filter(esFumigacionInsp);
+    if (!delDia.length) delDia = [ultima];
+  }
+  DATOS_AREA_P.ultimoDia = delDia;
+  DATOS_AREA_P.ultimaEsFumigacion = !!fumig;
+
+  const delArea = proximos.filter((f) => cronoDelArea(f, area));
+  const lista = delArea.length ? delArea : proximos;
+  const fotos = (i) => (Array.isArray(i.fotos) ? i.fotos.length : 0);
+
+  return `
+    <div class="tarjeta">
+      <div class="pl-cab">
+        <h2>${fumig ? "🧪 Última fumigación" : "🕘 Último servicio"} · ${esc(area.nombre)}</h2>
+        ${delDia.length ? `<button class="btn principal" id="ar-evidencias">🖨 Imprimir con evidencias</button>` : ""}
+      </div>
+      ${ultima ? `
+        <p class="pl-nota">${esc(fecha(String(ultima.fecha_local || ultima.fecha).slice(0, 10)))} · ${delDia.length} ${delDia.length === 1 ? "registro" : "registros"} del técnico.
+          ${fumig ? "" : "No hay un servicio marcado como fumigación o aplicación en esta área; se muestra el último servicio."}
+          Toca uno para ver lo que hizo, las preguntas que verificó y sus fotos.</p>
+        ${delDia.map((i) => `
+          <div class="registro clicable" data-insp="${esc(i.id)}">
+            <div class="cab">
+              <div>
+                <div class="punto">${esc(tituloPunto(i))}
+                  <span class="marca ${i.nivel_actividad && i.nivel_actividad !== "ninguna" ? "alerta" : "ok"}">${esc(i.nivel_actividad && i.nivel_actividad !== "ninguna" ? NIVEL_TEXTO[i.nivel_actividad] : "Conforme")}</span>
+                </div>
+                <div class="meta">${esc([i.asa_puntos_control?.asa_tipos_punto?.nombre, i.asa_empleados?.nombre_completo].filter(Boolean).join(" · "))}</div>
+                ${i.notas ? `<div class="meta">${esc(i.notas)}</div>` : ""}
+              </div>
+              <div class="fecha">${esc(horaCorta(i.fecha))}
+                ${fotos(i) ? `<div class="marca neutra" style="margin-top:4px">${fotos(i)} fotos</div>` : ""}</div>
+            </div>
+          </div>`).join("")}`
+      : `<div class="vacio">Todavía no hay servicios registrados en esta área.</div>`}
+    </div>
+
+    <div class="tarjeta">
+      <h2>📅 Próximo programado ${delArea.length ? `· ${esc(area.nombre)}` : "en el hotel"}</h2>
+      ${!delArea.length && proximos.length ? `<p class="pl-nota">El cronograma no menciona esta área por su nombre. Estos son los próximos servicios programados del hotel.</p>` : ""}
+      ${lista.length ? htmlListaCrono(lista.slice(0, 8)) : `<div class="vacio">No hay servicios programados en los próximos 6 meses.</div>`}
+    </div>`;
+}
+
+function htmlListaCrono(filas) {
+  return filas.map((f, n) => `
+    <div class="registro${n === 0 ? " ar-proximo" : ""}">
+      <div class="cab">
+        <div>
+          <div class="punto">${esc(f.notas || f.titulo)}
+            ${esFumigacionCrono(f) ? `<span class="marca alerta">fumigación</span>` : ""}
+            ${f.estado === "reprogramado" ? `<span class="marca neutra">reprogramado</span>` : ""}</div>
+          ${f.notas && f.titulo !== f.notas ? `<div class="meta">${esc(f.titulo)}</div>` : ""}
+        </div>
+        <div class="fecha">${esc(fechaHoraCrono(f))}</div>
+      </div>
+    </div>`).join("");
+}
+
+// ── Todas las áreas: una fila por área ───────────────────────────────────
+function htmlTodasLasAreas(areas, recientes, proximos) {
+  const ultimoDe = new Map(), fumigDe = new Map();
+  for (const i of recientes) {
+    if (!ultimoDe.has(i.area_id)) ultimoDe.set(i.area_id, i);
+    if (!fumigDe.has(i.area_id) && esFumigacionInsp(i)) fumigDe.set(i.area_id, i);
+  }
+  const dia = (i) => (i ? fecha(String(i.fecha_local || i.fecha).slice(0, 10)) : "—");
+  return `
+    <div class="tarjeta">
+      <h2>🗂 Áreas del hotel</h2>
+      <p class="pl-nota">Último servicio, última fumigación y lo próximo programado de cada área. Toca un área para ver su detalle y sus evidencias.</p>
+      <div class="pl-tabla-scroll">
+        <table class="pl-tabla ar-tabla">
+          <thead><tr><th>Área</th><th>Último servicio</th><th>Última fumigación</th><th>Próximo programado</th></tr></thead>
+          <tbody>
+            ${areas.map((a) => {
+              const prox = proximos.find((f) => cronoDelArea(f, a));
+              return `<tr class="clicable" data-ir-area="${esc(a.id)}">
+                <td><strong>${esc(a.nombre)}</strong></td>
+                <td>${esc(dia(ultimoDe.get(a.id)))}</td>
+                <td>${esc(dia(fumigDe.get(a.id)))}</td>
+                <td>${prox ? esc(fechaHoraCrono(prox)) : "—"}</td></tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tarjeta">
+      <h2>📅 Próximos servicios del hotel</h2>
+      ${proximos.length ? htmlListaCrono(proximos.slice(0, 10)) : `<div class="vacio">No hay servicios programados en los próximos 6 meses.</div>`}
+    </div>`;
+}
+
+// ── Plagas del rango: al tocar una, dónde se encontró ───────────────────
+function htmlPlagasArea(d) {
+  const titulo = `🐜 Plagas encontradas · ${fecha(AREA_P.desde)} al ${fecha(AREA_P.hasta)}`;
+  if (!d) return `<div class="tarjeta"><h2>${esc(titulo)}</h2><div class="vacio">No se pudieron cargar las plagas.</div></div>`;
+  if (!d.plagas?.length) return `<div class="tarjeta"><h2>${esc(titulo)}</h2><div class="vacio"><span class="emoji">✅</span>No se encontraron plagas en este período.</div></div>`;
+  const mayor = Math.max(1, ...d.plagas.map((p) => p.total));
+  return `
+    <div class="tarjeta">
+      <h2>${esc(titulo)}</h2>
+      <p class="pl-nota">${d.total_individuos} en total. Toca una plaga para ver dónde se encontró.</p>
+      <div class="pl-tipos">
+        ${d.plagas.map((p) => `
+          <button type="button" class="pl-tipo clicable" data-plaga="${esc(p.plaga)}">
+            <div class="pl-tipo-cab"><span>${esc(p.plaga)}</span><strong>${p.total}</strong></div>
+            <div class="pl-barra"><span style="width:${(p.total / mayor) * 100}%;background:${colorPlagaH(p.plaga, d.colores, d.series)}"></span></div>
+            <div class="pl-tipo-pie">${p.puntos} punto(s) · ver dónde ▾</div>
+          </button>`).join("")}
+      </div>
+      <div id="ar-donde"></div>
+    </div>`;
+}
+
+function engancharPlagasArea(raiz, d) {
+  const botones = $$(".pl-tipo[data-plaga]", raiz);
+  botones.forEach((b) => b.addEventListener("click", () => {
+    const yaAbierta = b.classList.contains("activa");
+    botones.forEach((x) => x.classList.remove("activa"));
+    const caja = $("#ar-donde", raiz);
+    if (yaAbierta) { caja.innerHTML = ""; return; }
+    b.classList.add("activa");
+    caja.innerHTML = tablaDondePlaga((d.donde || []).filter((x) => x.plaga === b.dataset.plaga), b.dataset.plaga);
+    engancharServicios(caja);
+    caja.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }));
+}
+
+// Habitación o punto, área y fecha de cada registro de una plaga. También la
+// usa Historial (plagas.js).
+function tablaDondePlaga(lista, plaga) {
+  if (!lista.length) return `<p class="pl-nota">Sin registros de ${esc(plaga)}.</p>`;
+  const porArea = {};
+  for (const x of lista) porArea[x.area] = (porArea[x.area] || 0) + x.cantidad;
+  return `
+    <h3 class="pl-sub">Dónde se encontró: ${esc(plaga)}</h3>
+    <p class="pl-nota">${Object.entries(porArea).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${esc(a)}: <strong>${n}</strong>`).join(" · ")}</p>
+    <div class="pl-tabla-scroll"><table class="pl-tabla">
+      <thead><tr><th>Habitación / punto</th><th>Área</th><th>Fecha</th><th>Cant.</th></tr></thead>
+      <tbody>${lista.slice(0, 300).map((x) => `
+        <tr class="clicable"${x.inspeccion_id ? ` data-insp="${esc(x.inspeccion_id)}"` : ""}>
+          <td>${esc(x.punto)}</td><td>${esc(x.area)}</td><td>${esc(x.fecha ? fecha(x.fecha) : "")}</td><td><strong>${x.cantidad}</strong></td>
+        </tr>`).join("")}</tbody>
+    </table></div>
+    ${lista.length > 300 ? `<p class="pl-nota">Se muestran 300 de ${lista.length}.</p>` : `<p class="pl-nota">Toca una fila para ver el servicio con sus fotos.</p>`}`;
+}
+
+// ── Servicios del rango, por día ─────────────────────────────────────────
+function htmlServiciosRango(lista) {
+  const porDia = {};
+  for (const i of lista) (porDia[String(i.fecha_local || i.fecha).slice(0, 10)] ||= []).push(i);
+  const dias = Object.keys(porDia).sort().reverse();
+  return `
+    <div class="tarjeta">
+      <h2>📋 Servicios del período${DATOS_AREA_P.area ? ` · ${esc(DATOS_AREA_P.area.nombre)}` : ""}</h2>
+      ${!lista.length ? `<div class="vacio">No hay servicios registrados en ese período.</div>` : `
+        <p class="pl-nota">${lista.length} ${lista.length === 1 ? "registro" : "registros"} en ${dias.length} ${dias.length === 1 ? "día" : "días"}.${lista.length >= 1000 ? " Se muestran los 1000 más recientes: acorta el rango para ver el resto." : ""}</p>
+        ${dias.map((d) => `
+          <div class="dia-cabecera">${esc(fecha(d))} · ${porDia[d].length}</div>
+          ${porDia[d].map((i) => {
+            const noHecho = !!i.motivo_no_realizado;
+            const nivel = i.nivel_actividad && i.nivel_actividad !== "ninguna";
+            const nf = Array.isArray(i.fotos) ? i.fotos.length : 0;
+            return `
+            <div class="registro clicable" data-insp="${esc(i.id)}">
+              <div class="cab">
+                <div>
+                  <div class="punto">${esc(tituloPunto(i))}
+                    <span class="marca ${noHecho ? "nopudo" : nivel ? "alerta" : "ok"}">${esc(noHecho ? "No realizado" : nivel ? NIVEL_TEXTO[i.nivel_actividad] : "Conforme")}</span></div>
+                  <div class="meta">${esc([i.asa_puntos_control?.asa_tipos_punto?.nombre, DATOS_AREA_P.area ? null : i.asa_areas?.nombre, i.asa_empleados?.nombre_completo].filter(Boolean).join(" · "))}</div>
+                </div>
+                <div class="fecha">${esc(horaCorta(i.fecha))}${nf ? `<div class="marca neutra" style="margin-top:4px">${nf} fotos</div>` : ""}</div>
+              </div>
+            </div>`;
+          }).join("")}`).join("")}`}
+    </div>`;
+}
+
+// ── Imprimir ─────────────────────────────────────────────────────────────
+// Se imprime dentro de la página (#area-impresion), con los estilos del portal.
+async function imprimirEnPaginaP(titulo, html) {
+  document.getElementById("area-impresion")?.remove();
+  const capa = document.createElement("div");
+  capa.id = "area-impresion";
+  capa.innerHTML = `
+    <div class="imp-encabezado">
+      <div>
+        <h1>${esc(CONFIG.EMPRESA)}</h1>
+        <p>${esc(titulo)}</p>
+        <p>${esc(PLANTA.nombre)}</p>
+      </div>
+      <p>Impreso el ${esc(new Date().toLocaleString("es-DO"))}</p>
+    </div>
+    ${html}`;
+  document.body.appendChild(capa);
+  const fotos = [...capa.querySelectorAll("img")];
+  await Promise.race([
+    Promise.all(fotos.map((img) => img.complete ? Promise.resolve() : new Promise((ok) => { img.onload = ok; img.onerror = ok; }))),
+    new Promise((ok) => setTimeout(ok, 10000)),
+  ]);
+  const limpiar = () => { capa.remove(); window.removeEventListener("afterprint", limpiar); };
+  window.addEventListener("afterprint", limpiar);
+  setTimeout(limpiar, 60000);
+  window.print();
+}
+
+// La hoja del área: lo mismo que se ve en pantalla, sin botones.
+function imprimirAreaP() {
+  const d = DATOS_AREA_P;
+  if (!d) return;
+  const copia = $("#ar-cuerpo").cloneNode(true);
+  copia.querySelectorAll("button:not(.pl-tipo)").forEach((b) => b.remove());
+  // En papel van todas las plagas con su ubicación, no solo la que se tocó.
+  const donde = copia.querySelector("#ar-donde");
+  if (donde && d.plagas?.plagas?.length) {
+    donde.innerHTML = d.plagas.plagas.map((p) => tablaDondePlaga((d.plagas.donde || []).filter((x) => x.plaga === p.plaga), p.plaga)).join("");
+  }
+  copia.querySelectorAll(".pl-nota").forEach((n) => { if (/^Toca/.test(n.textContent.trim())) n.remove(); });
+  const titulo = `Servicios por área · ${d.area ? d.area.nombre : "Todas las áreas"} · del ${fecha(AREA_P.desde)} al ${fecha(AREA_P.hasta)}`;
+  imprimirEnPaginaP(titulo, copia.innerHTML);
+}
+
+// La última fumigación / el último servicio con todo lo que hizo el técnico.
+async function imprimirEvidenciasP(lista) {
+  if (!lista.length) return;
+  const boton = $("#ar-evidencias");
+  if (boton) { boton.disabled = true; boton.textContent = "Preparando…"; }
+  try {
+    const fichas = await Promise.all(lista.map((i) => GET(`/inspecciones/${i.id}/desglose`)));
+    const d = DATOS_AREA_P;
+    const titulo = `${d.ultimaEsFumigacion ? "Última fumigación" : "Último servicio"} · ${d.area?.nombre || ""} · ${fecha(String(lista[0].fecha_local || lista[0].fecha).slice(0, 10))}`;
+    await imprimirEnPaginaP(titulo, fichas.map((f) => `<div class="ar-ficha-imp">${fichaServicioHTML(f)}</div>`).join(""));
+  } catch (e) {
+    alert(`No se pudo preparar la impresión: ${e.message}`);
+  } finally {
+    if (boton) { boton.disabled = false; boton.textContent = "🖨 Imprimir con evidencias"; }
+  }
+}

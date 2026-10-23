@@ -16,6 +16,7 @@ import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_REALIZO } from "../lib/motivoEstrategia.js";
 import { datosAgrupacion } from "../lib/agrupacion.js";
 import { sitiosDelTecnico } from "../lib/sitiosTecnico.js";
+import { unificarPlaga } from "../lib/plagasUnificadas.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -367,7 +368,7 @@ router.get("/:id/desglose", async (req, res) => {
     // Se ordenan como las contesto el tecnico, no alfabeticamente: asi el que
     // lee el reporte sigue el mismo recorrido que hizo en el punto.
     respuestas: (respuestas.data || []).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))),
-    capturas: (capturas.data || []).map((c) => ({
+    capturas: (capturas.data || []).map((c0) => ({ ...c0, asa_plagas: unificarPlaga(c0.asa_plagas) })).map((c) => ({
       ...c,
       plaga: c.asa_plagas?.nombre || "Sin clasificar",
       grupo: c.asa_plagas?.grupo || null,
@@ -405,7 +406,7 @@ router.get("/:id", async (req, res) => {
     ...data,
     motivo_texto: data.motivo_no_realizado ? motivoDeRespuestas(respuestas.data || []) || null : null,
     respuestas: respuestas.data || [],
-    capturas: capturas.data || [],
+    capturas: (capturas.data || []).map((c) => ({ ...c, asa_plagas: unificarPlaga(c.asa_plagas) })),
   });
 });
 
