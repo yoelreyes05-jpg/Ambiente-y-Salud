@@ -1,5 +1,6 @@
-// areas.js — Portal del hotel: pestaña "Por área"
+// areas.js — Portal del hotel: pestaña Historial
 //
+// Una sola barra de filtros (área, desde, hasta) para todo lo de abajo.
 // Lo que pide un auditor: "muéstrame la última fumigación del buffet cocina
 // central". Se elige el área y salen, en una sola pantalla:
 //   · el último servicio (o la última fumigación) con lo que hizo el técnico y
@@ -38,7 +39,7 @@ const tituloPunto = (i) => {
 const fechaHoraCrono = (f) =>
   `${fecha(fechaRDp(f.fecha_inicio))} · ${horaRDp(f.fecha_inicio)}${f.fecha_fin ? `–${horaRDp(f.fecha_fin)}` : ""}`;
 
-async function vistaAreas(cuerpo) {
+async function vistaHistorial(cuerpo) {
   const hoy = hoyLocal();
   if (!AREA_P.desde) { AREA_P.desde = masDiasP(hoy, -29); AREA_P.hasta = hoy; }
   const areas = await GET(`/sitios/${PLANTA.id}/areas`);
@@ -61,7 +62,11 @@ async function vistaAreas(cuerpo) {
           <button class="btn" data-dias="90">90 días</button>
           <button class="btn" data-dias="365">1 año</button>
         </div>
-        <button class="btn principal" id="ar-imprimir">🖨 Imprimir</button>
+      </div>
+      <div class="ar-acciones">
+        <button class="btn principal" id="ar-imprimir">🖨 Imprimir lo que se ve</button>
+        <button class="btn" id="btn-pdf">Reporte de auditoría (PDF)</button>
+        <button class="btn" id="btn-pdf-pend">Reporte de no realizados</button>
       </div>
     </div>
     <div id="ar-cuerpo"><div class="cargando">Cargando…</div></div>`;
@@ -80,6 +85,8 @@ async function vistaAreas(cuerpo) {
     recargar();
   }));
   $("#ar-imprimir").addEventListener("click", () => imprimirAreaP(areas));
+  $("#btn-pdf").addEventListener("click", () => descargarReportePdf());
+  $("#btn-pdf-pend").addEventListener("click", () => descargarReportePdf("pendientes"));
   await cargarArea(areas);
 }
 
@@ -93,14 +100,13 @@ async function cargarArea(areas) {
   const hoy = hoyLocal();
   const q = (extra) => new URLSearchParams({ sitio_id: PLANTA.id, ...(area ? { area_id: area.id } : {}), ...extra });
 
-  let recientes, servicios, plagas, crono;
+  let recientes, servicios, crono;
   try {
-    [recientes, servicios, plagas, crono] = await Promise.all([
+    [recientes, servicios, crono] = await Promise.all([
       // Lo último de cada área (o de esta), sin límite de fechas: el auditor pide
       // "la última", aunque haya sido antes del rango elegido.
       GET(`/inspecciones?${q({ limite: area ? 300 : 1000 })}`),
       GET(`/inspecciones?${q({ desde: AREA_P.desde, hasta: AREA_P.hasta, limite: 1000 })}`),
-      GET(`/reportes/plagas?${q({ desde: AREA_P.desde, hasta: AREA_P.hasta, agrupar: "semana" })}`).catch(() => null),
       GET(`/cronograma?sitio_id=${PLANTA.id}&desde=${hoy}&hasta=${masDiasP(hoy, 180)}`).catch(() => ({ filas: [] })),
     ]);
   } catch (e) {
@@ -112,12 +118,12 @@ async function cargarArea(areas) {
   servicios = Array.isArray(servicios) ? servicios : servicios.inspecciones || [];
   const proximos = (crono.filas || []).filter((f) => f.estado === "pendiente" || f.estado === "reprogramado");
 
-  DATOS_AREA_P = { area, servicios, plagas, proximos, recientes };
+  DATOS_AREA_P = { area, servicios, proximos, recientes };
 
   caja.innerHTML = area
     ? await htmlUnaArea(area, recientes, proximos)
     : htmlTodasLasAreas(areas, recientes, proximos);
-  caja.insertAdjacentHTML("beforeend", htmlPlagasArea(plagas) + htmlServiciosRango(servicios));
+  caja.insertAdjacentHTML("beforeend", `<div id="pl-estadisticas"></div>` + htmlServiciosRango(servicios));
 
   engancharServicios(caja);
   $$("[data-ir-area]", caja).forEach((b) => b.addEventListener("click", (ev) => {
@@ -127,7 +133,9 @@ async function cargarArea(areas) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }));
   $("#ar-evidencias", caja)?.addEventListener("click", () => imprimirEvidenciasP(DATOS_AREA_P.ultimoDia || []));
-  engancharPlagasArea(caja, plagas);
+  // Las plagas, con la misma área y fechas (plagas.js). Tocar una plaga
+  // despliega dónde se encontró.
+  await montarEstadisticasPlagas($("#pl-estadisticas", caja), { desde: AREA_P.desde, hasta: AREA_P.hasta, area_id: area?.id }).catch(() => {});
 }
 
 // ── Un área: último servicio / última fumigación y lo próximo ─────────────
@@ -207,9 +215,9 @@ function htmlTodasLasAreas(areas, recientes, proximos) {
   }
   const dia = (i) => (i ? fecha(String(i.fecha_local || i.fecha).slice(0, 10)) : "—");
   return `
-    <div class="tarjeta">
-      <h2>🗂 Áreas del hotel</h2>
-      <p class="pl-nota">Último servicio, última fumigación y lo próximo programado de cada área. Toca un área para ver su detalle y sus evidencias.</p>
+    <details class="tarjeta ar-plegable">
+      <summary><h2>🗂 Áreas del hotel (${areas.length}) · último servicio y próxima fumigación</h2></summary>
+      <p class="pl-nota">Toca un área para ver su última fumigación con evidencias.</p>
       <div class="pl-tabla-scroll">
         <table class="pl-tabla ar-tabla">
           <thead><tr><th>Área</th><th>Último servicio</th><th>Última fumigación</th><th>Próximo programado</th></tr></thead>
@@ -225,47 +233,11 @@ function htmlTodasLasAreas(areas, recientes, proximos) {
           </tbody>
         </table>
       </div>
-    </div>
+    </details>
     <div class="tarjeta">
-      <h2>📅 Próximos servicios del hotel</h2>
-      ${proximos.length ? htmlListaCrono(proximos.slice(0, 10)) : `<div class="vacio">No hay servicios programados en los próximos 6 meses.</div>`}
+      <h2>📅 Próximos servicios</h2>
+      ${proximos.length ? htmlListaCrono(proximos.slice(0, 3)) : `<div class="vacio">No hay servicios programados en los próximos 6 meses.</div>`}
     </div>`;
-}
-
-// ── Plagas del rango: al tocar una, dónde se encontró ───────────────────
-function htmlPlagasArea(d) {
-  const titulo = `🐜 Plagas encontradas · ${fecha(AREA_P.desde)} al ${fecha(AREA_P.hasta)}`;
-  if (!d) return `<div class="tarjeta"><h2>${esc(titulo)}</h2><div class="vacio">No se pudieron cargar las plagas.</div></div>`;
-  if (!d.plagas?.length) return `<div class="tarjeta"><h2>${esc(titulo)}</h2><div class="vacio"><span class="emoji">✅</span>No se encontraron plagas en este período.</div></div>`;
-  const mayor = Math.max(1, ...d.plagas.map((p) => p.total));
-  return `
-    <div class="tarjeta">
-      <h2>${esc(titulo)}</h2>
-      <p class="pl-nota">${d.total_individuos} en total. Toca una plaga para ver dónde se encontró.</p>
-      <div class="pl-tipos">
-        ${d.plagas.map((p) => `
-          <button type="button" class="pl-tipo clicable" data-plaga="${esc(p.plaga)}">
-            <div class="pl-tipo-cab"><span>${esc(p.plaga)}</span><strong>${p.total}</strong></div>
-            <div class="pl-barra"><span style="width:${(p.total / mayor) * 100}%;background:${colorPlagaH(p.plaga, d.colores, d.series)}"></span></div>
-            <div class="pl-tipo-pie">${p.puntos} punto(s) · ver dónde ▾</div>
-          </button>`).join("")}
-      </div>
-      <div id="ar-donde"></div>
-    </div>`;
-}
-
-function engancharPlagasArea(raiz, d) {
-  const botones = $$(".pl-tipo[data-plaga]", raiz);
-  botones.forEach((b) => b.addEventListener("click", () => {
-    const yaAbierta = b.classList.contains("activa");
-    botones.forEach((x) => x.classList.remove("activa"));
-    const caja = $("#ar-donde", raiz);
-    if (yaAbierta) { caja.innerHTML = ""; return; }
-    b.classList.add("activa");
-    caja.innerHTML = tablaDondePlaga((d.donde || []).filter((x) => x.plaga === b.dataset.plaga), b.dataset.plaga);
-    engancharServicios(caja);
-    caja.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }));
 }
 
 // Habitación o punto, área y fecha de cada registro de una plaga. También la
@@ -352,13 +324,16 @@ function imprimirAreaP() {
   if (!d) return;
   const copia = $("#ar-cuerpo").cloneNode(true);
   copia.querySelectorAll("button:not(.pl-tipo)").forEach((b) => b.remove());
+  copia.querySelectorAll("details").forEach((x) => x.setAttribute("open", ""));
+  copia.querySelectorAll("select").forEach((x) => x.remove());
   // En papel van todas las plagas con su ubicación, no solo la que se tocó.
-  const donde = copia.querySelector("#ar-donde");
-  if (donde && d.plagas?.plagas?.length) {
-    donde.innerHTML = d.plagas.plagas.map((p) => tablaDondePlaga((d.plagas.donde || []).filter((x) => x.plaga === p.plaga), p.plaga)).join("");
+  const donde = copia.querySelector("#pl-tipo-donde");
+  const pl = PL_DATOS_H;
+  if (donde && pl?.plagas?.length) {
+    donde.innerHTML = pl.plagas.map((p) => tablaDondePlaga((pl.donde || []).filter((x) => x.plaga === p.plaga), p.plaga)).join("");
   }
   copia.querySelectorAll(".pl-nota").forEach((n) => { if (/^Toca/.test(n.textContent.trim())) n.remove(); });
-  const titulo = `Servicios por área · ${d.area ? d.area.nombre : "Todas las áreas"} · del ${fecha(AREA_P.desde)} al ${fecha(AREA_P.hasta)}`;
+  const titulo = `Historial · ${d.area ? d.area.nombre : "Todas las áreas"} · del ${fecha(AREA_P.desde)} al ${fecha(AREA_P.hasta)}`;
   imprimirEnPaginaP(titulo, copia.innerHTML);
 }
 

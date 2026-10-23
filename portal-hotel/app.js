@@ -165,7 +165,6 @@ function pintarMarco() {
   const pestanas = [
     ["hoy", "Hoy"],
     ["historial", "Historial"],
-    ["areas", "Por área"],
     ["pendientes", "Por hacer"],
     ["mapa", "Mapa"],
     ["hallazgos", "Hallazgos"],
@@ -213,7 +212,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, areas: vistaAreas, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {
@@ -497,104 +496,6 @@ async function vistaPendientes(cuerpo) {
 }
 
 // ── Historial ────────────────────────────────────────────────────────────
-async function vistaHistorial(cuerpo) {
-  cuerpo.innerHTML = `
-    <div id="pl-estadisticas"></div>
-    <div class="acciones">
-      <select class="btn" id="dias">
-        <option value="1">Solo hoy</option>
-        <option value="7" selected>Últimos 7 días</option>
-        <option value="30">Últimos 30 días</option>
-        <option value="90">Últimos 90 días</option>
-      </select>
-      <button class="btn principal" id="btn-pdf">Generar reporte (PDF)</button>
-      <button class="btn" id="btn-pdf-pend">Reporte de no realizados</button>
-    </div>
-    <p class="nota-reporte">
-      El reporte trae las barras del período (servicios y cantidad de plagas de
-      cada tipo), todas las revisiones con las preguntas que el técnico verificó,
-      las plagas contadas y sus fotos. Es el documento para auditoría. Lo que no
-      se pudo hacer, con su motivo, sale en el reporte de no realizados.
-    </p>
-    <div class="tarjeta" id="lista"><div class="cargando">Cargando…</div></div>`;
-
-  $("#btn-pdf").addEventListener("click", () => descargarReportePdf());
-  $("#btn-pdf-pend").addEventListener("click", () => descargarReportePdf("pendientes"));
-  $("#dias").addEventListener("change", cargar);
-
-  // Estadísticas de plagas arriba (plagas.js); cargan aparte de la lista.
-  if (typeof montarEstadisticasPlagas === "function") montarEstadisticasPlagas($("#pl-estadisticas")).catch(() => {});
-
-  async function cargar() {
-    const dias = Number($("#dias").value);
-    const desde = new Date(Date.now() - (dias - 1) * 86400000)
-      .toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
-
-    const insp = await GET(`/inspecciones?sitio_id=${PLANTA.id}&desde=${desde}`);
-    const lista = Array.isArray(insp) ? insp : insp.inspecciones || [];
-
-    if (!lista.length) {
-      $("#lista").innerHTML = `<div class="vacio"><span class="emoji">📋</span>
-        No hay revisiones registradas en ese período.</div>`;
-      return;
-    }
-
-    // Agrupado por día: un chorro de 300 revisiones seguidas no se lee, y el
-    // hotel piensa en días ("¿qué se hizo el martes?"), no en filas.
-    const porDia = {};
-    for (const i of lista) {
-      const dia = String(i.fecha_local || i.fecha).slice(0, 10);
-      (porDia[dia] = porDia[dia] || []).push(i);
-    }
-
-    $("#lista").innerHTML = Object.entries(porDia)
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([dia, items]) => `
-        <div class="dia-cabecera">${esc(fecha(dia))} · ${items.length} ${items.length === 1 ? "revisión" : "revisiones"}</div>
-        ${items.map((i) => {
-          const punto = i.asa_puntos_control || {};
-          const noHecho = !!i.motivo_no_realizado;
-          const nivel = i.nivel_actividad && i.nivel_actividad !== "ninguna";
-          const fotos = Array.isArray(i.fotos) ? i.fotos : [];
-          return `
-          <div class="registro clicable" data-insp="${esc(i.id)}">
-            <div class="cab">
-              <div>
-                <div class="punto">
-                  ${esc(punto.numero_habitacion ? `Habitación ${punto.numero_habitacion}` : punto.codigo_visible || "Punto")}
-                  <span class="marca ${noHecho ? "nopudo" : nivel ? "alerta" : "ok"}">
-                    ${esc(noHecho ? "No realizado" : nivel ? NIVEL_TEXTO[i.nivel_actividad] : "Conforme")}
-                  </span>
-                </div>
-                <div class="meta">
-                  ${esc([
-                    punto.asa_tipos_punto?.nombre,
-                    i.asa_areas?.nombre || punto.asa_areas?.nombre,
-                    i.asa_empleados?.nombre_completo,
-                  ].filter(Boolean).join(" · "))}
-                </div>
-                ${noHecho ? `<div class="meta">${esc((i.motivo_texto || MOTIVOS_TEXTO[i.motivo_no_realizado]) || i.motivo_no_realizado)}</div>` : ""}
-                ${i.notas ? `<div class="meta">${esc(i.notas)}</div>` : ""}
-              </div>
-              <div class="fecha">
-                ${esc(horaCorta(i.fecha))}
-                ${fotos.length ? `<div class="marca neutra" style="margin-top:4px">${fotos.length} fotos</div>` : ""}
-              </div>
-            </div>
-          </div>`;
-        }).join("")}
-      `).join("");
-
-    $("#lista").insertAdjacentHTML("beforeend",
-      `<p style="color:var(--suave);font-size:12.5px;text-align:center;margin:16px 0 0">
-         Toca una revisión para ver todo lo que se hizo, con sus fotos, y poder imprimirlo.
-       </p>`);
-
-    engancharServicios($("#lista"));
-  }
-  await cargar();
-}
-
 // El reporte de auditoría en PDF. Se arma en el servidor y no aquí para que sea
 // exactamente el mismo documento que saca ASA desde su panel — un PDF del hotel
 // que no cuadre con el de ASA es una discusión asegurada. El servidor limita la
@@ -603,9 +504,10 @@ async function descargarReportePdf(tipo = "servicios") {
   const pend = tipo === "pendientes";
   const boton = $(pend ? "#btn-pdf-pend" : "#btn-pdf");
   const original = boton.textContent;
-  const dias = Number($("#dias").value) || 30;
-  const desde = new Date(Date.now() - (dias - 1) * 86400000)
-    .toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+  // Las fechas de la barra de filtros de Historial (areas.js)
+  const desde = AREA_P.desde || hoyLocal();
+  const hasta = AREA_P.hasta || hoyLocal();
+  const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 86400000) + 1;
 
   boton.disabled = true;
   boton.textContent = "Generando… puede tardar";
@@ -613,7 +515,7 @@ async function descargarReportePdf(tipo = "servicios") {
     const qs = new URLSearchParams({
       sitio_id: PLANTA.id,
       desde,
-      hasta: hoyLocal(),
+      hasta,
       agrupar: dias > 60 ? "semana" : "dia",
     });
     const res = await fetch(`${CONFIG.API_BASE}/reportes/${pend ? "pdf-pendientes" : "pdf"}?${qs}`, {
@@ -628,7 +530,7 @@ async function descargarReportePdf(tipo = "servicios") {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${pend ? "no-realizados" : "reporte"}-${PLANTA.nombre.replace(/\s+/g, "-").toLowerCase()}-${desde}-a-${hoyLocal()}.pdf`;
+    a.download = `${pend ? "no-realizados" : "reporte"}-${PLANTA.nombre.replace(/\s+/g, "-").toLowerCase()}-${desde}-a-${hasta}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {

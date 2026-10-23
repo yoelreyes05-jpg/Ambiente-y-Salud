@@ -66,13 +66,18 @@ function barrasPlagasH(datos, series, colores) {
     </div>`;
 }
 
+// Lo último que se pintó, para imprimirlo (areas.js).
+let PL_DATOS_H = null;
+
 // Pinta el bloque de estadísticas dentro de `raiz` (un div de la vista Historial).
-function montarEstadisticasPlagas(raiz) {
+// Con `filtro` ({ desde, hasta, area_id }) usa esas fechas y esa área en vez
+// de su propio selector: así lo maneja la barra de filtros de Historial.
+function montarEstadisticasPlagas(raiz, filtro = null) {
   raiz.innerHTML = `
     <div class="tarjeta">
       <div class="pl-cab">
-        <h2>📊 Plagas en tu hotel</h2>
-        <select class="btn" id="pl-rango">
+        <h2>📊 Plagas encontradas</h2>
+        <select class="btn" id="pl-rango"${filtro ? ' style="display:none"' : ""}>
           <option value="30">Últimos 30 días</option>
           <option value="90">Últimos 90 días</option>
           <option value="365" selected>Últimos 12 meses</option>
@@ -86,19 +91,21 @@ function montarEstadisticasPlagas(raiz) {
 
   async function cargar() {
     const r = $("#pl-rango", raiz).value;
-    const desde = r === "todo"
+    const desde = filtro ? filtro.desde : r === "todo"
       ? "2000-01-01"
       : new Date(Date.now() - (Number(r) - 1) * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+    const hasta = filtro ? filtro.hasta : hoyLocal();
     cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
 
     let d;
     try {
-      d = await GET(`/reportes/plagas?${new URLSearchParams({ sitio_id: PLANTA.id, desde, hasta: hoyLocal(), agrupar: "semana" })}`);
+      d = await GET(`/reportes/plagas?${new URLSearchParams({ sitio_id: PLANTA.id, desde, hasta, agrupar: "semana", ...(filtro?.area_id ? { area_id: filtro.area_id } : {}) })}`);
     } catch (e) {
       cuerpo.innerHTML = `<div class="vacio">No se pudieron cargar las estadísticas: ${esc(e.message)}</div>`;
       return;
     }
 
+    PL_DATOS_H = d;
     if (!d.plagas?.length) {
       cuerpo.innerHTML = `<div class="vacio"><span class="emoji">✅</span>No se reportaron plagas en este período.</div>`;
       return;
@@ -152,17 +159,18 @@ function montarEstadisticasPlagas(raiz) {
       </div>
       ${d.por_area.length > 30 ? `<p class="pl-nota">Se muestran las 30 áreas con más plagas de ${d.por_area.length}.</p>` : ""}
 
-      <h3 class="pl-sub">Dónde se encontró cada plaga</h3>
+      ${filtro ? "" : `<h3 class="pl-sub">Dónde se encontró cada plaga</h3>
       <p class="pl-nota">Habitación o punto de cada registro. Toca una fila para ver el servicio.</p>
       <select class="btn" id="pl-donde-plaga" style="margin-bottom:8px">
         <option value="">Todas las plagas (${(d.donde || []).length})</option>
         ${d.plagas.map((p) => `<option value="${esc(p.plaga)}">${esc(p.plaga)} (${(d.donde || []).filter((x) => x.plaga === p.plaga).length})</option>`).join("")}
       </select>
-      <div id="pl-donde"></div>`;
+      <div id="pl-donde"></div>`}`;
 
     const todos = d.donde || [];
     const sel = $("#pl-donde-plaga", raiz);
     const pintarDonde = () => {
+      if (!sel) return;
       const lista = sel.value ? todos.filter((x) => x.plaga === sel.value) : todos;
       $("#pl-donde", raiz).innerHTML = lista.length
         ? `<div class="pl-tabla-scroll"><table class="pl-tabla">
@@ -178,7 +186,7 @@ function montarEstadisticasPlagas(raiz) {
         if (tr.dataset.insp && typeof abrirServicio === "function") tr.addEventListener("click", () => abrirServicio(tr.dataset.insp));
       });
     };
-    sel.addEventListener("change", pintarDonde);
+    sel?.addEventListener("change", pintarDonde);
     pintarDonde();
 
     // Tocar una plaga despliega, debajo de las tarjetas, dónde se encontró.

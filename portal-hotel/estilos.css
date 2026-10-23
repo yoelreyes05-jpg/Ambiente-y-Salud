@@ -433,3 +433,10 @@ button.pl-tipo.activa{border-color:var(--azul);box-shadow:0 0 0 2px var(--azul-p
   #area-impresion .ar-ficha-imp:last-child{break-after:auto;page-break-after:auto}
   #area-impresion button.pl-tipo{border:1px solid #ccc}
 }
+.ar-acciones{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+details.ar-plegable>summary{cursor:pointer;list-style:none}
+details.ar-plegable>summary::-webkit-details-marker{display:none}
+details.ar-plegable>summary h2{display:inline;margin:0}
+details.ar-plegable>summary::after{content:" ▾";color:var(--suave)}
+details.ar-plegable[open]>summary::after{content:" ▴"}
+details.ar-plegable[open]>summary{margin-bottom:10px}
