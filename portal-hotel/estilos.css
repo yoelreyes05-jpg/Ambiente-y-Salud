@@ -440,3 +440,21 @@ details.ar-plegable>summary h2{display:inline;margin:0}
 details.ar-plegable>summary::after{content:" ▾";color:var(--suave)}
 details.ar-plegable[open]>summary::after{content:" ▴"}
 details.ar-plegable[open]>summary{margin-bottom:10px}
+
+/* ── Cronograma: año / mes / semana / fechas ───────────────────────────── */
+.cr-barra{display:flex;flex-direction:column;gap:10px}
+.cr-vistas{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.cr-nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.cr-nav strong{flex:1;text-align:center;font-size:15px}
+.cr-nav label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--suave);font-weight:600}
+.cr-matriz{border-collapse:collapse;width:100%;font-size:12.5px}
+.cr-matriz th,.cr-matriz td{border:1px solid var(--borde);padding:6px;text-align:center;vertical-align:middle}
+.cr-matriz th{background:#EAF0F8;color:var(--azul-osc);font-weight:700;white-space:nowrap}
+.cr-matriz th.clicable,.cr-matriz td[data-sem],.cr-matriz td[data-mes]{cursor:pointer}
+.cr-matriz th.activa{background:var(--azul);color:#fff}
+.cr-matriz td.cr-serv{text-align:left;font-weight:600;min-width:150px;position:sticky;left:0;background:var(--blanco,#fff);z-index:1}
+.cr-matriz td.cr-con{background:#EAF0F8;color:var(--azul-osc);font-weight:700;white-space:nowrap}
+.cr-matriz td.cr-con.ok{background:#e8f5e9;color:#2e6b32}
+.cr-matriz td.cr-con:hover{filter:brightness(.95)}
+.cr-rango{font-size:10.5px;font-weight:500;opacity:.8}
+.cr-hechos{width:100%;margin:0 0 8px;font-size:12.5px;background:#e8f5e9;border-color:#66a36a;color:#2e6b32}

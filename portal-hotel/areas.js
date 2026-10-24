@@ -196,10 +196,10 @@ function htmlListaCrono(filas) {
     <div class="registro${n === 0 ? " ar-proximo" : ""}">
       <div class="cab">
         <div>
-          <div class="punto">${esc(f.notas || f.titulo)}
+          <div class="punto">${esc(nombreServicioCr(f))}
             ${esFumigacionCrono(f) ? `<span class="marca alerta">fumigación</span>` : ""}
             ${f.estado === "reprogramado" ? `<span class="marca neutra">reprogramado</span>` : ""}</div>
-          ${f.notas && f.titulo !== f.notas ? `<div class="meta">${esc(f.titulo)}</div>` : ""}
+          ${detalleServicioCr(f) ? `<div class="meta">${esc(detalleServicioCr(f))}</div>` : ""}
         </div>
         <div class="fecha">${esc(fechaHoraCrono(f))}</div>
       </div>
