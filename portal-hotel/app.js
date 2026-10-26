@@ -1479,9 +1479,9 @@ arrancar();
 // ASA los sube desde el panel; aquí solo se ven y se descargan. Los enlaces
 // de los archivos son temporales (1 hora): se piden al tocar el botón.
 const DOC_GRUPOS = [
-  ["Permisos y licencias", ["licencia_ambiental", "licencia_sanitaria", "no_objecion_salud", "registro_agricultura", "regencia"]],
-  ["Manuales y protocolos", ["manual_operaciones", "protocolo_trabajo"]],
-  ["Otros documentos", ["otro"]],
+  ["PERMISOS Y LICENCIAS", ["licencia_ambiental", "licencia_sanitaria", "no_objecion_salud", "registro_agricultura", "regencia"]],
+  ["MANUALES Y PROTOCOLOS", ["manual_operaciones", "protocolo_trabajo"]],
+  ["OTROS DOCUMENTOS", ["otro"]],
 ];
 // Las fichas técnicas y hojas de seguridad van en "Listado de productos",
 // cada una con el nombre de su producto. Si alguna se subió sin producto, el
@@ -1567,31 +1567,31 @@ async function vistaDocumentos(cuerpo) {
       </div>` : "";
   }).join("");
 
-  // Fichas técnicas y hojas de seguridad en listas aparte, cada una por
-  // nombre de producto: el auditor pide "las hojas de seguridad" y las tiene
-  // todas juntas.
-  const docsDe = (cat) => lista.flatMap((p) => p.documentos
-    .filter((d) => d.categoria === cat && d.tiene_archivo)
-    .map((d) => ({ p, d })));
-  const fichas = docsDe("ficha_tecnica");
-  const hojas = docsDe("hoja_seguridad");
-  const filaDoc = ({ p, d }) => `
-    <div class="doc-prod" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
-      <div class="doc-info">
-        <div class="doc-tit">${esc(p.nombre_comercial)}</div>
-        ${p.principio_activo ? `<div class="doc-sub">Ingrediente activo: ${esc(p.principio_activo)}</div>` : ""}
-      </div>
+  // Por producto, la ficha técnica y debajo su hoja de seguridad: quien
+  // busca "Acugar" encuentra las dos juntas.
+  const conDocs = lista
+    .map((p) => ({
+      p,
+      ficha: p.documentos.filter((d) => d.categoria === "ficha_tecnica" && d.tiene_archivo),
+      hoja: p.documentos.filter((d) => d.categoria === "hoja_seguridad" && d.tiene_archivo),
+    }))
+    .filter((x) => x.ficha.length || x.hoja.length);
+  const filaDoc = (ic, tipo, nombre, d) => `
+    <div class="doc-par">
+      <div class="doc-info"><div class="doc-tit">${ic} ${tipo} — ${esc(nombre)}</div></div>
       <div class="doc-acc">
         <button class="btn principal" data-doc-ver="${d.id}">Ver</button>
         <button class="btn" data-doc-bajar="${d.id}">Descargar</button>
       </div>
     </div>`;
-  const tarjetaLista = (titulo, nota, filas) => filas.length ? `
-    <div class="tarjeta">
-      <h2>${titulo} · ${filas.length}</h2>
-      <p class="doc-sub" style="margin:0 0 6px">${nota}</p>
-      <div class="doc-productos">${filas.map(filaDoc).join("")}</div>
-    </div>` : "";
+  const bloqueProducto = ({ p, ficha, hoja }) => `
+    <div class="doc-prod doc-prod-bloque" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
+      <div class="doc-prod-nombre">🧪 ${esc(p.nombre_comercial)}${p.principio_activo ? ` <span class="doc-sub">· ${esc(p.principio_activo)}</span>` : ""}</div>
+      ${ficha.map((d) => filaDoc("📘", "Ficha técnica", p.nombre_comercial, d)).join("")
+        || `<div class="doc-par doc-sub">📘 Ficha técnica — ${esc(p.nombre_comercial)}: en preparación</div>`}
+      ${hoja.map((d) => filaDoc("⚠️", "Hoja de seguridad", p.nombre_comercial, d)).join("")
+        || `<div class="doc-par doc-sub">⚠️ Hoja de seguridad — ${esc(p.nombre_comercial)}: en preparación</div>`}
+    </div>`;
 
   if (!sueltos.length && !lista.length) {
     cuerpo.innerHTML = `
@@ -1605,12 +1605,16 @@ async function vistaDocumentos(cuerpo) {
     ${grupos}
     ${listados.length ? `
       <div class="tarjeta">
-        <h2>Listado de productos</h2>
+        <h2>LISTADO DE PRODUCTOS</h2>
         ${listados.map(tarjetaDocumento).join("")}
       </div>` : ""}
-    ${fichas.length + hojas.length > 8 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto o ingrediente activo…" />` : ""}
-    ${tarjetaLista("📘 Fichas técnicas", "Ficha técnica de cada producto que utilizamos.", fichas)}
-    ${tarjetaLista("⚠️ Hojas de seguridad", "Hoja de datos de seguridad (SDS) de cada producto que utilizamos.", hojas)}
+    ${conDocs.length ? `
+      <div class="tarjeta">
+        <h2>FICHAS TÉCNICAS Y HOJAS DE SEGURIDAD · ${conDocs.length} producto${conDocs.length === 1 ? "" : "s"}</h2>
+        <p class="doc-sub" style="margin:0 0 6px">De cada producto que utilizamos: la ficha técnica y, debajo, su hoja de seguridad.</p>
+        ${conDocs.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto o ingrediente activo…" />` : ""}
+        <div class="doc-productos">${conDocs.map(bloqueProducto).join("")}</div>
+      </div>` : ""}
     <p style="color:var(--suave);font-size:12.5px;text-align:center">
       Documentos publicados por ${esc(CONFIG.EMPRESA)}. Si necesitas uno que no aparece, pídelo en Solicitudes.
     </p>`;

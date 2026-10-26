@@ -458,3 +458,9 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .cr-matriz td.cr-con:hover{filter:brightness(.95)}
 .cr-rango{font-size:10.5px;font-weight:500;opacity:.8}
 .cr-hechos{width:100%;margin:0 0 8px;font-size:12.5px;background:#e8f5e9;border-color:#66a36a;color:#2e6b32}
+/* Documentos: por producto, ficha técnica y debajo hoja de seguridad */
+.doc-prod-bloque{flex-direction:column;gap:6px}
+.doc-prod-nombre{font-weight:700;font-size:15px;color:var(--azul-osc)}
+.doc-par{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;width:100%;
+  background:#f8fafc;border-radius:8px;padding:8px 10px}
+.doc-par .doc-tit{font-size:13.5px;font-weight:600}
