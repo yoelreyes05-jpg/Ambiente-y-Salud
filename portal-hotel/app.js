@@ -1568,7 +1568,8 @@ async function vistaDocumentos(cuerpo) {
   }).join("");
 
   // Por producto, la ficha técnica y debajo su hoja de seguridad: quien
-  // busca "Acugar" encuentra las dos juntas.
+  // busca "Acugar" encuentra las dos juntas. Lo que todavía no se ha subido
+  // no se menciona: aparece solo cuando se suba.
   const conDocs = lista
     .map((p) => ({
       p,
@@ -1587,10 +1588,8 @@ async function vistaDocumentos(cuerpo) {
   const bloqueProducto = ({ p, ficha, hoja }) => `
     <div class="doc-prod doc-prod-bloque" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
       <div class="doc-prod-nombre">🧪 ${esc(p.nombre_comercial)}${p.principio_activo ? ` <span class="doc-sub">· ${esc(p.principio_activo)}</span>` : ""}</div>
-      ${ficha.map((d) => filaDoc("📘", "Ficha técnica", p.nombre_comercial, d)).join("")
-        || `<div class="doc-par doc-sub">📘 Ficha técnica — ${esc(p.nombre_comercial)}: en preparación</div>`}
-      ${hoja.map((d) => filaDoc("⚠️", "Hoja de seguridad", p.nombre_comercial, d)).join("")
-        || `<div class="doc-par doc-sub">⚠️ Hoja de seguridad — ${esc(p.nombre_comercial)}: en preparación</div>`}
+      ${ficha.map((d) => filaDoc("📘", "Ficha técnica", p.nombre_comercial, d)).join("")}
+      ${hoja.map((d) => filaDoc("⚠️", "Hoja de seguridad", p.nombre_comercial, d)).join("")}
     </div>`;
 
   if (!sueltos.length && !lista.length) {
