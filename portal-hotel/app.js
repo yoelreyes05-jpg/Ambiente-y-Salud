@@ -1567,29 +1567,31 @@ async function vistaDocumentos(cuerpo) {
       </div>` : "";
   }).join("");
 
-  // Ficha técnica primero, luego hoja de seguridad, luego lo demás
-  const ORDEN = { ficha_tecnica: 0, hoja_seguridad: 1 };
-  const filaProducto = (p) => {
-    const sub = [p.principio_activo ? `Ingrediente activo: ${esc(p.principio_activo)}` : "",
-      p.presentacion ? esc(p.presentacion) : "",
-      p.categoria_toxicologica ? `Categoría toxicológica ${esc(p.categoria_toxicologica)}` : ""].filter(Boolean).join(" · ");
-    return `
+  // Fichas técnicas y hojas de seguridad en listas aparte, cada una por
+  // nombre de producto: el auditor pide "las hojas de seguridad" y las tiene
+  // todas juntas.
+  const docsDe = (cat) => lista.flatMap((p) => p.documentos
+    .filter((d) => d.categoria === cat && d.tiene_archivo)
+    .map((d) => ({ p, d })));
+  const fichas = docsDe("ficha_tecnica");
+  const hojas = docsDe("hoja_seguridad");
+  const filaDoc = ({ p, d }) => `
     <div class="doc-prod" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
       <div class="doc-info">
-        <div class="doc-tit">🧪 ${esc(p.nombre_comercial)}</div>
-        ${sub ? `<div class="doc-sub">${sub}</div>` : ""}
-        ${p.registro_agricultura || p.registro_sanitario ? `<div class="doc-sub">
-          ${p.registro_agricultura ? `Reg. Agricultura: <strong>${esc(p.registro_agricultura)}</strong>` : ""}
-          ${p.registro_sanitario ? ` · Reg. sanitario: <strong>${esc(p.registro_sanitario)}</strong>` : ""}</div>` : ""}
-        ${p.uso ? `<div class="doc-sub">Uso: ${esc(p.uso)}</div>` : ""}
+        <div class="doc-tit">${esc(p.nombre_comercial)}</div>
+        ${p.principio_activo ? `<div class="doc-sub">Ingrediente activo: ${esc(p.principio_activo)}</div>` : ""}
       </div>
       <div class="doc-acc">
-        ${p.documentos.filter((d) => d.tiene_archivo).sort((a, b) => (ORDEN[a.categoria] ?? 9) - (ORDEN[b.categoria] ?? 9)).map((d) =>
-          `<button class="btn" data-doc-ver="${d.id}" title="${esc(d.titulo)}">📄 ${esc(d.categoria === "hoja_seguridad" ? "Hoja de seguridad" : d.categoria_texto)}</button>`).join("")
-          || `<span class="doc-sub">Ficha en preparación</span>`}
+        <button class="btn principal" data-doc-ver="${d.id}">Ver</button>
+        <button class="btn" data-doc-bajar="${d.id}">Descargar</button>
       </div>
     </div>`;
-  };
+  const tarjetaLista = (titulo, nota, filas) => filas.length ? `
+    <div class="tarjeta">
+      <h2>${titulo} · ${filas.length}</h2>
+      <p class="doc-sub" style="margin:0 0 6px">${nota}</p>
+      <div class="doc-productos">${filas.map(filaDoc).join("")}</div>
+    </div>` : "";
 
   if (!sueltos.length && !lista.length) {
     cuerpo.innerHTML = `
@@ -1601,15 +1603,14 @@ async function vistaDocumentos(cuerpo) {
 
   cuerpo.innerHTML = `
     ${grupos}
-    ${listados.length || lista.length ? `
+    ${listados.length ? `
       <div class="tarjeta">
-        <h2>Listado de productos${lista.length ? ` · ${lista.length}` : ""}</h2>
+        <h2>Listado de productos</h2>
         ${listados.map(tarjetaDocumento).join("")}
-        ${lista.length ? `
-          <p class="doc-sub" style="margin:10px 0 6px">Ficha técnica y hoja de seguridad de cada producto que utilizamos.</p>
-          ${lista.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto, ingrediente o plaga…" />` : ""}
-          <div id="doc-productos">${lista.map(filaProducto).join("")}</div>` : ""}
       </div>` : ""}
+    ${fichas.length + hojas.length > 8 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto o ingrediente activo…" />` : ""}
+    ${tarjetaLista("📘 Fichas técnicas", "Ficha técnica de cada producto que utilizamos.", fichas)}
+    ${tarjetaLista("⚠️ Hojas de seguridad", "Hoja de datos de seguridad (SDS) de cada producto que utilizamos.", hojas)}
     <p style="color:var(--suave);font-size:12.5px;text-align:center">
       Documentos publicados por ${esc(CONFIG.EMPRESA)}. Si necesitas uno que no aparece, pídelo en Solicitudes.
     </p>`;
@@ -1618,6 +1619,6 @@ async function vistaDocumentos(cuerpo) {
   $$("[data-doc-bajar]", cuerpo).forEach((b) => b.addEventListener("click", () => abrirDocumento(b.dataset.docBajar, true)));
   $("#doc-buscar")?.addEventListener("input", (e) => {
     const t = e.target.value.toLowerCase().trim();
-    $$("#doc-productos .doc-prod").forEach((f) => { f.style.display = !t || f.dataset.buscar.includes(t) ? "" : "none"; });
+    $$(".doc-productos .doc-prod").forEach((f) => { f.style.display = !t || f.dataset.buscar.includes(t) ? "" : "none"; });
   });
 }

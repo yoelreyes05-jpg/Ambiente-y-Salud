@@ -353,7 +353,7 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 
 /* ── Documentos ──────────────────────────────────────────────────────────*/
 .doc-fila,.doc-prod{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--borde)}
-.tarjeta h2 + .doc-fila,.tarjeta h2 + .doc-buscar,#doc-productos .doc-prod:first-child{border-top:0}
+.tarjeta h2 + .doc-fila,.tarjeta h2 + .doc-buscar,.doc-productos .doc-prod:first-child{border-top:0}
 .doc-ic{font-size:22px;line-height:1}
 .doc-info{flex:1;min-width:0}
 .doc-tit{font-weight:700;font-size:14.5px}
