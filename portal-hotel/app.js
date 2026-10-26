@@ -1481,9 +1481,21 @@ arrancar();
 const DOC_GRUPOS = [
   ["Permisos y licencias", ["licencia_ambiental", "licencia_sanitaria", "no_objecion_salud", "registro_agricultura", "regencia"]],
   ["Manuales y protocolos", ["manual_operaciones", "protocolo_trabajo"]],
-  ["Listado de productos", ["listado_productos"]],
-  ["Otros documentos", ["otro", "ficha_tecnica", "hoja_seguridad"]],
+  ["Otros documentos", ["otro"]],
 ];
+// Las fichas técnicas y hojas de seguridad van en "Listado de productos",
+// cada una con el nombre de su producto. Si alguna se subió sin producto, el
+// nombre sale del archivo ("FICHA_TECNICA_FENDONA.pdf" → Fendona); la misma
+// regla usa el servidor (backend/lib/productoDeArchivo.js).
+const DOC_DE_PRODUCTO_P = ["ficha_tecnica", "hoja_seguridad"];
+function productoDeNombreP(nombre) {
+  let t = String(nombre || "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/_+/g, " ");
+  t = t.replace(/(hoja\s*(de\s*)?(datos\s*(de\s*)?)?seguridad|ficha\s*t[eé]cnica|\bficha\b|\bm?sds\b|\bfds\b|\bhds\b|\btds\b|\bversi[oó]n\b\s*\d*|\brev\.?\s*\d+)/gi, " ")
+    .replace(/^[\s\d.\-–:)]+/, "").replace(/[\s\-–:.]+$/, "").replace(/\s{2,}/g, " ").trim();
+  if (t && t === t.toUpperCase()) t = t.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  return t || "Producto";
+}
+const claveProductoP = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
 const DOC_VIG = {
   vigente: ["Vigente", "ok"], por_vencer: ["Por vencer", "aviso"],
   vencido: ["Vencido", "mal"], sin_vencimiento: ["", ""],
@@ -1528,11 +1540,23 @@ function tarjetaDocumento(d) {
 }
 
 async function vistaDocumentos(cuerpo) {
-  const [docs, productos] = await Promise.all([
+  const [docs, catalogo] = await Promise.all([
     GET("/documentos"),
     GET("/documentos/productos").catch(() => []),
   ]);
   const sueltos = docs.filter((d) => !d.producto_id);
+
+  // Productos del catálogo + fichas / hojas sueltas, juntas por nombre
+  const productos = new Map();
+  for (const p of catalogo) productos.set(claveProductoP(p.nombre_comercial), { ...p, documentos: [...(p.documentos || [])] });
+  for (const d of sueltos.filter((x) => DOC_DE_PRODUCTO_P.includes(x.categoria))) {
+    const nombre = productoDeNombreP(d.archivo_nombre || d.titulo);
+    const k = claveProductoP(nombre);
+    if (!productos.has(k)) productos.set(k, { nombre_comercial: nombre, documentos: [] });
+    productos.get(k).documentos.push(d);
+  }
+  const lista = [...productos.values()].sort((a, b) => a.nombre_comercial.localeCompare(b.nombre_comercial, "es"));
+  const listados = sueltos.filter((d) => d.categoria === "listado_productos");
 
   const grupos = DOC_GRUPOS.map(([titulo, cats]) => {
     const deGrupo = sueltos.filter((d) => cats.includes(d.categoria));
@@ -1543,28 +1567,31 @@ async function vistaDocumentos(cuerpo) {
       </div>` : "";
   }).join("");
 
-  const filaProducto = (p) => `
+  // Ficha técnica primero, luego hoja de seguridad, luego lo demás
+  const ORDEN = { ficha_tecnica: 0, hoja_seguridad: 1 };
+  const filaProducto = (p) => {
+    const sub = [p.principio_activo ? `Ingrediente activo: ${esc(p.principio_activo)}` : "",
+      p.presentacion ? esc(p.presentacion) : "",
+      p.categoria_toxicologica ? `Categoría toxicológica ${esc(p.categoria_toxicologica)}` : ""].filter(Boolean).join(" · ");
+    return `
     <div class="doc-prod" data-buscar="${esc([p.nombre_comercial, p.principio_activo, p.uso].join(" ").toLowerCase())}">
       <div class="doc-info">
-        <div class="doc-tit">${esc(p.nombre_comercial)}</div>
-        <div class="doc-sub">
-          ${[p.principio_activo ? `Ingrediente activo: ${esc(p.principio_activo)}` : "",
-             p.presentacion ? esc(p.presentacion) : "",
-             p.categoria_toxicologica ? `Categoría toxicológica ${esc(p.categoria_toxicologica)}` : ""].filter(Boolean).join(" · ")}
-        </div>
+        <div class="doc-tit">🧪 ${esc(p.nombre_comercial)}</div>
+        ${sub ? `<div class="doc-sub">${sub}</div>` : ""}
         ${p.registro_agricultura || p.registro_sanitario ? `<div class="doc-sub">
           ${p.registro_agricultura ? `Reg. Agricultura: <strong>${esc(p.registro_agricultura)}</strong>` : ""}
           ${p.registro_sanitario ? ` · Reg. sanitario: <strong>${esc(p.registro_sanitario)}</strong>` : ""}</div>` : ""}
         ${p.uso ? `<div class="doc-sub">Uso: ${esc(p.uso)}</div>` : ""}
       </div>
       <div class="doc-acc">
-        ${p.documentos.filter((d) => d.tiene_archivo).map((d) =>
-          `<button class="btn" data-doc-ver="${d.id}" title="${esc(d.titulo)}">📄 ${esc(d.categoria_texto)}</button>`).join("")
+        ${p.documentos.filter((d) => d.tiene_archivo).sort((a, b) => (ORDEN[a.categoria] ?? 9) - (ORDEN[b.categoria] ?? 9)).map((d) =>
+          `<button class="btn" data-doc-ver="${d.id}" title="${esc(d.titulo)}">📄 ${esc(d.categoria === "hoja_seguridad" ? "Hoja de seguridad" : d.categoria_texto)}</button>`).join("")
           || `<span class="doc-sub">Ficha en preparación</span>`}
       </div>
     </div>`;
+  };
 
-  if (!sueltos.length && !productos.length) {
+  if (!sueltos.length && !lista.length) {
     cuerpo.innerHTML = `
       <div class="vacio"><span class="emoji">📁</span>
         ${esc(CONFIG.EMPRESA)} todavía no ha publicado documentos en el portal.
@@ -1574,11 +1601,14 @@ async function vistaDocumentos(cuerpo) {
 
   cuerpo.innerHTML = `
     ${grupos}
-    ${productos.length ? `
+    ${listados.length || lista.length ? `
       <div class="tarjeta">
-        <h2>Productos que utilizamos · ${productos.length}</h2>
-        ${productos.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto, ingrediente o plaga…" />` : ""}
-        <div id="doc-productos">${productos.map(filaProducto).join("")}</div>
+        <h2>Listado de productos${lista.length ? ` · ${lista.length}` : ""}</h2>
+        ${listados.map(tarjetaDocumento).join("")}
+        ${lista.length ? `
+          <p class="doc-sub" style="margin:10px 0 6px">Ficha técnica y hoja de seguridad de cada producto que utilizamos.</p>
+          ${lista.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto, ingrediente o plaga…" />` : ""}
+          <div id="doc-productos">${lista.map(filaProducto).join("")}</div>` : ""}
       </div>` : ""}
     <p style="color:var(--suave);font-size:12.5px;text-align:center">
       Documentos publicados por ${esc(CONFIG.EMPRESA)}. Si necesitas uno que no aparece, pídelo en Solicitudes.

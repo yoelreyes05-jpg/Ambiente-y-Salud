@@ -49,6 +49,26 @@ const DOC_VIGENCIA = {
 };
 const DOC_MAX_MB = 15;
 
+// De qué tipo y de qué producto es un archivo, por su nombre:
+// "FICHA_TECNICA_FENDONA.pdf" → ficha técnica de Fendona. La misma regla usa
+// el servidor (backend/lib/productoDeArchivo.js), que además crea el producto
+// si no estaba en el catálogo.
+const normDoc = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function categoriaDeArchivoDoc(nombre) {
+  const t = normDoc(nombre).replace(/[_\-.]+/g, " ");
+  if (/\b(hoja\s*(de\s*)?(datos\s*(de\s*)?)?seguridad|m?sds|fds|hds)\b/.test(t)) return "hoja_seguridad";
+  if (/\bficha\s*tecnica\b|\bficha\b|\btds\b/.test(t)) return "ficha_tecnica";
+  return null;
+}
+function productoDeArchivoDoc(nombre) {
+  let t = String(nombre || "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/_+/g, " ");
+  t = t.replace(/(hoja\s*(de\s*)?(datos\s*(de\s*)?)?seguridad|ficha\s*t[eé]cnica|\bficha\b|\bm?sds\b|\bfds\b|\bhds\b|\btds\b|\bversi[oó]n\b\s*\d*|\brev\.?\s*\d+)/gi, " ")
+    .replace(/^[\s\d.\-–:)]+/, "").replace(/[\s\-–:.]+$/, "").replace(/\s{2,}/g, " ").trim();
+  if (t && t === t.toUpperCase()) t = t.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  return t || "";
+}
+const mismoProductoDoc = (a, b) => normDoc(a).replace(/[^a-z0-9]/g, "") === normDoc(b).replace(/[^a-z0-9]/g, "");
+
 let DOC_TAB = "documentos";
 let DOC_FILTRO = "";
 
@@ -222,7 +242,8 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
             <option value="">— No es de un producto —</option>
             ${productos.map((p) => `<option value="${p.id}"${p.id === prodSel ? " selected" : ""}>${esc(p.nombre_comercial)}</option>`).join("")}
           </select>
-          <div class="form-hint">Las fichas técnicas y hojas de seguridad salen junto al producto en el portal.</div>
+          <input name="producto_nombre" id="fd-prod-nuevo" placeholder="…o escribe el nombre de un producto nuevo" style="margin-top:6px" />
+          <div class="form-hint">Las fichas técnicas y hojas de seguridad salen en el listado de productos del portal, con el nombre del producto. Al escoger el archivo se llenan solos.</div>
         </div>
         <div class="form-group"><label>¿Qué cliente lo ve?</label>
           <select name="cliente_id">
@@ -263,6 +284,21 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
         }
       });
       $("#fd-prod").addEventListener("change", sync);
+      // Al escoger el archivo: tipo y producto salen de su nombre
+      $("#fd-archivo").addEventListener("change", () => {
+        const f = $("#fd-archivo").files[0];
+        if (!f || doc) return;
+        const cat = categoriaDeArchivoDoc(f.name);
+        if (cat && !categoria) $("#fd-cat").value = cat;
+        if (DOC_DE_PRODUCTO.includes($("#fd-cat").value) && !$("#fd-prod").value) {
+          const nombre = productoDeArchivoDoc(f.name);
+          const p = productos.find((x) => mismoProductoDoc(x.nombre_comercial, nombre));
+          if (p) $("#fd-prod").value = p.id; else if (nombre) $("#fd-prod-nuevo").value = nombre;
+          const pn = p ? p.nombre_comercial : nombre;
+          if (pn) $("#fd-titulo").value = `${DOC_CAT_TXT[$("#fd-cat").value]} — ${pn}`;
+        }
+        sync();
+      });
       sync();
       if (!doc && !$("#fd-titulo").value) {
         const p = productos.find((x) => x.id === prodSel);
@@ -274,6 +310,7 @@ async function formDocumento(doc, { productos = [], categoria = null, productoId
         categoria: fd.get("categoria"),
         titulo: fd.get("titulo"),
         producto_id: fd.get("producto_id") || null,
+        producto_nombre: fd.get("producto_id") ? null : (fd.get("producto_nombre") || "").trim() || null,
         cliente_id: fd.get("cliente_id") || null,
         numero: fd.get("numero"),
         emitido_por: fd.get("emitido_por"),
@@ -329,7 +366,10 @@ async function docVistaProductos(cuerpo) {
     <div class="card">
       <div class="card-head">
         <h2>Productos que utilizamos</h2>
-        <div class="actions">${editar ? `<button class="btn btn-primary" id="prod-nuevo">+ Nuevo producto</button>` : ""}</div>
+        <div class="actions">${editar ? `
+          <button class="btn btn-primary" id="prod-subir-varios">📄 Subir fichas y hojas de seguridad</button>
+          <button class="btn" id="prod-nuevo">+ Nuevo producto</button>
+          <input type="file" id="prod-varios" accept=".pdf,application/pdf" multiple hidden />` : ""}</div>
       </div>
       <p class="text-muted" style="margin-top:0">
         El hotel ve este listado en su portal con la ficha técnica y la hoja de seguridad de cada producto.
@@ -398,6 +438,8 @@ async function docVistaProductos(cuerpo) {
   }));
 
   $("#prod-nuevo")?.addEventListener("click", () => formProducto(null));
+  $("#prod-subir-varios")?.addEventListener("click", () => $("#prod-varios").click());
+  $("#prod-varios")?.addEventListener("change", (e) => subirVariosDocProducto([...e.target.files]));
   $$("[data-ver]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.ver)));
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () => formProducto(productos.find((p) => p.id === b.dataset.editar))));
   $$("[data-adj]").forEach((b) => b.addEventListener("click", () =>
@@ -469,4 +511,32 @@ function formProducto(p) {
       pintarDocTab();
     },
   });
+}
+
+// Varias fichas técnicas y hojas de seguridad de una vez. Cada archivo se
+// cuelga de su producto por el nombre ("18.1-_Hoja_Seguridad_Klerat.pdf" →
+// hoja de seguridad de Klerat); el servidor crea el producto si no existe.
+async function subirVariosDocProducto(archivos) {
+  if (!archivos.length) return;
+  const filas = archivos.map((f) => ({ f, cat: categoriaDeArchivoDoc(f.name), prod: productoDeArchivoDoc(f.name) }));
+  const dudosos = filas.filter((x) => !x.cat || !x.prod);
+  if (dudosos.length && !confirm(`No se pudo saber el tipo o el producto de:\n${dudosos.map((x) => "· " + x.f.name).join("\n")}\n\nEsos se suben como ficha técnica con el nombre del archivo. ¿Seguir?`)) return;
+  const btn = $("#prod-subir-varios");
+  const ok = [], mal = [];
+  for (const [i, x] of filas.entries()) {
+    if (btn) btn.textContent = `Subiendo ${i + 1} de ${filas.length}…`;
+    try {
+      if (x.f.size > DOC_MAX_MB * 1024 * 1024) throw new Error(`pesa más de ${DOC_MAX_MB} MB`);
+      const r = await post("/documentos", {
+        categoria: x.cat || "ficha_tecnica",
+        producto_nombre: x.prod || x.f.name.replace(/\.[^.]+$/, ""),
+        visible_cliente: true,
+        archivo: { nombre: x.f.name, dataUrl: await leerArchivoComoDataUrl(x.f) },
+      });
+      ok.push(`${r.categoria_texto || DOC_CAT_TXT[r.categoria]} — ${r.producto_nombre || x.prod}${r.producto_creado ? " (producto nuevo)" : ""}`);
+    } catch (e) { mal.push(`${x.f.name}: ${e.message}`); }
+  }
+  alert([ok.length ? `Subidos (${ok.length}):\n${ok.map((t) => "✓ " + t).join("\n")}` : "",
+         mal.length ? `\nNo se pudieron subir (${mal.length}):\n${mal.map((t) => "✗ " + t).join("\n")}` : ""].join("\n").trim());
+  pintarDocTab();
 }

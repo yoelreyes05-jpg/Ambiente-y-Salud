@@ -19,6 +19,7 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
+import { categoriaDeArchivo, productoDeArchivo, mismoProducto } from "../lib/productoDeArchivo.js";
 
 const router = express.Router();
 
@@ -277,10 +278,26 @@ router.get("/:id/archivo", async (req, res) => {
 });
 
 // POST /documentos — { titulo, categoria, ..., archivo: { nombre, dataUrl } }
+// Una ficha técnica o una hoja de seguridad va colgada de su producto, para
+// que el hotel la vea en el listado de productos con el nombre. Si no se
+// escogió el producto, se toma del nombre del archivo ("FICHA_TECNICA_FENDONA"
+// → Fendona) y, si no está en el catálogo, se crea.
+async function productoParaDocumento(nombre) {
+  const { data } = await supabase.from("asa_plaguicidas_catalogo").select("id, nombre_comercial");
+  const ya = (data || []).find((p) => mismoProducto(p.nombre_comercial, nombre));
+  if (ya) return { id: ya.id, nombre: ya.nombre_comercial, nuevo: false };
+  const { data: creado, error } = await supabase.from("asa_plaguicidas_catalogo")
+    .insert([{ nombre_comercial: nombre, visible_cliente: true }]).select("id, nombre_comercial").single();
+  if (error) throw new Error(error.message);
+  return { id: creado.id, nombre: creado.nombre_comercial, nuevo: true };
+}
+
 router.post("/", ESCRIBEN, async (req, res) => {
   const b = req.body || {};
   const fila = camposDocumento(b);
-  if (!fila.titulo) return fallo(res, 400, "Falta el título del documento.");
+  // "auto": el tipo sale del nombre del archivo (subida de varios a la vez)
+  if (b.categoria === "auto") fila.categoria = categoriaDeArchivo(b.archivo?.nombre) || "otro";
+  // Primero el archivo: si no sube, no se crea un producto de más.
   if (!CATEGORIAS[fila.categoria]) return fallo(res, 400, "Categoría no válida.");
   if (!b.archivo?.dataUrl) return fallo(res, 400, "Falta adjuntar el archivo.");
   try {
@@ -288,6 +305,19 @@ router.post("/", ESCRIBEN, async (req, res) => {
   } catch (e) {
     return fallo(res, 400, e.message);
   }
+  let producto = null;
+  if (["ficha_tecnica", "hoja_seguridad"].includes(fila.categoria) && !fila.producto_id) {
+    const nombre = String(b.producto_nombre || "").trim() || productoDeArchivo(b.archivo?.nombre) || productoDeArchivo(fila.titulo);
+    if (nombre) {
+      try { producto = await productoParaDocumento(nombre); } catch (e) { return fallo(res, 500, e.message); }
+      fila.producto_id = producto.id;
+    }
+  }
+  if (!fila.titulo) {
+    const deArchivo = String(b.archivo?.nombre || "").replace(/\.[^.]+$/, "").trim();
+    fila.titulo = producto ? `${CATEGORIAS[fila.categoria]} — ${producto.nombre}` : deArchivo;
+  }
+  if (!fila.titulo) return fallo(res, 400, "Falta el título del documento.");
   fila.creado_por = req.usuario?.nombre || req.usuario?.email || null;
   const { data, error } = await supabase.from("asa_documentos").insert([fila]).select(SELECT_DOC).single();
   if (error) {
@@ -295,7 +325,7 @@ router.post("/", ESCRIBEN, async (req, res) => {
     return fallo(res, 500, error.message);
   }
   logAccion(req, { accion: "crear", modulo: "documentos", registroId: data.id, descripcion: `${CATEGORIAS[data.categoria]} · ${data.titulo}` });
-  res.status(201).json(darForma(data, false));
+  res.status(201).json({ ...darForma(data, false), producto_creado: producto?.nuevo || false });
 });
 
 // PUT /documentos/:id — datos y, si viene `archivo`, reemplaza el adjunto.
