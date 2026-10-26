@@ -58,6 +58,14 @@ function categoriaDeArchivoDoc(nombre) {
   const t = normDoc(nombre).replace(/[_\-.]+/g, " ");
   if (/\b(hoja\s*(de\s*)?(datos\s*(de\s*)?)?seguridad|m?sds|fds|hds)\b/.test(t)) return "hoja_seguridad";
   if (/\bficha\s*tecnica\b|\bficha\b|\btds\b/.test(t)) return "ficha_tecnica";
+  if (/listado\s*(de\s*)?productos/.test(t)) return "listado_productos";
+  if (/licencia\s*ambiental|medio\s*ambiente/.test(t)) return "licencia_ambiental";
+  if (/licencia\s*sanitaria/.test(t)) return "licencia_sanitaria";
+  if (/no\s*objecion/.test(t)) return "no_objecion_salud";
+  if (/registro\s*(de\s*)?agricultura|agricultura/.test(t)) return "registro_agricultura";
+  if (/regencia|regente/.test(t)) return "regencia";
+  if (/manual/.test(t)) return "manual_operaciones";
+  if (/protocolo/.test(t)) return "protocolo_trabajo";
   return null;
 }
 function productoDeArchivoDoc(nombre) {
@@ -168,7 +176,9 @@ async function docVistaDocumentos(cuerpo) {
     <div class="card">
       <div class="card-head">
         <h2>Documentos</h2>
-        <div class="actions">${editar ? `<button class="btn btn-primary" id="doc-nuevo">+ Adjuntar documento</button>` : ""}</div>
+        <div class="actions">${editar ? `
+          <button class="btn btn-primary" id="doc-varios">📄 Subir varios archivos</button>
+          <button class="btn" id="doc-nuevo">+ Adjuntar documento</button>` : ""}</div>
       </div>
       <div class="toolbar">
         <select id="doc-filtro">
@@ -203,6 +213,7 @@ async function docVistaDocumentos(cuerpo) {
 
   $("#doc-filtro").addEventListener("change", (e) => { DOC_FILTRO = e.target.value; pintarDocTab(); });
   $("#doc-nuevo")?.addEventListener("click", () => formDocumento(null, { productos }));
+  $("#doc-varios")?.addEventListener("click", () => formVariosDocumentos({ productos }));
   $$("[data-ver]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.ver)));
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () =>
     formDocumento(docs.find((d) => d.id === b.dataset.editar), { productos })));
@@ -367,9 +378,8 @@ async function docVistaProductos(cuerpo) {
       <div class="card-head">
         <h2>Productos que utilizamos</h2>
         <div class="actions">${editar ? `
-          <button class="btn btn-primary" id="prod-subir-varios">📄 Subir fichas y hojas de seguridad</button>
-          <button class="btn" id="prod-nuevo">+ Nuevo producto</button>
-          <input type="file" id="prod-varios" accept=".pdf,application/pdf" multiple hidden />` : ""}</div>
+          <button class="btn btn-primary" id="prod-subir-varios">📄 Subir varias fichas y hojas</button>
+          <button class="btn" id="prod-nuevo">+ Nuevo producto</button>` : ""}</div>
       </div>
       <p class="text-muted" style="margin-top:0">
         El hotel ve este listado en su portal con la ficha técnica y la hoja de seguridad de cada producto.
@@ -438,8 +448,7 @@ async function docVistaProductos(cuerpo) {
   }));
 
   $("#prod-nuevo")?.addEventListener("click", () => formProducto(null));
-  $("#prod-subir-varios")?.addEventListener("click", () => $("#prod-varios").click());
-  $("#prod-varios")?.addEventListener("change", (e) => subirVariosDocProducto([...e.target.files]));
+  $("#prod-subir-varios")?.addEventListener("click", () => formVariosDocumentos({ productos, porDefecto: "ficha_tecnica" }));
   $$("[data-ver]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.ver)));
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () => formProducto(productos.find((p) => p.id === b.dataset.editar))));
   $$("[data-adj]").forEach((b) => b.addEventListener("click", () =>
@@ -513,30 +522,111 @@ function formProducto(p) {
   });
 }
 
-// Varias fichas técnicas y hojas de seguridad de una vez. Cada archivo se
-// cuelga de su producto por el nombre ("18.1-_Hoja_Seguridad_Klerat.pdf" →
-// hoja de seguridad de Klerat); el servidor crea el producto si no existe.
-async function subirVariosDocProducto(archivos) {
-  if (!archivos.length) return;
-  const filas = archivos.map((f) => ({ f, cat: categoriaDeArchivoDoc(f.name), prod: productoDeArchivoDoc(f.name) }));
-  const dudosos = filas.filter((x) => !x.cat || !x.prod);
-  if (dudosos.length && !confirm(`No se pudo saber el tipo o el producto de:\n${dudosos.map((x) => "· " + x.f.name).join("\n")}\n\nEsos se suben como ficha técnica con el nombre del archivo. ¿Seguir?`)) return;
-  const btn = $("#prod-subir-varios");
-  const ok = [], mal = [];
-  for (const [i, x] of filas.entries()) {
-    if (btn) btn.textContent = `Subiendo ${i + 1} de ${filas.length}…`;
-    try {
-      if (x.f.size > DOC_MAX_MB * 1024 * 1024) throw new Error(`pesa más de ${DOC_MAX_MB} MB`);
-      const r = await post("/documentos", {
-        categoria: x.cat || "ficha_tecnica",
-        producto_nombre: x.prod || x.f.name.replace(/\.[^.]+$/, ""),
-        visible_cliente: true,
-        archivo: { nombre: x.f.name, dataUrl: await leerArchivoComoDataUrl(x.f) },
+// ── Subir varios archivos de una vez ─────────────────────────────────────
+// Se escogen todos juntos. Cada uno sale en una fila con su tipo (del nombre
+// del archivo: "18.1-_Hoja_Seguridad_Klerat.pdf" → hoja de seguridad) y, si es
+// ficha u hoja, su producto (Klerat). Se revisa, se corrige lo que haga falta
+// y se suben en fila. El servidor cuelga cada ficha / hoja de su producto y lo
+// crea si no estaba en el catálogo.
+async function formVariosDocumentos({ productos = [], porDefecto = "otro" } = {}) {
+  const clientes = await getClientesCache().catch(() => []);
+  let filas = [];
+  const tituloDe = (f) => f.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").replace(/^[\s\d.\-–)]+/, "").trim();
+
+  openModal({
+    title: "Subir varios archivos",
+    large: true,
+    submitLabel: "Subir todos",
+    bodyHTML: `
+      <div class="form-group">
+        <label>Archivos *</label>
+        <input type="file" id="fv-archivos" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,application/pdf,image/*" />
+        <div class="form-hint">Escoge todos los que quieras a la vez (Ctrl o Shift en la computadora; en el celular, mantén presionado).
+          El tipo y el producto salen del nombre de cada archivo; revísalos abajo antes de subir. Hasta ${DOC_MAX_MB} MB cada uno.</div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label>¿Qué cliente los ve?</label>
+          <select id="fv-cliente"><option value="">Todos los clientes</option>
+            ${clientes.map((c) => `<option value="${c.id}">${esc(clienteLabel(c))}</option>`).join("")}</select></div>
+        <div class="form-group"><label>Fecha de vencimiento (opcional, para todos)</label><input type="date" id="fv-vence" /></div>
+      </div>
+      <label class="campo-check"><input type="checkbox" id="fv-visible" checked /> Visibles para el hotel en su portal</label>
+      <div id="fv-lista" style="margin-top:12px"></div>
+      <datalist id="fv-productos">${productos.map((p) => `<option value="${esc(p.nombre_comercial)}"></option>`).join("")}</datalist>`,
+    onMount: () => {
+      const pintar = () => {
+        $("#fv-lista").innerHTML = filas.length ? `
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Archivo</th><th>Tipo</th><th>Producto / título</th><th></th></tr></thead>
+            <tbody>${filas.map((x, i) => `
+              <tr data-i="${i}">
+                <td><small>📎 ${esc(x.f.name)}</small><br><small class="muted">${docPeso(x.f.size)}</small></td>
+                <td><select data-campo="cat">${DOC_CATEGORIAS.map(([k, t]) => `<option value="${k}"${k === x.cat ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></td>
+                <td>${DOC_DE_PRODUCTO.includes(x.cat)
+                  ? `<input data-campo="prod" list="fv-productos" value="${esc(x.prod)}" placeholder="Nombre del producto" />`
+                  : `<input data-campo="titulo" value="${esc(x.titulo)}" placeholder="Título" />`}</td>
+                <td><button type="button" class="btn btn-sm btn-danger" data-quitar-fila="${i}">✕</button></td>
+              </tr>`).join("")}</tbody>
+          </table></div>
+          <div class="form-hint">${filas.length} archivo(s). Las fichas técnicas y hojas de seguridad salen en el portal bajo "Listado de productos", con el nombre del producto.</div>`
+          : "";
+        $$("#fv-lista tr[data-i]").forEach((tr) => {
+          const x = filas[Number(tr.dataset.i)];
+          tr.querySelector('[data-campo="cat"]').addEventListener("change", (e) => { x.cat = e.target.value; pintar(); });
+          tr.querySelector('[data-campo="prod"]')?.addEventListener("input", (e) => { x.prod = e.target.value; });
+          tr.querySelector('[data-campo="titulo"]')?.addEventListener("input", (e) => { x.titulo = e.target.value; });
+        });
+        $$("[data-quitar-fila]").forEach((b) => b.addEventListener("click", () => { filas.splice(Number(b.dataset.quitarFila), 1); pintar(); }));
+      };
+      $("#fv-archivos").addEventListener("change", (e) => {
+        for (const f of e.target.files) {
+          const cat = categoriaDeArchivoDoc(f.name) || porDefecto;
+          const prod = productoDeArchivoDoc(f.name);
+          const p = productos.find((x) => mismoProductoDoc(x.nombre_comercial, prod));
+          filas.push({ f, cat, prod: p ? p.nombre_comercial : prod, titulo: tituloDe(f) });
+        }
+        e.target.value = "";   // así se pueden agregar más en otra tanda
+        pintar();
       });
-      ok.push(`${r.categoria_texto || DOC_CAT_TXT[r.categoria]} — ${r.producto_nombre || x.prod}${r.producto_creado ? " (producto nuevo)" : ""}`);
-    } catch (e) { mal.push(`${x.f.name}: ${e.message}`); }
-  }
-  alert([ok.length ? `Subidos (${ok.length}):\n${ok.map((t) => "✓ " + t).join("\n")}` : "",
-         mal.length ? `\nNo se pudieron subir (${mal.length}):\n${mal.map((t) => "✗ " + t).join("\n")}` : ""].join("\n").trim());
-  pintarDocTab();
+    },
+    onSubmit: async () => {
+      if (!filas.length) throw new Error("Escoge al menos un archivo.");
+      const grandes = filas.filter((x) => x.f.size > DOC_MAX_MB * 1024 * 1024);
+      if (grandes.length) throw new Error(`Pesan más de ${DOC_MAX_MB} MB: ${grandes.map((x) => x.f.name).join(", ")}`);
+      const sinProd = filas.filter((x) => DOC_DE_PRODUCTO.includes(x.cat) && x.cat !== "registro_agricultura" && !String(x.prod || "").trim());
+      if (sinProd.length) throw new Error(`Falta el producto de: ${sinProd.map((x) => x.f.name).join(", ")}`);
+      const boton = $("#asa-modal-submit");
+      const ok = [], mal = [];
+      for (const [i, x] of [...filas].entries()) {
+        boton.textContent = `Subiendo ${i + 1} de ${filas.length}…`;
+        try {
+          const esProd = DOC_DE_PRODUCTO.includes(x.cat) && String(x.prod || "").trim();
+          const p = esProd ? productos.find((y) => mismoProductoDoc(y.nombre_comercial, x.prod)) : null;
+          const r = await post("/documentos", {
+            categoria: x.cat,
+            titulo: esProd ? `${DOC_CAT_TXT[x.cat]} — ${p ? p.nombre_comercial : x.prod.trim()}` : (x.titulo || tituloDe(x.f)),
+            producto_id: p?.id || null,
+            producto_nombre: esProd && !p ? x.prod.trim() : null,
+            cliente_id: $("#fv-cliente").value || null,
+            fecha_vencimiento: $("#fv-vence").value || null,
+            visible_cliente: $("#fv-visible").checked,
+            archivo: { nombre: x.f.name, dataUrl: await leerArchivoComoDataUrl(x.f) },
+          });
+          ok.push(x);
+          if (r.producto_creado) productos.push({ id: r.producto_id, nombre_comercial: r.producto_nombre });
+        } catch (e) { mal.push(`${x.f.name}: ${e.message}`); }
+      }
+      // Lo que subió sale de la lista; si algo falló, queda para reintentar.
+      filas = filas.filter((x) => !ok.includes(x));
+      if (mal.length) {
+        boton.textContent = "Reintentar los que fallaron";
+        $("#fv-lista").insertAdjacentHTML("afterbegin", `<div class="form-hint" style="color:#b91c1c">
+          ${ok.length} subido(s). No se pudieron subir:<br>${mal.map(esc).join("<br>")}</div>`);
+        throw new Error(`${mal.length} archivo(s) no se pudieron subir.`);
+      }
+      closeModal();
+      toast(`${ok.length} archivo(s) subido(s) ✓`);
+      pintarDocTab();
+    },
+  });
 }
