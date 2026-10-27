@@ -32,3 +32,25 @@ export function productoDeArchivo(nombre) {
 }
 
 export const mismoProducto = (a, b) => norm(a).replace(/[^a-z0-9]/g, "") === norm(b).replace(/[^a-z0-9]/g, "");
+
+// ── Para qué plagas es un producto ──────────────────────────────────────────
+// rastreros (cucarachas, hormigas…), voladores (moscas, mosquitos…), roedores.
+// Lo que se marque en el catálogo (grupo_plaga: "rastreros,voladores") manda;
+// si está vacío se deduce del nombre, el ingrediente activo y el uso.
+export const GRUPOS_PLAGA = ["rastreros", "voladores", "roedores"];
+const PISTAS = {
+  roedores: /roedor|\brata|\braton|rodentic|brodifacoum|bromadiolon|difenacoum|difetialon|flocoumafen|klerat|\bstorm\b|racumin|contrac|ratimor/,
+  voladores: /mosca|mosquito|zancudo|volador|jejen|polilla|avispa|aedes|culex|larvicid|temefos|\babate\b|agita|quick\s*bayt/,
+  rastreros: /cucaracha|hormiga|rastrer|chinche|pulga|garrapata|alacran|escorpion|arana|grillo|tijereta|ciempies|termita|comejen|fipronil|hidrametilnon|indoxacarb|advion|maxforce|goliath/,
+};
+// Piretroides y residuales de amplio espectro: sirven para los dos
+const AMPLIO = /cipermetrin|cypermethrin|lambda|cihalotrin|cyhalothrin|deltametrin|deltamethrin|bifentrin|bifenthrin|permetrin|permethrin|fendona|\bdemand\b|k-?othrine|temprid|suspend|\btempo\b/;
+
+export function gruposPlaga(p) {
+  const marcados = String(p?.grupo_plaga || "").split(",").map((x) => x.trim()).filter((x) => GRUPOS_PLAGA.includes(x));
+  if (marcados.length) return { grupos: marcados, deducido: false };
+  const t = norm(`${p?.nombre_comercial} ${p?.principio_activo} ${p?.uso}`);
+  const grupos = GRUPOS_PLAGA.filter((g) => PISTAS[g].test(t));
+  if (AMPLIO.test(t)) for (const g of ["rastreros", "voladores"]) if (!grupos.includes(g)) grupos.push(g);
+  return { grupos: GRUPOS_PLAGA.filter((g) => grupos.includes(g)), deducido: true };
+}

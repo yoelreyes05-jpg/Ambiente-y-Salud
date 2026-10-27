@@ -19,7 +19,7 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, ROLES_EXTERNOS } from "../middleware/auth.js";
-import { categoriaDeArchivo, productoDeArchivo, mismoProducto } from "../lib/productoDeArchivo.js";
+import { categoriaDeArchivo, productoDeArchivo, mismoProducto, gruposPlaga, GRUPOS_PLAGA } from "../lib/productoDeArchivo.js";
 
 const router = express.Router();
 
@@ -146,6 +146,12 @@ function camposDocumento(b = {}) {
   }
   if ("categoria" in b) out.categoria = b.categoria;
   if ("visible_cliente" in b) out.visible_cliente = !!b.visible_cliente;
+  // Para qué plagas: "rastreros,voladores". Vacío = que se deduzca.
+  if ("grupo_plaga" in b) {
+    const lista = (Array.isArray(b.grupo_plaga) ? b.grupo_plaga : String(b.grupo_plaga || "").split(","))
+      .map((x) => String(x).trim()).filter((x) => GRUPOS_PLAGA.includes(x));
+    out.grupo_plaga = lista.length ? GRUPOS_PLAGA.filter((g) => lista.includes(g)).join(",") : null;
+  }
   return out;
 }
 
@@ -198,7 +204,9 @@ router.get("/categorias", (req, res) => {
 router.get("/productos", async (req, res) => {
   const externo = esExterno(req);
   let q = supabase.from("asa_plaguicidas_catalogo")
-    .select("id, nombre_comercial, principio_activo, fabricante, categoria_toxicologica, registro_sanitario, registro_agricultura, uso, presentacion, visible_cliente, notas, activo")
+    // "*" y no la lista: grupo_plaga es columna nueva (40_productos_grupo_plaga.sql)
+    // y sin ella esta consulta no debe romperse.
+    .select("*")
     .order("nombre_comercial");
   if (externo) q = q.eq("activo", true).eq("visible_cliente", true);
   else if (req.query.todos !== "1") q = q.eq("activo", true);
@@ -214,7 +222,8 @@ router.get("/productos", async (req, res) => {
   for (const d of docs || []) (porProducto[d.producto_id] = porProducto[d.producto_id] || []).push(darForma(d, externo));
 
   res.json((productos || []).map((p) => {
-    const out = { ...p, documentos: porProducto[p.id] || [] };
+    const { grupos, deducido } = gruposPlaga(p);
+    const out = { ...p, grupos_plaga: grupos, grupo_deducido: deducido, documentos: porProducto[p.id] || [] };
     if (externo) { delete out.visible_cliente; delete out.notas; delete out.activo; }
     return out;
   }));
@@ -224,7 +233,7 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
   const b = req.body || {};
   if (!String(b.nombre_comercial || "").trim()) return fallo(res, 400, "Falta el nombre comercial.");
   const fila = productoDesdeCuerpo(b);
-  const { data, error } = await supabase.from("asa_plaguicidas_catalogo").insert([fila]).select().single();
+  const { data, error } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").insert([f]).select().single());
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "crear", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
   res.status(201).json(data);
@@ -233,11 +242,22 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
 router.put("/productos/:id", ESCRIBEN, async (req, res) => {
   const fila = { ...productoDesdeCuerpo(req.body || {}), updated_at: new Date().toISOString() };
   if ("activo" in (req.body || {})) fila.activo = !!req.body.activo;
-  const { data, error } = await supabase.from("asa_plaguicidas_catalogo").update(fila).eq("id", req.params.id).select().single();
+  const { data, error } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").update(f).eq("id", req.params.id).select().single());
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "actualizar", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
   res.json(data);
 });
+
+// Si todavía no se corrió 40_productos_grupo_plaga.sql, guardar lo demás
+// en vez de fallar por la columna grupo_plaga.
+async function sinColumnaNueva(fila, guardar) {
+  const r = await guardar(fila);
+  if (r.error && "grupo_plaga" in fila && /grupo_plaga/.test(r.error.message || "")) {
+    const { grupo_plaga: _g, ...resto } = fila;
+    return guardar(resto);
+  }
+  return r;
+}
 
 function productoDesdeCuerpo(b) {
   const out = {};

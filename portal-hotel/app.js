@@ -1570,6 +1570,7 @@ async function vistaDocumentos(cuerpo) {
   // Por producto, la ficha técnica y debajo su hoja de seguridad: quien
   // busca "Acugar" encuentra las dos juntas. Lo que todavía no se ha subido
   // no se menciona: aparece solo cuando se suba.
+  const GRUPOS_PLAGA_P = [["rastreros", "🪳 INSECTOS RASTREROS"], ["voladores", "🦟 INSECTOS VOLADORES"], ["roedores", "🐀 ROEDORES"], ["otros", "OTROS PRODUCTOS"]];
   const conDocs = lista
     .map((p) => ({
       p,
@@ -1610,9 +1611,15 @@ async function vistaDocumentos(cuerpo) {
     ${conDocs.length ? `
       <div class="tarjeta">
         <h2>FICHAS TÉCNICAS Y HOJAS DE SEGURIDAD · ${conDocs.length} producto${conDocs.length === 1 ? "" : "s"}</h2>
-        <p class="doc-sub" style="margin:0 0 6px">De cada producto que utilizamos: la ficha técnica y, debajo, su hoja de seguridad.</p>
+        <p class="doc-sub" style="margin:0 0 6px">Por tipo de plaga. De cada producto, la ficha técnica y, debajo, su hoja de seguridad.</p>
         ${conDocs.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto o ingrediente activo…" />` : ""}
-        <div class="doc-productos">${conDocs.map(bloqueProducto).join("")}</div>
+        ${GRUPOS_PLAGA_P.map(([g, titulo]) => {
+          // Un producto para rastreros y voladores sale en las dos secciones
+          const del = conDocs.filter((x) => g === "otros" ? !(x.p.grupos_plaga || []).length : (x.p.grupos_plaga || []).includes(g));
+          return del.length ? `
+            <h3 class="doc-grupo-plaga">${titulo} · ${del.length}</h3>
+            <div class="doc-productos">${del.map(bloqueProducto).join("")}</div>` : "";
+        }).join("")}
       </div>` : ""}
     <p style="color:var(--suave);font-size:12.5px;text-align:center">
       Documentos publicados por ${esc(CONFIG.EMPRESA)}. Si necesitas uno que no aparece, pídelo en Solicitudes.

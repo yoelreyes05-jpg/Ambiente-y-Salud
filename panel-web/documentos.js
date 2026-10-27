@@ -48,6 +48,8 @@ const DOC_VIGENCIA = {
   sin_vencimiento: ["Sin vencimiento", "badge-gray"],
 };
 const DOC_MAX_MB = 15;
+// Para qué plagas es cada producto: así se ordenan en el portal del hotel.
+const GRUPOS_PLAGA_DOC = [["rastreros", "Insectos rastreros"], ["voladores", "Insectos voladores"], ["roedores", "Roedores"]];
 
 // De qué tipo y de qué producto es un archivo, por su nombre:
 // "FICHA_TECNICA_FENDONA.pdf" → ficha técnica de Fendona. La misma regla usa
@@ -399,7 +401,10 @@ async function docVistaProductos(cuerpo) {
           `${p.registro_agricultura ? `Agricultura: ${esc(p.registro_agricultura)}` : ""}` +
           `${p.registro_sanitario ? `<br>Salud: ${esc(p.registro_sanitario)}` : ""}` +
           `${p.categoria_toxicologica ? `<br><small class="muted">Cat. tox. ${esc(p.categoria_toxicologica)}</small>` : ""}` || "—" },
-      { key: "uso", label: "Uso", fmt: (p) => esc(p.uso || "—") },
+      { key: "uso", label: "Uso / plagas", fmt: (p) => (p.grupos_plaga?.length
+          ? p.grupos_plaga.map((g) => `<span class="badge badge-cyan">${esc((GRUPOS_PLAGA_DOC.find(([k]) => k === g) || [, g])[1])}</span>`).join(" ")
+            + (p.grupo_deducido ? ` <small class="muted">(deducido)</small>` : "")
+          : `<span class="badge badge-gray">Sin clasificar</span>`) + (p.uso ? `<br><small class="muted">${esc(p.uso)}</small>` : "") },
       { key: "docs", label: "Documentos", fmt: chipsDocs },
       { key: "acc", label: "", fmt: (p) => editar ? `
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
@@ -474,6 +479,12 @@ function formProducto(p) {
           </select></div>
         <div class="form-group"><label>Uso / plagas objetivo</label><input name="uso" value="${esc(p?.uso || "")}" placeholder="Ej. Cucarachas y hormigas en cocinas" /></div>
       </div>
+      <div class="form-group"><label>¿Para qué plagas es?</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          ${GRUPOS_PLAGA_DOC.map(([k, t]) => `<label class="campo-check"><input type="checkbox" name="grupo_plaga" value="${k}"${(p?.grupos_plaga || []).includes(k) ? " checked" : ""} /> ${t}</label>`).join("")}
+        </div>
+        <div class="form-hint">En el portal, las fichas técnicas y hojas de seguridad salen ordenadas por esto.${p?.grupo_deducido && p?.grupos_plaga?.length ? " Lo marcado ahora lo dedujo el sistema por el nombre o el ingrediente; corrígelo si hace falta." : ""}</div>
+      </div>
       <div class="form-group"><label>Notas internas</label><textarea name="notas" rows="2">${esc(p?.notas || "")}</textarea></div>
       ${p ? "" : `
       <div class="form-group"><label>Ficha técnica en PDF (opcional)</label>
@@ -488,6 +499,7 @@ function formProducto(p) {
          "registro_sanitario", "categoria_toxicologica", "uso", "notas"].map((k) => [k, fd.get(k)])
       );
       cuerpo.visible_cliente = fd.get("visible_cliente") === "on";
+      cuerpo.grupo_plaga = fd.getAll("grupo_plaga").join(",");
       if (p) {
         cuerpo.activo = fd.get("activo") === "on";
         await put(`/documentos/productos/${p.id}`, cuerpo);
