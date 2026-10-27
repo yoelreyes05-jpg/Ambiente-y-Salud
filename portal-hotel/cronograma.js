@@ -70,6 +70,19 @@ async function vistaCronograma(cuerpo) {
       <button class="btn principal" id="cr-imp">🖨 Imprimir</button>`;
     $("#cr-ant").onclick = () => { CR.anio--; ir(); };
     $("#cr-sig").onclick = () => { CR.anio++; ir(); };
+    // Si la planta tiene su programa anual oficial (el documento que ASA le
+    // entrega al hotel), se muestra ese, tal cual, en vez del que se arma con
+    // el cronograma.
+    const oficial = await GET(`/cronograma/programa-anual?sitio_id=${PLANTA.id}&anio=${CR.anio}`).catch(() => null);
+    if (oficial?.programa) {
+      const prog = oficial.programa;
+      caja.innerHTML = htmlProgramaOficial(prog);
+      $$("[data-sem-anio]", caja).forEach((el) => el.addEventListener("click", () => {
+        CR.vista = "semana"; CR.semana = lunesSemanaAnio(CR.anio, Number(el.dataset.semAnio)); ir();
+      }));
+      $("#cr-imp").onclick = () => imprimirHtmlCr(`Programa anual ${prog.anio}`, htmlProgramaOficial(prog, true));
+      return;
+    }
     const filas = await traerCrono(`${CR.anio}-01-01`, `${CR.anio}-12-31`, caja);
     if (!filas) return;
     caja.innerHTML = htmlAnio(filas);
@@ -158,6 +171,56 @@ function porServicioCr(filas) {
 }
 
 // ── Año: servicio × mes, con las semanas del mes en que se hace ──────────
+// Lunes de la semana N del año (semanas ISO: la 1 es la del primer jueves)
+function lunesSemanaAnio(anio, n) {
+  const ene4 = new Date(Date.UTC(anio, 0, 4));
+  const lunes1 = new Date(ene4.getTime() - ((ene4.getUTCDay() + 6) % 7) * 86400000);
+  return new Date(lunes1.getTime() + (n - 1) * 7 * 86400000).toISOString().slice(0, 10);
+}
+
+// En papel, productos / métodos / plagas lado a lado en una sola tabla corta,
+// como el documento original, para que todo quepa en una hoja.
+function leyendaImpresa(prog) {
+  const cols = [["Nombre del producto", prog.productos || []], ["Método de aplicación", prog.metodos || []], ["Plagas tratadas", prog.plagas || []]];
+  const n = Math.max(...cols.map(([, l]) => l.length));
+  return `<table class="cr-prog-tabla cr-prog-ley">
+    <tr>${cols.map(([t]) => `<th colspan="2">${t}</th>`).join("")}</tr>
+    ${[...Array(n)].map((_, i) => `<tr>${cols.map(([, l]) => l[i] ? `<td>${l[i][0]}</td><td>${esc(l[i][1])}</td>` : "<td></td><td></td>").join("")}</tr>`).join("")}
+  </table>`;
+}
+
+// ── Programa anual oficial: áreas × 52 semanas, como el documento ────────
+function htmlProgramaOficial(prog, impresion = false) {
+  const sem = prog.semanas_por_mes || 4;
+  const total = prog.meses.length * sem;
+  const tabla = (filas) => `<table class="cr-prog-tabla">${filas.map(([n, t]) => `<tr><td class="n">${n}</td><td>${esc(t)}</td></tr>`).join("")}</table>`;
+  return `
+    <div class="tarjeta cr-prog">
+      <div class="cr-prog-cab">${prog.titulo.map((t, i) => `<div${i === 0 ? ' class="fuerte"' : ""}>${esc(t)}</div>`).join("")}</div>
+      ${impresion ? "" : `<p class="pl-nota">Programa anual ${prog.anio} tal como lo entregó ${esc(CONFIG.EMPRESA)}. En color, las semanas en que se trabaja cada área. Toca una semana para ver su calendario.</p>`}
+      <div class="pl-tabla-scroll">
+        <table class="cr-prog-matriz">
+          <thead>
+            <tr><th class="cr-prog-area" rowspan="2">Áreas</th>${prog.meses.map((m) => `<th colspan="${sem}">${esc(m)}</th>`).join("")}</tr>
+            <tr>${[...Array(total)].map((_, i) => `<th class="cr-prog-sem${impresion ? "" : " clicable"}" ${impresion ? "" : `data-sem-anio="${i + 1}"`} title="Semana ${i + 1} del año · desde el lunes ${impresion ? "" : lunesSemanaAnio(prog.anio, i + 1)}">${(i % sem) + 1}</th>`).join("")}</tr>
+          </thead>
+          <tbody>
+            ${prog.areas.map((a, r) => {
+              const si = new Set(a.semanas);
+              return `<tr class="${r % 2 ? "azul" : "verde"}"><td class="cr-prog-area">${esc(a.area)}</td>${[...Array(total)].map((_, i) =>
+                `<td class="${si.has(i + 1) ? "si" : "no"}"${impresion || !si.has(i + 1) ? "" : ` data-sem-anio="${i + 1}"`}></td>`).join("")}</tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+      ${impresion ? leyendaImpresa(prog) : `<div class="cr-prog-leyendas">
+        <div><h3>Nombre del producto</h3>${tabla(prog.productos || [])}</div>
+        <div><h3>Método de aplicación</h3>${tabla(prog.metodos || [])}</div>
+        <div><h3>Plagas tratadas</h3>${tabla(prog.plagas || [])}</div>
+      </div>`}
+    </div>`;
+}
+
 function htmlAnio(filas, impresion = false) {
   if (!filas.length) return `<div class="vacio"><span class="emoji">📅</span>No hay servicios programados en ${CR.anio}.</div>`;
   const grupos = porServicioCr(filas);
@@ -301,6 +364,19 @@ function imprimirHtmlCr(titulo, html) {
   .cr-matriz td.cr-con { background:#EAF0F8; font-weight:700; color:#24407C }
   .cr-matriz td.cr-con.ok { background:#e8f5e9; color:#2e6b32 }
   .cr-rango { font-size:9px; font-weight:400; opacity:.85 }
+  .cr-prog-cab div { font-size:11px; font-weight:700 } .cr-prog-cab { margin-bottom:8px }
+  .cr-prog-matriz { border-collapse:collapse; width:100%; font-size:7.5px; table-layout:fixed }
+  .cr-prog-matriz th, .cr-prog-matriz td { border:1px solid #333; padding:1px; text-align:center; color:#000; background:#fff }
+  .cr-prog-matriz .cr-prog-area { text-align:left; width:150px; white-space:nowrap; overflow:hidden; font-size:8px }
+  .cr-prog-matriz tr.verde td.si { background:#D8E4BC } .cr-prog-matriz tr.azul td.si { background:#DAEEF3 }
+  .cr-prog-leyendas { display:flex; gap:24px; margin-top:10px; font-size:9px } .cr-prog-leyendas h3 { font-size:10px; margin:0 0 4px }
+  .cr-prog-tabla { width:auto; border-collapse:collapse; margin:0; font-size:8px } .cr-prog-tabla td { border:1px solid #999; padding:0 5px; line-height:1.25 }
+  .cr-prog-tabla tbody, .cr-prog-matriz tbody { break-inside:auto }
+  .cr-prog-matriz td { height:7px; padding:0; line-height:1 } .cr-prog-matriz th { padding:0; font-size:7px }
+  .cr-prog-matriz .cr-prog-area { font-size:7px; padding:0 3px; line-height:1.15 }
+  .cr-prog-cab div { font-size:9px } .cr-prog-cab { margin-bottom:4px }
+  .cr-prog-ley { margin-top:6px } .cr-prog-ley th { background:#fff; color:#000; border:1px solid #999; font-size:8px; padding:1px 5px }
+  @page { size: letter landscape; margin: 8mm; }
   tr.dia td { background:#f5f7fa; font-weight:700; color:#24407C }
   td.hora { white-space:nowrap; width:140px } .sub { color:#777; font-size:10px }
   tbody { break-inside:avoid } .tarjeta { margin:0 } .vacio { padding:20px; text-align:center; color:#777 }

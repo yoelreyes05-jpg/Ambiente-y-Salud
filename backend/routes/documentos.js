@@ -150,7 +150,8 @@ function camposDocumento(b = {}) {
   if ("grupo_plaga" in b) {
     const lista = (Array.isArray(b.grupo_plaga) ? b.grupo_plaga : String(b.grupo_plaga || "").split(","))
       .map((x) => String(x).trim()).filter((x) => GRUPOS_PLAGA.includes(x));
-    out.grupo_plaga = lista.length ? GRUPOS_PLAGA.filter((g) => lista.includes(g)).join(",") : null;
+    const crudo = Array.isArray(b.grupo_plaga) ? b.grupo_plaga.join(",") : String(b.grupo_plaga || "");
+    out.grupo_plaga = lista.length ? GRUPOS_PLAGA.filter((g) => lista.includes(g)).join(",") : crudo.trim() === "otros" ? "otros" : null;
   }
   return out;
 }

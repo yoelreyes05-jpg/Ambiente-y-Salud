@@ -50,6 +50,18 @@ const DOC_VIGENCIA = {
 const DOC_MAX_MB = 15;
 // Para qué plagas es cada producto: así se ordenan en el portal del hotel.
 const GRUPOS_PLAGA_DOC = [["rastreros", "Insectos rastreros"], ["voladores", "Insectos voladores"], ["roedores", "Roedores"]];
+// Lo que se escoge en la tabla de productos. "" = que lo deduzca el sistema.
+const GRUPO_OPCIONES_DOC = [
+  ["", "Automático"],
+  ["rastreros", "Insectos rastreros"],
+  ["voladores", "Insectos voladores"],
+  ["rastreros,voladores", "Rastreros y voladores"],
+  ["roedores", "Roedores"],
+  ["otros", "Otros productos"],
+];
+const textoGrupos = (gs) => (gs || []).length
+  ? gs.map((g) => (GRUPOS_PLAGA_DOC.find(([k]) => k === g) || [, g])[1]).join(" y ")
+  : "otros productos";
 
 // De qué tipo y de qué producto es un archivo, por su nombre:
 // "FICHA_TECNICA_FENDONA.pdf" → ficha técnica de Fendona. La misma regla usa
@@ -401,10 +413,13 @@ async function docVistaProductos(cuerpo) {
           `${p.registro_agricultura ? `Agricultura: ${esc(p.registro_agricultura)}` : ""}` +
           `${p.registro_sanitario ? `<br>Salud: ${esc(p.registro_sanitario)}` : ""}` +
           `${p.categoria_toxicologica ? `<br><small class="muted">Cat. tox. ${esc(p.categoria_toxicologica)}</small>` : ""}` || "—" },
-      { key: "uso", label: "Uso / plagas", fmt: (p) => (p.grupos_plaga?.length
-          ? p.grupos_plaga.map((g) => `<span class="badge badge-cyan">${esc((GRUPOS_PLAGA_DOC.find(([k]) => k === g) || [, g])[1])}</span>`).join(" ")
-            + (p.grupo_deducido ? ` <small class="muted">(deducido)</small>` : "")
-          : `<span class="badge badge-gray">Sin clasificar</span>`) + (p.uso ? `<br><small class="muted">${esc(p.uso)}</small>` : "") },
+      { key: "grupo", label: "Grupo de plaga", fmt: (p) => {
+          const actual = p.grupo_plaga || "";
+          const sel = `<select class="prod-grupo" data-prod-grupo="${p.id}"${editar ? "" : " disabled"}>
+            ${GRUPO_OPCIONES_DOC.map(([v, t]) => `<option value="${v}"${v === actual ? " selected" : ""}>${esc(v === "" ? `Automático${p.grupo_deducido ? `: ${textoGrupos(p.grupos_plaga)}` : ""}` : t)}</option>`).join("")}
+          </select>`;
+          return sel + (p.uso ? `<br><small class="muted">${esc(p.uso)}</small>` : "");
+        } },
       { key: "docs", label: "Documentos", fmt: chipsDocs },
       { key: "acc", label: "", fmt: (p) => editar ? `
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
@@ -453,6 +468,23 @@ async function docVistaProductos(cuerpo) {
   }));
 
   $("#prod-nuevo")?.addEventListener("click", () => formProducto(null));
+  // Grupo de plaga directo en la tabla: se guarda al escogerlo y el portal
+  // agrupa las fichas y hojas según esto.
+  $$("[data-prod-grupo]").forEach((sel) => sel.addEventListener("change", async () => {
+    sel.disabled = true;
+    try {
+      const r = await put(`/documentos/productos/${sel.dataset.prodGrupo}`, { grupo_plaga: sel.value });
+      if (r && !("grupo_plaga" in r)) {
+        toast("No se guardó el grupo: falta agregar la columna grupo_plaga en Supabase (40_productos_grupo_plaga.sql).", true);
+      } else {
+        toast("Grupo guardado ✓");
+      }
+      pintarDocTab();
+    } catch (e) {
+      toast(e.message, true);
+      sel.disabled = false;
+    }
+  }));
   $("#prod-subir-varios")?.addEventListener("click", () => formVariosDocumentos({ productos, porDefecto: "ficha_tecnica" }));
   $$("[data-ver]").forEach((b) => b.addEventListener("click", () => docAbrir(b.dataset.ver)));
   $$("[data-editar]").forEach((b) => b.addEventListener("click", () => formProducto(productos.find((p) => p.id === b.dataset.editar))));
@@ -499,7 +531,7 @@ function formProducto(p) {
          "registro_sanitario", "categoria_toxicologica", "uso", "notas"].map((k) => [k, fd.get(k)])
       );
       cuerpo.visible_cliente = fd.get("visible_cliente") === "on";
-      cuerpo.grupo_plaga = fd.getAll("grupo_plaga").join(",");
+      cuerpo.grupo_plaga = fd.getAll("grupo_plaga").join(",") || (p?.grupo_plaga === "otros" ? "otros" : "");
       if (p) {
         cuerpo.activo = fd.get("activo") === "on";
         await put(`/documentos/productos/${p.id}`, cuerpo);

@@ -465,3 +465,23 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
   background:#f8fafc;border-radius:8px;padding:8px 10px}
 .doc-par .doc-tit{font-size:13.5px;font-weight:600}
 .doc-grupo-plaga{font-size:13.5px;letter-spacing:.03em;color:#fff;background:var(--azul);padding:7px 10px;border-radius:8px;margin:16px 0 4px}
+
+/* ── Programa anual oficial (como el documento de ASA) ─────────────────── */
+.cr-prog-cab{margin-bottom:8px;font-size:13px;color:var(--azul-osc)}
+.cr-prog-cab .fuerte{font-weight:700}
+.cr-prog-matriz{border-collapse:collapse;font-size:11px}
+.cr-prog-matriz th,.cr-prog-matriz td{border:1px solid #475569;text-align:center;padding:0}
+.cr-prog-matriz th{background:#fff;color:#0f172a;font-weight:700;padding:4px 2px}
+.cr-prog-matriz th.cr-prog-sem{min-width:18px;font-weight:600}
+.cr-prog-matriz th.clicable:hover{background:var(--azul);color:#fff;cursor:pointer}
+.cr-prog-matriz td{height:20px;min-width:18px}
+.cr-prog-matriz .cr-prog-area{text-align:left;white-space:nowrap;padding:2px 8px;position:sticky;left:0;z-index:1;background:#fff;font-weight:500}
+.cr-prog-matriz tr.verde td.si{background:#D8E4BC}
+.cr-prog-matriz tr.azul td.si{background:#DAEEF3}
+.cr-prog-matriz td.si[data-sem-anio]{cursor:pointer}
+.cr-prog-matriz td.si[data-sem-anio]:hover{outline:2px solid var(--azul);outline-offset:-2px}
+.cr-prog-leyendas{display:flex;flex-wrap:wrap;gap:16px 28px;margin-top:14px}
+.cr-prog-leyendas h3{font-size:13px;color:var(--azul-osc);margin:0 0 6px}
+.cr-prog-tabla{border-collapse:collapse;font-size:12.5px}
+.cr-prog-tabla td{border:1px solid var(--borde);padding:3px 8px}
+.cr-prog-tabla td.n{text-align:right;color:var(--suave);width:28px}

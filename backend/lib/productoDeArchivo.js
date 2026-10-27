@@ -47,6 +47,8 @@ const PISTAS = {
 const AMPLIO = /cipermetrin|cypermethrin|lambda|cihalotrin|cyhalothrin|deltametrin|deltamethrin|bifentrin|bifenthrin|permetrin|permethrin|fendona|\bdemand\b|k-?othrine|temprid|suspend|\btempo\b/;
 
 export function gruposPlaga(p) {
+  // "otros" = se escogió a propósito que no va en ningún grupo
+  if (String(p?.grupo_plaga || "").trim() === "otros") return { grupos: [], deducido: false };
   const marcados = String(p?.grupo_plaga || "").split(",").map((x) => x.trim()).filter((x) => GRUPOS_PLAGA.includes(x));
   if (marcados.length) return { grupos: marcados, deducido: false };
   const t = norm(`${p?.nombre_comercial} ${p?.principio_activo} ${p?.uso}`);

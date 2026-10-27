@@ -18,6 +18,9 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { exigirSitioPermitido, filtrarPorSitio, puedeVerSitio, requireRol } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const router = express.Router();
 const OFICINA = requireRol("operaciones", "comercial");
@@ -185,6 +188,34 @@ export async function leerExcel(base64) {
   }
   return { filas, errores };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /cronograma/programa-anual?sitio_id=&anio=
+//
+// El programa anual de manejo integrado de plagas que ASA le entrega al hotel
+// (áreas × 52 semanas), copiado tal cual del documento original. Vive en
+// assets/programas/<planta>-<año>.json; la planta se reconoce por su nombre.
+// Si la planta no tiene programa: { programa: null }.
+// ─────────────────────────────────────────────────────────────────────────────
+const DIR_PROGRAMAS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "assets", "programas");
+const normPrograma = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+router.get("/programa-anual", async (req, res) => {
+  const { sitio_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "Falta sitio_id" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  const anio = /^\d{4}$/.test(req.query.anio || "") ? req.query.anio : String(new Date().getFullYear());
+  const { data: sitio } = await supabase.from("asa_sitios").select("nombre").eq("id", sitio_id).maybeSingle();
+  const clave = normPrograma(sitio?.nombre);
+  let archivos = [];
+  try { archivos = fs.readdirSync(DIR_PROGRAMAS); } catch { /* sin carpeta: sin programas */ }
+  // "iberostar-joia-2026.json" sirve para "IBEROSTAR JOIA" y "Iberostar Joia Bávaro"
+  const archivo = archivos.find((f) => f.endsWith(`-${anio}.json`) && clave && clave.includes(f.slice(0, -`-${anio}.json`.length)));
+  if (!archivo) return res.json({ programa: null, anios: [] });
+  const programa = JSON.parse(fs.readFileSync(path.join(DIR_PROGRAMAS, archivo), "utf8"));
+  const base = archivo.slice(0, -`-${anio}.json`.length);
+  const anios = archivos.filter((f) => f.startsWith(base + "-")).map((f) => f.slice(base.length + 1, -5)).filter((a) => /^\d{4}$/.test(a)).sort();
+  res.json({ programa, anios });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /cronograma?sitio_id=&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
