@@ -247,14 +247,17 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
 router.put("/productos/:id", ESCRIBEN, async (req, res) => {
   const fila = { ...productoDesdeCuerpo(req.body || {}), updated_at: new Date().toISOString() };
   delete fila.grupo_plaga;
+  let grupoGuardado;
   if ("grupo_plaga" in (req.body || {})) {
-    try { await guardarGrupoProducto(req.params.id, normalizarGrupo(req.body.grupo_plaga)); } catch (e) { return fallo(res, 500, e.message); }
+    try { grupoGuardado = await guardarGrupoProducto(req.params.id, normalizarGrupo(req.body.grupo_plaga)); } catch (e) { return fallo(res, 500, e.message); }
   }
   if ("activo" in (req.body || {})) fila.activo = !!req.body.activo;
   const { data, error } = await supabase.from("asa_plaguicidas_catalogo").update(fila).eq("id", req.params.id).select().single();
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "actualizar", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
-  res.json(data);
+  // El grupo vive en la configuración: se devuelve el guardado, que es lo que
+  // compara el panel (también una copia vieja del panel) para saber si guardó.
+  res.json(grupoGuardado !== undefined ? { ...data, grupo_plaga: grupoGuardado } : data);
 });
 
 // ── Grupo de plaga de cada producto ─────────────────────────────────────────
