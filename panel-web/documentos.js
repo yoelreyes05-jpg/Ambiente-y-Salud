@@ -470,26 +470,13 @@ async function docVistaProductos(cuerpo) {
   $$("[data-prod-grupo]").forEach((sel) => sel.addEventListener("change", async () => {
     sel.disabled = true;
     try {
-      const r = await put(`/documentos/productos/${sel.dataset.prodGrupo}`, { grupo_plaga: sel.value });
-      // Supabase rechazó la columna: o no existe, o no ha recargado su lista
-      // de columnas (pasa justo después de crearla). Las dos líneas lo arreglan.
-      if (r?.aviso_grupo) {
+      // Se guarda en la configuración del sistema (no en una columna nueva)
+      const r = await put(`/documentos/productos/${sel.dataset.prodGrupo}/grupo`, { grupo_plaga: sel.value });
+      if (!r || (r.grupo_plaga || "") !== sel.value) {
         sel.disabled = false;
-        return alert(`El grupo no se guardó: Supabase todavía no reconoce la columna grupo_plaga.\n\nEn Supabase → SQL Editor pega y ejecuta estas dos líneas:\n\nalter table asa_plaguicidas_catalogo add column if not exists grupo_plaga text;\nnotify pgrst, 'reload schema';\n\nLuego vuelve a escoger el grupo.\n\n(Detalle: ${r.aviso_grupo})`);
-      }
-      // Dos cosas pueden faltar, y cada una se arregla en un lugar distinto
-      if (r && !("grupo_plaga" in r)) {
-        sel.disabled = false;
-        return alert("El grupo no se guardó: falta la columna en Supabase.\n\nEn Supabase → SQL Editor pega y ejecuta:\n\nalter table asa_plaguicidas_catalogo add column if not exists grupo_plaga text;");
-      }
-      if (r && (r.grupo_plaga || "") !== sel.value) {
-        sel.disabled = false;
-        // Qué versión tiene de verdad el servidor (la raíz de la API la dice)
         let ver = "desconocida";
         try { ver = (await fetch(`${CONFIG.API_BASE}/`, { cache: "no-store" }).then((x) => x.json())).version || ver; } catch { /* sin red */ }
-        return alert(ver === "2.0-plagas" || ver === "desconocida"
-          ? `El grupo no se guardó: el servidor (Railway) sigue con la versión vieja (${ver}). La nueva es 2.2.0 o mayor.\n\nEn Railway: abre el servicio → Deployments. Revisa que el último despliegue diga "Active" y no "Failed"/"Building", y que sea del commit más reciente de main. Si falló, abre sus logs y mándame una captura.\n\nPara comprobar: abre ${CONFIG.API_BASE} en el navegador; debe decir "version":"2.2.0".`
-          : `El grupo no se guardó aunque el servidor ya tiene la versión ${ver}.\nEl servidor respondió: ${JSON.stringify({ grupo_plaga: r.grupo_plaga ?? null })}\nMándame una captura de este mensaje.`);
+        return alert(`El grupo no se guardó.\nVersión del servidor: ${ver} (debe ser 2.3.0 o mayor; si es menor, haz "Deploy latest commit" en Railway).\nRespuesta: ${JSON.stringify(r)}\n\nMándame una captura de este mensaje.`);
       }
       toast("Grupo guardado ✓");
       pintarDocTab();

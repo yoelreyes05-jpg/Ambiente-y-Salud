@@ -221,9 +221,11 @@ router.get("/productos", async (req, res) => {
 
   const porProducto = {};
   for (const d of docs || []) (porProducto[d.producto_id] = porProducto[d.producto_id] || []).push(darForma(d, externo));
+  const grupos = await leerGruposProductos().catch(() => ({}));
 
   res.json((productos || []).map((p) => {
-    const out = { ...p, grupos_plaga: gruposPlaga(p).grupos, documentos: porProducto[p.id] || [] };
+    const grupo = grupos[p.id] ?? p.grupo_plaga ?? "";
+    const out = { ...p, grupo_plaga: grupo, grupos_plaga: gruposPlaga({ grupo_plaga: grupo }).grupos, documentos: porProducto[p.id] || [] };
     if (externo) { delete out.visible_cliente; delete out.notas; delete out.activo; }
     return out;
   }));
@@ -233,7 +235,10 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
   const b = req.body || {};
   if (!String(b.nombre_comercial || "").trim()) return fallo(res, 400, "Falta el nombre comercial.");
   const fila = productoDesdeCuerpo(b);
-  const { data, error } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").insert([f]).select().single());
+  const grupoNuevo = "grupo_plaga" in fila ? fila.grupo_plaga : null;
+  delete fila.grupo_plaga;
+  const { data, error } = await supabase.from("asa_plaguicidas_catalogo").insert([fila]).select().single();
+  if (!error && grupoNuevo) await guardarGrupoProducto(data.id, normalizarGrupo(grupoNuevo)).catch(() => {});
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "crear", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
   res.status(201).json(data);
@@ -241,26 +246,52 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
 
 router.put("/productos/:id", ESCRIBEN, async (req, res) => {
   const fila = { ...productoDesdeCuerpo(req.body || {}), updated_at: new Date().toISOString() };
+  delete fila.grupo_plaga;
+  if ("grupo_plaga" in (req.body || {})) {
+    try { await guardarGrupoProducto(req.params.id, normalizarGrupo(req.body.grupo_plaga)); } catch (e) { return fallo(res, 500, e.message); }
+  }
   if ("activo" in (req.body || {})) fila.activo = !!req.body.activo;
-  const { data, error, sinGrupo } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").update(f).eq("id", req.params.id).select().single());
+  const { data, error } = await supabase.from("asa_plaguicidas_catalogo").update(fila).eq("id", req.params.id).select().single();
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "actualizar", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
-  // Supabase todavía no reconoce la columna (no existe, o su caché de columnas
-  // no se ha recargado después de crearla)
-  res.json(sinGrupo ? { ...data, aviso_grupo: sinGrupo } : data);
+  res.json(data);
 });
 
-// Si todavía no se corrió 40_productos_grupo_plaga.sql, guardar lo demás
-// en vez de fallar por la columna grupo_plaga.
-async function sinColumnaNueva(fila, guardar) {
-  const r = await guardar(fila);
-  if (r.error && "grupo_plaga" in fila && /grupo_plaga/.test(r.error.message || "")) {
-    const { grupo_plaga: _g, ...resto } = fila;
-    // Se guarda lo demás, pero se avisa: si no, el panel cree que guardó
-    return { ...(await guardar(resto)), sinGrupo: r.error.message };
-  }
-  return r;
+// ── Grupo de plaga de cada producto ─────────────────────────────────────────
+// Se guarda en asa_config_sistema (clave "grupos_plaga_productos", valor
+// { producto_id: "rastreros,voladores" }), que ya existe: no depende de una
+// columna nueva en el catálogo. Si la columna grupo_plaga existe y tiene algo,
+// cuenta solo cuando el producto no tiene grupo en la configuración.
+const CLAVE_GRUPOS = "grupos_plaga_productos";
+async function leerGruposProductos() {
+  const { data, error } = await supabase.from("asa_config_sistema").select("valor").eq("clave", CLAVE_GRUPOS).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.valor && typeof data.valor === "object" && !Array.isArray(data.valor) ? data.valor : {};
 }
+async function guardarGrupoProducto(productoId, grupo) {
+  const mapa = await leerGruposProductos();
+  if (grupo) mapa[productoId] = grupo; else delete mapa[productoId];
+  const { error } = await supabase.from("asa_config_sistema")
+    .upsert([{ clave: CLAVE_GRUPOS, valor: mapa, updated_at: new Date().toISOString() }], { onConflict: "clave" });
+  if (error) throw new Error(error.message);
+  return mapa[productoId] || "";
+}
+// "rastreros,voladores" ordenado; "otros" a propósito; "" = sin grupo
+function normalizarGrupo(valor) {
+  const crudo = Array.isArray(valor) ? valor.join(",") : String(valor || "");
+  if (crudo.trim() === "otros") return "otros";
+  const lista = crudo.split(",").map((x) => x.trim());
+  return GRUPOS_PLAGA.filter((g) => lista.includes(g)).join(",");
+}
+
+// PUT /documentos/productos/:id/grupo  { grupo_plaga }
+router.put("/productos/:id/grupo", ESCRIBEN, async (req, res) => {
+  try {
+    const grupo = await guardarGrupoProducto(req.params.id, normalizarGrupo(req.body?.grupo_plaga));
+    logAccion(req, { accion: "actualizar", modulo: "documentos", registroId: req.params.id, descripcion: `Grupo de plaga: ${grupo || "sin grupo"}` });
+    res.json({ id: req.params.id, grupo_plaga: grupo, grupos_plaga: gruposPlaga({ grupo_plaga: grupo }).grupos });
+  } catch (e) { fallo(res, 500, e.message); }
+});
 
 function productoDesdeCuerpo(b) {
   const out = {};
