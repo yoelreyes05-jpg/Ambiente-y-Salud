@@ -1,6 +1,6 @@
 {
   "name": "asa-backend",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Backend API - Ambiente y Salud RD (ASA SRL). Control de plagas en clientes hoteleros: puntos de control con QR, inspecciones, portal del hotel.",
   "type": "module",
   "scripts": {
