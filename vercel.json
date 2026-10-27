@@ -6,35 +6,92 @@
   "outputDirectory": ".",
   "cleanUrls": false,
   "redirects": [
-    { "source": "/admin", "destination": "/admin/", "permanent": false },
-    { "source": "/hotel", "destination": "/hotel/", "permanent": false },
-    { "source": "/tecnico", "destination": "/tecnico/", "permanent": false }
+    {
+      "source": "/admin",
+      "destination": "/admin/",
+      "permanent": false
+    },
+    {
+      "source": "/hotel",
+      "destination": "/hotel/",
+      "permanent": false
+    },
+    {
+      "source": "/tecnico",
+      "destination": "/tecnico/",
+      "permanent": false
+    }
   ],
   "rewrites": [
-    { "source": "/", "destination": "/inicio/index.html" },
-    { "source": "/admin/", "destination": "/panel-web/index.html" },
-    { "source": "/admin/:ruta*", "destination": "/panel-web/:ruta*" },
-    { "source": "/hotel/", "destination": "/portal-hotel/index.html" },
-    { "source": "/hotel/:ruta*", "destination": "/portal-hotel/:ruta*" },
-    { "source": "/tecnico/", "destination": "/app-tecnico/index.html" },
-    { "source": "/tecnico/:ruta*", "destination": "/app-tecnico/:ruta*" }
+    {
+      "source": "/",
+      "destination": "/inicio/index.html"
+    },
+    {
+      "source": "/admin/",
+      "destination": "/panel-web/index.html"
+    },
+    {
+      "source": "/admin/:ruta*",
+      "destination": "/panel-web/:ruta*"
+    },
+    {
+      "source": "/hotel/",
+      "destination": "/portal-hotel/index.html"
+    },
+    {
+      "source": "/hotel/:ruta*",
+      "destination": "/portal-hotel/:ruta*"
+    },
+    {
+      "source": "/tecnico/",
+      "destination": "/app-tecnico/index.html"
+    },
+    {
+      "source": "/tecnico/:ruta*",
+      "destination": "/app-tecnico/:ruta*"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
       ]
     },
     {
       "source": "/(.*)config.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, must-revalidate"
+        }
+      ]
     },
     {
       "source": "/tecnico/sw.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "claude/verificacion-ahora-9slgm1": false
+    }
+  }
 }
