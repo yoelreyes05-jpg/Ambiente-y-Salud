@@ -43,6 +43,11 @@ const rangoSemanaMes = (a, m, n) => {
 async function vistaCronograma(cuerpo) {
   const hoy = fechaRDp(new Date());
   CR.anio ??= Number(hoy.slice(0, 4));
+  // La primera vez en una planta con programa anual oficial, se abre en Año
+  if (CR.plantaVista !== PLANTA.id) {
+    CR.plantaVista = PLANTA.id;
+    CR.vista = (await programaOficialCr(CR.anio)) ? "anio" : "mes";
+  }
   CR.mes ??= Number(hoy.slice(5, 7));
   CR.semana ??= lunesP(hoy);
   CR.desde ??= hoy;
@@ -73,9 +78,8 @@ async function vistaCronograma(cuerpo) {
     // Si la planta tiene su programa anual oficial (el documento que ASA le
     // entrega al hotel), se muestra ese, tal cual, en vez del que se arma con
     // el cronograma.
-    const oficial = await GET(`/cronograma/programa-anual?sitio_id=${PLANTA.id}&anio=${CR.anio}`).catch(() => null);
-    if (oficial?.programa) {
-      const prog = oficial.programa;
+    const prog = await programaOficialCr(CR.anio);
+    if (prog) {
       caja.innerHTML = htmlProgramaOficial(prog);
       $$("[data-sem-anio]", caja).forEach((el) => el.addEventListener("click", () => {
         CR.vista = "semana"; CR.semana = lunesSemanaAnio(CR.anio, Number(el.dataset.semAnio)); ir();
@@ -171,6 +175,27 @@ function porServicioCr(filas) {
 }
 
 // ── Año: servicio × mes, con las semanas del mes en que se hace ──────────
+// El programa anual oficial de la planta. Primero lo pide al servidor; si el
+// servidor no lo tiene (o todavía no se ha actualizado), lo toma de la copia
+// que viaja con el portal (programas/indice.json).
+const PROGRAMAS_CR = new Map();
+async function programaOficialCr(anio) {
+  const k = `${PLANTA.id}|${anio}`;
+  if (PROGRAMAS_CR.has(k)) return PROGRAMAS_CR.get(k);
+  let prog = null;
+  try { prog = (await GET(`/cronograma/programa-anual?sitio_id=${PLANTA.id}&anio=${anio}`))?.programa || null; } catch { /* abajo */ }
+  if (!prog) {
+    try {
+      const clave = String(PLANTA.nombre || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-");
+      const ind = await (await fetch("programas/indice.json", { cache: "no-cache" })).json();
+      const e = (ind.programas || []).find((x) => Number(x.anio) === Number(anio) && clave.includes(x.clave));
+      if (e) prog = await (await fetch(`programas/${e.archivo}`, { cache: "no-cache" })).json();
+    } catch { /* sin programa */ }
+  }
+  PROGRAMAS_CR.set(k, prog);
+  return prog;
+}
+
 // Lunes de la semana N del año (semanas ISO: la 1 es la del primer jueves)
 function lunesSemanaAnio(anio, n) {
   const ene4 = new Date(Date.UTC(anio, 0, 4));

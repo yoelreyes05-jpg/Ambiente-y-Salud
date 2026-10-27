@@ -1,0 +1,6 @@
+{
+  "_nota": "Programas anuales oficiales por planta. La clave es parte del nombre de la planta (sin acentos, en minúscula, con guiones). Copia de backend/assets/programas.",
+  "programas": [
+    { "clave": "iberostar-joia", "anio": 2026, "archivo": "iberostar-joia-2026.json" }
+  ]
+}

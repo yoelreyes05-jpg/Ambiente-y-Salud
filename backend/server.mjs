@@ -79,6 +79,8 @@ import cronogramaRouter from "./routes/cronograma.js";
 import rastreoRouter from "./routes/rastreo.js";
 import chatRouter from "./routes/chat.js";
 import puntosGpsRouter from "./routes/puntosGps.js";
+import { readFileSync } from "fs";
+const VERSION_API = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 // ── Endpoints públicos (los únicos sin token) ───────────────────────────────
 app.get("/", (req, res) => {
@@ -86,7 +88,8 @@ app.get("/", (req, res) => {
     ok: true,
     sistema: "Ambiente y Salud RD (ASA SRL) - API",
     prefijo_tablas: "asa_",
-    version: "2.0-plagas",
+    // La de package.json: para saber si Railway ya desplegó lo último
+    version: VERSION_API,
   });
 });
 app.get("/salud", (req, res) => res.json({ ok: true, hora: new Date().toISOString() }));

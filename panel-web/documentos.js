@@ -474,11 +474,16 @@ async function docVistaProductos(cuerpo) {
     sel.disabled = true;
     try {
       const r = await put(`/documentos/productos/${sel.dataset.prodGrupo}`, { grupo_plaga: sel.value });
+      // Dos cosas pueden faltar, y cada una se arregla en un lugar distinto
       if (r && !("grupo_plaga" in r)) {
-        toast("No se guardó el grupo: falta agregar la columna grupo_plaga en Supabase (40_productos_grupo_plaga.sql).", true);
-      } else {
-        toast("Grupo guardado ✓");
+        sel.disabled = false;
+        return alert("El grupo no se guardó: falta la columna en Supabase.\n\nEn Supabase → SQL Editor pega y ejecuta:\n\nalter table asa_plaguicidas_catalogo add column if not exists grupo_plaga text;");
       }
+      if (r && (r.grupo_plaga || "") !== sel.value) {
+        sel.disabled = false;
+        return alert("El grupo no se guardó: el servidor (Railway) todavía no tiene la última versión.\n\nEn Railway abre el servicio → Deployments → \"Deploy latest commit\" y vuelve a intentarlo.");
+      }
+      toast("Grupo guardado ✓");
       pintarDocTab();
     } catch (e) {
       toast(e.message, true);
