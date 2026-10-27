@@ -481,7 +481,12 @@ async function docVistaProductos(cuerpo) {
       }
       if (r && (r.grupo_plaga || "") !== sel.value) {
         sel.disabled = false;
-        return alert("El grupo no se guardó: el servidor (Railway) todavía no tiene la última versión.\n\nEn Railway abre el servicio → Deployments → \"Deploy latest commit\" y vuelve a intentarlo.");
+        // Qué versión tiene de verdad el servidor (la raíz de la API la dice)
+        let ver = "desconocida";
+        try { ver = (await fetch(`${CONFIG.API_BASE}/`, { cache: "no-store" }).then((x) => x.json())).version || ver; } catch { /* sin red */ }
+        return alert(ver === "2.0-plagas" || ver === "desconocida"
+          ? `El grupo no se guardó: el servidor (Railway) sigue con la versión vieja (${ver}). La nueva es 2.2.0 o mayor.\n\nEn Railway: abre el servicio → Deployments. Revisa que el último despliegue diga "Active" y no "Failed"/"Building", y que sea del commit más reciente de main. Si falló, abre sus logs y mándame una captura.\n\nPara comprobar: abre ${CONFIG.API_BASE} en el navegador; debe decir "version":"2.2.0".`
+          : `El grupo no se guardó aunque el servidor ya tiene la versión ${ver}.\nEl servidor respondió: ${JSON.stringify({ grupo_plaga: r.grupo_plaga ?? null })}\nMándame una captura de este mensaje.`);
       }
       toast("Grupo guardado ✓");
       pintarDocTab();
