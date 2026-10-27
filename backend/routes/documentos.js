@@ -243,10 +243,12 @@ router.post("/productos", ESCRIBEN, async (req, res) => {
 router.put("/productos/:id", ESCRIBEN, async (req, res) => {
   const fila = { ...productoDesdeCuerpo(req.body || {}), updated_at: new Date().toISOString() };
   if ("activo" in (req.body || {})) fila.activo = !!req.body.activo;
-  const { data, error } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").update(f).eq("id", req.params.id).select().single());
+  const { data, error, sinGrupo } = await sinColumnaNueva(fila, (f) => supabase.from("asa_plaguicidas_catalogo").update(f).eq("id", req.params.id).select().single());
   if (error) return fallo(res, 500, error.message);
   logAccion(req, { accion: "actualizar", modulo: "documentos", registroId: data.id, descripcion: `Producto ${data.nombre_comercial}` });
-  res.json(data);
+  // Supabase todavía no reconoce la columna (no existe, o su caché de columnas
+  // no se ha recargado después de crearla)
+  res.json(sinGrupo ? { ...data, aviso_grupo: sinGrupo } : data);
 });
 
 // Si todavía no se corrió 40_productos_grupo_plaga.sql, guardar lo demás
@@ -255,7 +257,8 @@ async function sinColumnaNueva(fila, guardar) {
   const r = await guardar(fila);
   if (r.error && "grupo_plaga" in fila && /grupo_plaga/.test(r.error.message || "")) {
     const { grupo_plaga: _g, ...resto } = fila;
-    return guardar(resto);
+    // Se guarda lo demás, pero se avisa: si no, el panel cree que guardó
+    return { ...(await guardar(resto)), sinGrupo: r.error.message };
   }
   return r;
 }

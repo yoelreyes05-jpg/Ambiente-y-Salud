@@ -474,6 +474,12 @@ async function docVistaProductos(cuerpo) {
     sel.disabled = true;
     try {
       const r = await put(`/documentos/productos/${sel.dataset.prodGrupo}`, { grupo_plaga: sel.value });
+      // Supabase rechazó la columna: o no existe, o no ha recargado su lista
+      // de columnas (pasa justo después de crearla). Las dos líneas lo arreglan.
+      if (r?.aviso_grupo) {
+        sel.disabled = false;
+        return alert(`El grupo no se guardó: Supabase todavía no reconoce la columna grupo_plaga.\n\nEn Supabase → SQL Editor pega y ejecuta estas dos líneas:\n\nalter table asa_plaguicidas_catalogo add column if not exists grupo_plaga text;\nnotify pgrst, 'reload schema';\n\nLuego vuelve a escoger el grupo.\n\n(Detalle: ${r.aviso_grupo})`);
+      }
       // Dos cosas pueden faltar, y cada una se arregla en un lugar distinto
       if (r && !("grupo_plaga" in r)) {
         sel.disabled = false;
