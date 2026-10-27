@@ -1611,9 +1611,12 @@ async function vistaDocumentos(cuerpo) {
     ${conDocs.length ? `
       <div class="tarjeta">
         <h2>FICHAS TÉCNICAS Y HOJAS DE SEGURIDAD · ${conDocs.length} producto${conDocs.length === 1 ? "" : "s"}</h2>
-        <p class="doc-sub" style="margin:0 0 6px">Por tipo de plaga. De cada producto, la ficha técnica y, debajo, su hoja de seguridad.</p>
+        <p class="doc-sub" style="margin:0 0 6px">De cada producto que utilizamos: la ficha técnica y, debajo, su hoja de seguridad.</p>
         ${conDocs.length > 6 ? `<input type="search" class="doc-buscar" id="doc-buscar" placeholder="Buscar producto o ingrediente activo…" />` : ""}
-        ${GRUPOS_PLAGA_P.map(([g, titulo]) => {
+        ${!conDocs.some((x) => (x.p.grupos_plaga || []).length)
+          // Mientras no se haya escogido el grupo de ningún producto: una sola lista
+          ? `<div class="doc-productos">${conDocs.map(bloqueProducto).join("")}</div>`
+          : GRUPOS_PLAGA_P.map(([g, titulo]) => {
           // Un producto para rastreros y voladores sale en las dos secciones
           const del = conDocs.filter((x) => g === "otros" ? !(x.p.grupos_plaga || []).length : (x.p.grupos_plaga || []).includes(g));
           return del.length ? `

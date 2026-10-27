@@ -223,8 +223,7 @@ router.get("/productos", async (req, res) => {
   for (const d of docs || []) (porProducto[d.producto_id] = porProducto[d.producto_id] || []).push(darForma(d, externo));
 
   res.json((productos || []).map((p) => {
-    const { grupos, deducido } = gruposPlaga(p);
-    const out = { ...p, grupos_plaga: grupos, grupo_deducido: deducido, documentos: porProducto[p.id] || [] };
+    const out = { ...p, grupos_plaga: gruposPlaga(p).grupos, documentos: porProducto[p.id] || [] };
     if (externo) { delete out.visible_cliente; delete out.notas; delete out.activo; }
     return out;
   }));

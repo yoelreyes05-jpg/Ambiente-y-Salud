@@ -50,18 +50,15 @@ const DOC_VIGENCIA = {
 const DOC_MAX_MB = 15;
 // Para qué plagas es cada producto: así se ordenan en el portal del hotel.
 const GRUPOS_PLAGA_DOC = [["rastreros", "Insectos rastreros"], ["voladores", "Insectos voladores"], ["roedores", "Roedores"]];
-// Lo que se escoge en la tabla de productos. "" = que lo deduzca el sistema.
+// Lo que se escoge en la tabla de productos. Solo cuenta lo que se escoge aquí.
 const GRUPO_OPCIONES_DOC = [
-  ["", "Automático"],
+  ["", "Sin grupo"],
   ["rastreros", "Insectos rastreros"],
   ["voladores", "Insectos voladores"],
   ["rastreros,voladores", "Rastreros y voladores"],
   ["roedores", "Roedores"],
   ["otros", "Otros productos"],
 ];
-const textoGrupos = (gs) => (gs || []).length
-  ? gs.map((g) => (GRUPOS_PLAGA_DOC.find(([k]) => k === g) || [, g])[1]).join(" y ")
-  : "otros productos";
 
 // De qué tipo y de qué producto es un archivo, por su nombre:
 // "FICHA_TECNICA_FENDONA.pdf" → ficha técnica de Fendona. La misma regla usa
@@ -416,7 +413,7 @@ async function docVistaProductos(cuerpo) {
       { key: "grupo", label: "Grupo de plaga", fmt: (p) => {
           const actual = p.grupo_plaga || "";
           const sel = `<select class="prod-grupo" data-prod-grupo="${p.id}"${editar ? "" : " disabled"}>
-            ${GRUPO_OPCIONES_DOC.map(([v, t]) => `<option value="${v}"${v === actual ? " selected" : ""}>${esc(v === "" ? `Automático${p.grupo_deducido ? `: ${textoGrupos(p.grupos_plaga)}` : ""}` : t)}</option>`).join("")}
+            ${GRUPO_OPCIONES_DOC.map(([v, t]) => `<option value="${v}"${v === actual ? " selected" : ""}>${esc(t)}</option>`).join("")}
           </select>`;
           return sel + (p.uso ? `<br><small class="muted">${esc(p.uso)}</small>` : "");
         } },
@@ -531,7 +528,7 @@ function formProducto(p) {
         <div style="display:flex;gap:16px;flex-wrap:wrap">
           ${GRUPOS_PLAGA_DOC.map(([k, t]) => `<label class="campo-check"><input type="checkbox" name="grupo_plaga" value="${k}"${(p?.grupos_plaga || []).includes(k) ? " checked" : ""} /> ${t}</label>`).join("")}
         </div>
-        <div class="form-hint">En el portal, las fichas técnicas y hojas de seguridad salen ordenadas por esto.${p?.grupo_deducido && p?.grupos_plaga?.length ? " Lo marcado ahora lo dedujo el sistema por el nombre o el ingrediente; corrígelo si hace falta." : ""}</div>
+        <div class="form-hint">En el portal, las fichas técnicas y hojas de seguridad salen agrupadas según lo que marques aquí.</div>
       </div>
       <div class="form-group"><label>Notas internas</label><textarea name="notas" rows="2">${esc(p?.notas || "")}</textarea></div>
       ${p ? "" : `
