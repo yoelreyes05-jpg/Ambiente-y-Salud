@@ -825,3 +825,13 @@ tr.sem-fila-amarillo{background:#fefce8}
 .rt-tec.rt-sin-gps{border-color:#fdba74;background:#fff7ed;opacity:1;color:#0f172a}
 .rt-tec .rt-motivo{color:#c2410c;font-weight:600}
 .rt-marca-hueca{background:#fff !important;border:3px solid #ea580c}
+
+/* Interruptor "En el cotejo" (Estrategias) */
+.cotejo-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.cotejo-switch input{position:absolute;opacity:0;width:0;height:0}
+.cotejo-pista{width:38px;height:22px;border-radius:12px;background:#cbd5e1;position:relative;transition:background .15s;flex:none}
+.cotejo-pista::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+.cotejo-switch input:checked + .cotejo-pista{background:#4A7D4D}
+.cotejo-switch input:checked + .cotejo-pista::after{left:19px}
+.cotejo-switch input:disabled + .cotejo-pista{opacity:.6}
+.cotejo-txt{font-weight:600;color:#475569;min-width:20px}

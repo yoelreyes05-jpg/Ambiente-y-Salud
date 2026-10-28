@@ -11,6 +11,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
+import { estrategiasCotejo } from "../lib/cotejo.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
 import { datosAgrupacion, normalizarAgrupacion, pisoDeNumero } from "../lib/agrupacion.js";
@@ -589,6 +590,67 @@ router.delete("/etiquetas/:token", requireRol("operaciones"), async (req, res) =
 // Con UNA letra se buscan los que EMPIEZAN con ella ("c" no puede devolver
 // medio hotel); desde dos letras, los que la contienen.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /puntos/cotejo?sitio_id=
+//
+// Los puntos del hotel que van en el cotejo de fumigación de la app: los de
+// una estrategia marcada "En el cotejo" en el panel (la del punto, o si no
+// tiene, la de su tipo). Con la estrategia, el área y si ya se hizo hoy.
+// Va antes de /:id para que "cotejo" no se lea como un id.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/cotejo", async (req, res) => {
+  const { sitio_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  try {
+    const ids = await estrategiasCotejo();
+    if (!ids.length) return res.json({ estrategias: [], puntos: [], plagas: [] });
+    const [{ data: estr }, { data: tpe }, { data: plagas }] = await Promise.all([
+      supabase.from("asa_estrategias").select("id, nombre").in("id", ids).eq("activo", true),
+      supabase.from("asa_tipo_punto_estrategias").select("tipo_punto_id, estrategia_id, orden").in("estrategia_id", ids).order("orden"),
+      supabase.from("asa_plagas").select("id, nombre, icono, orden").eq("activo", true).order("orden"),
+    ]);
+    const nombreEstr = new Map((estr || []).map((e) => [String(e.id), e.nombre]));
+    const estrDeTipo = new Map();
+    for (const x of tpe || []) if (nombreEstr.has(String(x.estrategia_id)) && !estrDeTipo.has(x.tipo_punto_id)) estrDeTipo.set(x.tipo_punto_id, String(x.estrategia_id));
+
+    const puntos = await traerTodo(() => supabase.from("asa_puntos_control")
+      .select("id, codigo_visible, nombre, numero_habitacion, estrategia_id, tipo_punto_id, area_id, asa_areas(nombre, orden), asa_tipos_punto(nombre, icono)")
+      .eq("sitio_id", sitio_id).eq("activo", true).order("codigo_visible").order("id"));
+    const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+    const enLista = [];
+    for (const p of puntos) {
+      const eid = p.estrategia_id ? (nombreEstr.has(String(p.estrategia_id)) ? String(p.estrategia_id) : null) : estrDeTipo.get(p.tipo_punto_id);
+      if (!eid) continue;
+      enLista.push({
+        id: p.id, codigo: p.codigo_visible,
+        nombre: p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre || p.asa_tipos_punto?.nombre || p.codigo_visible,
+        tipo: p.asa_tipos_punto?.nombre || null, icono: p.asa_tipos_punto?.icono || null,
+        area: p.asa_areas?.nombre || "Sin área", area_orden: p.asa_areas?.orden ?? 0,
+        estrategia_id: eid, estrategia: nombreEstr.get(eid),
+      });
+    }
+    // Lo que ya se hizo hoy, para que no se marque dos veces
+    const hechos = new Map();
+    for (let i = 0; i < enLista.length; i += 300) {
+      const { data } = await supabase.from("asa_inspecciones").select("punto_id, fecha")
+        .in("punto_id", enLista.slice(i, i + 300).map((p) => p.id)).eq("fecha_local", hoy).is("motivo_no_realizado", null);
+      for (const x of data || []) if (!hechos.has(x.punto_id) || x.fecha > hechos.get(x.punto_id)) hechos.set(x.punto_id, x.fecha);
+    }
+    for (const p of enLista) p.hecho_hoy = hechos.get(p.id) || null;
+    enLista.sort((a, b) => String(a.estrategia).localeCompare(String(b.estrategia), "es") || a.area_orden - b.area_orden
+      || a.area.localeCompare(b.area, "es") || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
+    const usadas = [...new Set(enLista.map((p) => p.estrategia_id))];
+    res.json({
+      estrategias: usadas.map((id) => ({ id, nombre: nombreEstr.get(id), total: enLista.filter((p) => p.estrategia_id === id).length })),
+      puntos: enLista,
+      plagas: plagas || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
+  }
+});
+
 router.get("/buscar", async (req, res) => {
   const termino = (req.query.q || "").trim();
   if (!termino) return res.json([]);
@@ -2391,4 +2453,4 @@ export default router;
 
 // Exportadas para scripts/probar-importacion.mjs (prueba del parser con los
 // Excel reales de ASA, sin tocar la base de datos).
-export { leerExcel, emparejarTipo, recortarPrefijo, normalizar, valor, normalizarFrecuencia, siglas };
+export { preguntasDelPunto, leerExcel, emparejarTipo, recortarPrefijo, normalizar, valor, normalizarFrecuencia, siglas };

@@ -17,6 +17,8 @@ import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_RE
 import { datosAgrupacion } from "../lib/agrupacion.js";
 import { sitiosDelTecnico } from "../lib/sitiosTecnico.js";
 import { unificarPlaga } from "../lib/plagasUnificadas.js";
+import { respuestasCotejo, nivelCotejo } from "../lib/cotejo.js";
+import { preguntasDelPunto } from "./puntos.js";
 const router = express.Router();
 
 const hoyRD = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -666,8 +668,36 @@ const MOTIVOS_NO_REALIZADO = [
 ];
 
 async function registrarInspeccion(req, cuerpo) {
-  const { punto_id, respuestas = [], capturas = [], clave_local: _omit, ...resto } = cuerpo;
+  let { punto_id, respuestas = [], capturas = [], clave_local: _omit, cotejo, ...resto } = cuerpo;
   if (!punto_id) return { error: true, codigo: 400, mensaje: "punto_id es requerido" };
+
+  // ── Cotejo de fumigación ──────────────────────────────────────────────────
+  // El técnico solo marcó la casilla (y, si hubo, la plaga y cuántas). Las
+  // preguntas de la estrategia del punto se contestan aquí: sin incidencia, o
+  // con la plaga encontrada. Así el servicio queda igual de completo que uno
+  // hecho con el formulario, y sale igual en Historial y en el PDF.
+  if (cotejo) {
+    const { data: pc } = await supabase.from("asa_puntos_control")
+      .select("id, estrategia_id, tipo_punto_id").eq("id", punto_id).maybeSingle();
+    const conCant = (capturas || []).filter((c) => c?.plaga_id && Number(c.cantidad) > 0);
+    let plagas = [];
+    if (conCant.length) {
+      const { data: cat } = await supabase.from("asa_plagas").select("id, nombre").in("id", conCant.map((c) => c.plaga_id));
+      const nom = new Map((cat || []).map((x) => [String(x.id), x.nombre]));
+      plagas = conCant.map((c) => ({ nombre: unificarPlaga({ nombre: nom.get(String(c.plaga_id)) || "Plaga" }).nombre, cantidad: Number(c.cantidad) }));
+    }
+    const hay = plagas.length > 0;
+    const total = plagas.reduce((a, p) => a + p.cantidad, 0);
+    if (!respuestas.length && pc) respuestas = respuestasCotejo(await preguntasDelPunto(pc), plagas);
+    capturas = conCant;
+    resto.nivel_actividad = nivelCotejo(total, hay);
+    if (!resto.estado_punto) {
+      const est = await leerEstadosPunto();
+      resto.estado_punto = hay && est.some((e) => e.codigo === "actividad") ? "actividad" : (est.find((e) => !e.requiere_motivo)?.codigo || "ok");
+    }
+    resto.metodo_acceso = "manual";
+    resto.notas = [resto.notas, hay ? `Cotejo de fumigación · ${plagas.map((p) => `${p.nombre}: ${p.cantidad}`).join(", ")}` : "Cotejo de fumigación · sin incidencia"].filter(Boolean).join(" · ");
+  }
 
   // ── Estado del punto ──────────────────────────────────────────────────────
   // La lista de estados ya no esta clavada aqui ni en un CHECK de la base: vive

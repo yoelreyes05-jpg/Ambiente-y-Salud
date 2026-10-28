@@ -81,6 +81,8 @@ async function viewEstrategias(content) {
       <p class="text-muted">
         Una estrategia agrupa las preguntas que el técnico responde en campo.
         Se define una vez y se reutiliza en cualquier complejo hotelero.
+        Con <strong>“En el cotejo”</strong> en Sí, sus puntos (offices, carritos, registros…) le salen al
+        técnico en una lista para marcarlos con una casilla al hacerlos; las preguntas se contestan solas.
       </p>
       <div id="estrategias-tabla"><div class="center-msg">Cargando…</div></div>
     </div>`;
@@ -93,12 +95,36 @@ async function viewEstrategias(content) {
         { key: "descripcion", label: "Descripción", fmt: (e) => esc(e.descripcion || "—") },
         { key: "es_plantilla", label: "Reutilizable", fmt: (e) => (e.es_plantilla ? "Sí" : "No") },
         { key: "preguntas_total", label: "Preguntas", fmt: (e) => e.preguntas_total ?? e.preguntas?.length ?? "—" },
+        // Sus puntos le salen al técnico en el cotejo de fumigación (casilla)
+        { key: "en_cotejo", label: "En el cotejo", fmt: (e) => `
+          <label class="cotejo-switch" data-cotejo="${esc(e.id)}" title="Los puntos con esta estrategia salen en el cotejo de la app del técnico">
+            <input type="checkbox"${e.en_cotejo ? " checked" : ""} /><span class="cotejo-pista"></span>
+            <span class="cotejo-txt">${e.en_cotejo ? "Sí" : "No"}</span>
+          </label>` },
       ],
       lista,
       "Todavía no hay estrategias. Empieza por la plantilla base."
     );
     $("#estrategias-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
-      tr.addEventListener("click", () => abrirEstrategia(tr.dataset.id, cargar))
+      tr.addEventListener("click", (ev) => {
+        if (ev.target.closest("[data-cotejo]")) return;   // el interruptor no abre la estrategia
+        abrirEstrategia(tr.dataset.id, cargar);
+      })
+    );
+    $("#estrategias-tabla").querySelectorAll("[data-cotejo] input").forEach((chk) =>
+      chk.addEventListener("change", async () => {
+        const caja = chk.closest("[data-cotejo]");
+        chk.disabled = true;
+        try {
+          const r = await put(`/estrategias/${caja.dataset.cotejo}/cotejo`, { en_cotejo: chk.checked });
+          chk.checked = !!r.en_cotejo;
+          caja.querySelector(".cotejo-txt").textContent = r.en_cotejo ? "Sí" : "No";
+          toast(r.en_cotejo ? "Sus puntos ya salen en el cotejo del técnico ✓" : "Sacada del cotejo");
+        } catch (e) {
+          chk.checked = !chk.checked;
+          toast(e.message, true);
+        } finally { chk.disabled = false; }
+      })
     );
   }
   await cargar();

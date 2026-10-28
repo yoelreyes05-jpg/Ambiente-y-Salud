@@ -7,6 +7,7 @@ import express from "express";
 import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol } from "../middleware/auth.js";
+import { estrategiasCotejo, marcarEstrategiaCotejo } from "../lib/cotejo.js";
 
 const router = express.Router();
 
@@ -32,7 +33,20 @@ router.get("/", async (req, res) => {
   const conteo = {};
   for (const p of preguntas || []) conteo[p.estrategia_id] = (conteo[p.estrategia_id] || 0) + 1;
 
-  res.json((data || []).map((e) => ({ ...e, preguntas_total: conteo[e.id] || 0 })));
+  const cotejo = new Set(await estrategiasCotejo().catch(() => []));
+  res.json((data || []).map((e) => ({ ...e, preguntas_total: conteo[e.id] || 0, en_cotejo: cotejo.has(String(e.id)) })));
+});
+
+// PUT /estrategias/:id/cotejo { en_cotejo } — sus puntos salen (o no) en el
+// cotejo de fumigación de la app del técnico. Va antes de /:id a propósito.
+router.put("/:id/cotejo", requireRol("operaciones", "comercial"), async (req, res) => {
+  try {
+    const en = await marcarEstrategiaCotejo(req.params.id, !!req.body?.en_cotejo);
+    logAccion(req, { accion: "actualizar", modulo: "estrategias", registroId: req.params.id, descripcion: `En el cotejo: ${en ? "sí" : "no"}` });
+    res.json({ id: req.params.id, en_cotejo: en });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
