@@ -222,7 +222,7 @@ function htmlProgramaOficial(prog, impresion = false) {
   return `
     <div class="tarjeta cr-prog">
       <div class="cr-prog-cab">${prog.titulo.map((t, i) => `<div${i === 0 ? ' class="fuerte"' : ""}>${esc(t)}</div>`).join("")}</div>
-      ${impresion ? "" : `<p class="pl-nota">Programa anual ${prog.anio} tal como lo entregó ${esc(CONFIG.EMPRESA)}. En color, las semanas en que se trabaja cada área. Toca una semana para ver su calendario.</p>`}
+      ${impresion ? "" : `<p class="pl-nota">Programa anual ${prog.anio}</p>`}
       <div class="pl-tabla-scroll">
         <table class="cr-prog-matriz">
           <thead>
