@@ -160,13 +160,11 @@ async function htmlUnaArea(area, recientes, proximos) {
   return `
     <div class="tarjeta">
       <div class="pl-cab">
-        <h2>${fumig ? "🧪 Última fumigación" : "🕘 Último servicio"} · ${esc(area.nombre)}</h2>
+        <h2>${fumig ? "🧪 Última aplicación" : "🕘 Último servicio"} · ${esc(area.nombre)}</h2>
         ${delDia.length ? `<button class="btn principal" id="ar-evidencias">🖨 Imprimir con evidencias</button>` : ""}
       </div>
       ${ultima ? `
-        <p class="pl-nota">${esc(fecha(String(ultima.fecha_local || ultima.fecha).slice(0, 10)))} · ${delDia.length} ${delDia.length === 1 ? "registro" : "registros"} del técnico.
-          ${fumig ? "" : "No hay un servicio marcado como fumigación o aplicación en esta área; se muestra el último servicio."}
-          Toca uno para ver lo que hizo, las preguntas que verificó y sus fotos.</p>
+        <p class="pl-nota">${esc(fecha(String(ultima.fecha_local || ultima.fecha).slice(0, 10)))} · ${delDia.length} ${delDia.length === 1 ? "registro" : "registros"} del técnico.</p>
         ${delDia.map((i) => `
           <div class="registro clicable" data-insp="${esc(i.id)}">
             <div class="cab">
@@ -197,7 +195,7 @@ function htmlListaCrono(filas) {
       <div class="cab">
         <div>
           <div class="punto">${esc(nombreServicioCr(f))}
-            ${esFumigacionCrono(f) ? `<span class="marca alerta">fumigación</span>` : ""}
+            ${esFumigacionCrono(f) ? `<span class="marca alerta">aplicación</span>` : ""}
             ${f.estado === "reprogramado" ? `<span class="marca neutra">reprogramado</span>` : ""}</div>
           ${detalleServicioCr(f) ? `<div class="meta">${esc(detalleServicioCr(f))}</div>` : ""}
         </div>
@@ -216,11 +214,11 @@ function htmlTodasLasAreas(areas, recientes, proximos) {
   const dia = (i) => (i ? fecha(String(i.fecha_local || i.fecha).slice(0, 10)) : "—");
   return `
     <details class="tarjeta ar-plegable">
-      <summary><h2>🗂 Áreas del hotel (${areas.length}) · último servicio y próxima fumigación</h2></summary>
-      <p class="pl-nota">Toca un área para ver su última fumigación con evidencias.</p>
+      <summary><h2>🗂 Áreas del hotel (${areas.length}) · último servicio y próxima aplicación</h2></summary>
+      <p class="pl-nota">Toca un área para ver su última aplicación con evidencias.</p>
       <div class="pl-tabla-scroll">
         <table class="pl-tabla ar-tabla">
-          <thead><tr><th>Área</th><th>Último servicio</th><th>Última fumigación</th><th>Próximo programado</th></tr></thead>
+          <thead><tr><th>Área</th><th>Último servicio</th><th>Última aplicación</th><th>Próximo programado</th></tr></thead>
           <tbody>
             ${areas.map((a) => {
               const prox = proximos.find((f) => cronoDelArea(f, a));
@@ -345,7 +343,7 @@ async function imprimirEvidenciasP(lista) {
   try {
     const fichas = await Promise.all(lista.map((i) => GET(`/inspecciones/${i.id}/desglose`)));
     const d = DATOS_AREA_P;
-    const titulo = `${d.ultimaEsFumigacion ? "Última fumigación" : "Último servicio"} · ${d.area?.nombre || ""} · ${fecha(String(lista[0].fecha_local || lista[0].fecha).slice(0, 10))}`;
+    const titulo = `${d.ultimaEsFumigacion ? "Última aplicación" : "Último servicio"} · ${d.area?.nombre || ""} · ${fecha(String(lista[0].fecha_local || lista[0].fecha).slice(0, 10))}`;
     await imprimirEnPaginaP(titulo, fichas.map((f) => `<div class="ar-ficha-imp">${fichaServicioHTML(f)}</div>`).join(""));
   } catch (e) {
     alert(`No se pudo preparar la impresión: ${e.message}`);
