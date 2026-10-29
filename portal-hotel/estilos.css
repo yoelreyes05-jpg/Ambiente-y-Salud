@@ -485,3 +485,10 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .cr-prog-tabla{border-collapse:collapse;font-size:12.5px}
 .cr-prog-tabla td{border:1px solid var(--borde);padding:3px 8px}
 .cr-prog-tabla td.n{text-align:right;color:var(--suave);width:28px}
+
+/* Hallazgos por corregir (Historial) */
+.ar-hall{border:1.5px solid #fca5a5;background:#fff7f7}
+.ar-hall-cab{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:none;border:0;padding:0;font:inherit;font-size:15px;color:#991b1b;cursor:pointer;text-align:left;flex-wrap:wrap}
+.ar-hall-ver{font-size:13px;font-weight:700;color:var(--azul)}
+.ar-hall-cab.abierto .ar-hall-ver{opacity:.7}
+#ar-hall-lista{margin-top:10px}

@@ -319,6 +319,13 @@ function kpis(doc, tarjetas, opciones = {}) {
          .text(limpiar(t.valor), x + 9, y + 7, { width: w - 18, lineBreak: false, ellipsis: true });
       doc.fillColor(C.suave).font("Helvetica").fontSize(6.8)
          .text(limpiar(t.etiqueta).toUpperCase(), x + 9, y + 30, { width: w - 18, height: 16 });
+      // Tarjeta con enlace: al tocarla, el PDF salta a la sección (p. ej. los
+      // hallazgos por corregir, que van más abajo)
+      if (t.irA) {
+        doc.fillColor(t.color || C.azulOsc).font("Helvetica-Bold").fontSize(6.8)
+           .text("VER DETALLE >", x + w - 70, y + 9, { width: 62, align: "right", lineBreak: false });
+        doc.goTo(x, y, w, alto, t.irA);
+      }
     });
 
     doc.y = y + alto + hueco;
@@ -667,7 +674,8 @@ export async function construirReporte(d, opciones = {}) {
     { valor: r.puntos_total ?? 0, etiqueta: "Puntos de control" },
     { valor: `${r.cumplimiento_pct ?? 0}%`, etiqueta: "Puntos dentro de frecuencia" },
     { valor: r.fotos ?? 0, etiqueta: "Fotos de evidencia" },
-    { valor: r.hallazgos_abiertos ?? 0, etiqueta: "Hallazgos por corregir", fondo: r.hallazgos_abiertos ? C.rojoClaro : C.azulPastel, borde: r.hallazgos_abiertos ? C.rojo : C.azulClaro, color: r.hallazgos_abiertos ? C.rojo : C.azulOsc },
+    { valor: r.hallazgos_abiertos ?? 0, etiqueta: "Hallazgos por corregir", fondo: r.hallazgos_abiertos ? C.rojoClaro : C.azulPastel, borde: r.hallazgos_abiertos ? C.rojo : C.azulClaro, color: r.hallazgos_abiertos ? C.rojo : C.azulOsc,
+      irA: r.hallazgos_abiertos && d.hallazgos?.length ? "hallazgos" : null },
   ]);
 
   if (r.tecnicos?.length) {
@@ -826,25 +834,37 @@ export async function construirReporte(d, opciones = {}) {
   }
 
   // ── Hallazgos ─────────────────────────────────────────────────────────────
+  // Destino del enlace de la tarjeta "Hallazgos por corregir". Los que siguen
+  // abiertos van primero y en ámbar; cada uno con lo que se encontró y dónde.
   if (d.hallazgos?.length) {
+    const ESTADO_H = { abierto: "Por corregir", en_proceso: "En proceso", corregido: "Corregido", aceptado_riesgo: "Riesgo aceptado" };
+    const abierto = (h) => h.estado === "abierto" || h.estado === "en_proceso";
+    const lista = [...d.hallazgos].sort((a, b) => Number(abierto(b)) - Number(abierto(a)));
     tituloSeccion(doc, "Hallazgos y su estado");
+    doc.addNamedDestination("hallazgos", "XYZ", doc.page.margins.left, doc.y + 40, null);
+    const nAb = lista.filter(abierto).length;
+    parrafo(doc, nAb
+      ? `${nAb} hallazgo${nAb === 1 ? "" : "s"} por corregir (en ámbar). Son condiciones que encontró el técnico y que hay que corregir para evitar plagas.`
+      : "No quedan hallazgos por corregir en el período.");
     tabla(doc,
       [
-        { titulo: "Fecha", ancho: 52 },
-        { titulo: "Hallazgo", ancho: 200, negrita: true },
-        { titulo: "Area", ancho: 90 },
-        { titulo: "Severidad", ancho: 55 },
-        { titulo: "Resp.", ancho: 55 },
-        { titulo: "Estado", ancho: 60 },
+        { titulo: "Fecha", ancho: 50 },
+        { titulo: "Hallazgo", ancho: 200 },
+        { titulo: "Punto / área", ancho: 95 },
+        { titulo: "Severidad", ancho: 60 },
+        { titulo: "Corrige", ancho: 45 },
+        { titulo: "Estado", ancho: 62, negrita: true },
       ],
-      d.hallazgos.map((h) => {
+      lista.map((h) => {
         const fila = [
           h.fecha_reporte ? fechaCorta(h.fecha_reporte) : "—",
-          h.titulo, h.area || "—", h.severidad,
+          limpiar([h.titulo, h.descripcion && h.descripcion !== h.titulo ? h.descripcion : null].filter(Boolean).join(" — ")),
+          limpiar([h.punto, h.area].filter(Boolean).join(" · ") || "—"),
+          h.severidad,
           h.responsable === "cliente" ? "Hotel" : "ASA",
-          h.estado,
+          ESTADO_H[h.estado] || h.estado,
         ];
-        if (h.severidad === "critica" && h.estado !== "corregido") { fila._fondo = C.rojoClaro; fila._color = C.rojo; }
+        if (abierto(h)) { fila._fondo = h.severidad === "critica" ? C.rojoClaro : C.ambarClaro; fila._color = h.severidad === "critica" ? C.rojo : C.texto; }
         return fila;
       })
     );

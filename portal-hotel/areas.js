@@ -100,14 +100,15 @@ async function cargarArea(areas) {
   const hoy = hoyLocal();
   const q = (extra) => new URLSearchParams({ sitio_id: PLANTA.id, ...(area ? { area_id: area.id } : {}), ...extra });
 
-  let recientes, servicios, crono;
+  let recientes, servicios, crono, hallazgos;
   try {
-    [recientes, servicios, crono] = await Promise.all([
+    [recientes, servicios, crono, hallazgos] = await Promise.all([
       // Lo último de cada área (o de esta), sin límite de fechas: el auditor pide
       // "la última", aunque haya sido antes del rango elegido.
       GET(`/inspecciones?${q({ limite: area ? 300 : 1000 })}`),
       GET(`/inspecciones?${q({ desde: AREA_P.desde, hasta: AREA_P.hasta, limite: 1000 })}`),
       GET(`/cronograma?sitio_id=${PLANTA.id}&desde=${hoy}&hasta=${masDiasP(hoy, 180)}`).catch(() => ({ filas: [] })),
+      GET(`/hallazgos?sitio_id=${PLANTA.id}`).catch(() => []),
     ]);
   } catch (e) {
     caja.innerHTML = `<div class="error">${esc(e.message)}</div>`;
@@ -123,9 +124,15 @@ async function cargarArea(areas) {
   caja.innerHTML = area
     ? await htmlUnaArea(area, recientes, proximos)
     : htmlTodasLasAreas(areas, recientes, proximos);
+  caja.insertAdjacentHTML("afterbegin", htmlHallazgosPorCorregir(hallazgos, area));
   caja.insertAdjacentHTML("beforeend", `<div id="pl-estadisticas"></div>` + htmlServiciosRango(servicios));
 
   engancharServicios(caja);
+  $("#ar-hall-cab", caja)?.addEventListener("click", () => {
+    const lista = $("#ar-hall-lista", caja);
+    lista.hidden = !lista.hidden;
+    $("#ar-hall-cab", caja).classList.toggle("abierto", !lista.hidden);
+  });
   $$("[data-ir-area]", caja).forEach((b) => b.addEventListener("click", (ev) => {
     ev.stopPropagation();
     $("#ar-area").value = b.dataset.irArea;
@@ -136,6 +143,43 @@ async function cargarArea(areas) {
   // Las plagas, con la misma área y fechas (plagas.js). Tocar una plaga
   // despliega dónde se encontró.
   await montarEstadisticasPlagas($("#pl-estadisticas", caja), { desde: AREA_P.desde, hasta: AREA_P.hasta, area_id: area?.id }).catch(() => {});
+}
+
+// ── Hallazgos por corregir ───────────────────────────────────────────────
+// El mismo número que sale en el reporte PDF ("Hallazgos por corregir"). Al
+// tocarlo se despliega cuáles son; cada uno abre el servicio donde se reportó,
+// con lo que vio el técnico y sus fotos.
+const SEVERIDAD_P = { critica: ["Crítica", "mal"], alta: ["Alta", "alerta"], media: ["Media", "neutra"], baja: ["Baja", "neutra"] };
+function htmlHallazgosPorCorregir(lista, area) {
+  const todos = (Array.isArray(lista) ? lista : lista?.hallazgos || [])
+    .filter((h) => h.estado === "abierto" || h.estado === "en_proceso")
+    .filter((h) => !area || h.area_id === area.id);
+  if (!todos.length) return "";
+  return `
+    <div class="tarjeta ar-hall">
+      <button type="button" class="ar-hall-cab" id="ar-hall-cab">
+        <span>⚠️ <strong>${todos.length}</strong> hallazgo${todos.length === 1 ? "" : "s"} por corregir${area ? ` · ${esc(area.nombre)}` : ""}</span>
+        <span class="ar-hall-ver">Ver cuál${todos.length === 1 ? "" : "es"} ▾</span>
+      </button>
+      <div id="ar-hall-lista" hidden>
+        ${todos.map((h) => {
+          const [sev, cls] = SEVERIDAD_P[h.severidad] || [h.severidad || "Media", "neutra"];
+          return `
+          <div class="registro${h.inspeccion_id ? " clicable" : ""}"${h.inspeccion_id ? ` data-insp="${esc(h.inspeccion_id)}"` : ""}>
+            <div class="cab">
+              <div>
+                <div class="punto">${esc(h.titulo || "Hallazgo")} <span class="marca ${cls}">${esc(sev)}</span></div>
+                ${h.descripcion && h.descripcion !== h.titulo ? `<div class="meta">${esc(h.descripcion)}</div>` : ""}
+                <div class="meta">${esc([h.asa_puntos_control?.codigo_visible, h.asa_areas?.nombre, h.responsable === "asa" ? "Lo corrige ASA" : "Lo corrige el hotel", h.estado === "en_proceso" ? "En proceso" : "Por corregir"].filter(Boolean).join(" · "))}</div>
+                ${h.fecha_limite ? `<div class="meta">Fecha límite: ${esc(fecha(h.fecha_limite))}</div>` : ""}
+              </div>
+              <div class="fecha">${esc(fecha(h.fecha_reporte || h.created_at))}
+                ${h.inspeccion_id ? `<div class="marca neutra" style="margin-top:4px">ver evidencia</div>` : ""}</div>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
 }
 
 // ── Un área: último servicio / última fumigación y lo próximo ─────────────

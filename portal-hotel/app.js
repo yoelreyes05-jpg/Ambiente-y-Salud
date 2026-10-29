@@ -916,7 +916,7 @@ async function vistaHallazgos(cuerpo) {
           ? abiertos
               .map(
                 (h) => `
-        <div class="registro">
+        <div class="registro${h.inspeccion_id ? " clicable" : ""}"${h.inspeccion_id ? ` data-insp="${esc(h.inspeccion_id)}"` : ""}>
           <div class="cab">
             <div>
               <div class="punto">
@@ -925,10 +925,11 @@ async function vistaHallazgos(cuerpo) {
                   ${esc(h.severidad || "media")}
                 </span>
               </div>
-              <div class="meta">${esc(h.asa_areas?.nombre || "")} · ${esc(h.estado)}</div>
+              <div class="meta">${esc([h.asa_puntos_control?.codigo_visible, h.asa_areas?.nombre, h.estado === "en_proceso" ? "En proceso" : h.estado === "abierto" ? "Por corregir" : h.estado].filter(Boolean).join(" · "))}</div>
               ${h.descripcion && h.titulo ? `<div class="meta">${esc(h.descripcion)}</div>` : ""}
             </div>
-            <div class="fecha">${fecha(h.created_at)}</div>
+            <div class="fecha">${fecha(h.created_at)}
+              ${h.inspeccion_id ? `<div class="marca neutra" style="margin-top:4px">ver evidencia</div>` : ""}</div>
           </div>
         </div>`
               )
@@ -936,6 +937,7 @@ async function vistaHallazgos(cuerpo) {
           : `<div class="vacio"><span class="emoji">✅</span>No hay condiciones pendientes de corregir.</div>`
       }
     </div>`;
+  engancharServicios(cuerpo);   // tocar un hallazgo abre el servicio donde se reportó
 }
 
 // ── Solicitudes ──────────────────────────────────────────────────────────

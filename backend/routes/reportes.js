@@ -968,7 +968,7 @@ async function juntarEvidencia(req) {
   };
   let qHallazgos = supabase
     .from("asa_hallazgos")
-    .select("id, titulo, descripcion, severidad, responsable, estado, fecha_reporte, fecha_limite, sitio_id, asa_areas(nombre)")
+    .select("id, titulo, descripcion, severidad, responsable, estado, fecha_reporte, fecha_limite, sitio_id, inspeccion_id, asa_areas(nombre), asa_puntos_control(codigo_visible)")
     .gte("fecha_reporte", desde)
     .order("fecha_reporte", { ascending: false });
 
@@ -1152,7 +1152,7 @@ async function juntarEvidencia(req) {
     servicios: serviciosCompletos,
     no_realizados: noRealizados,
     pendientes_por_area: pendientesPorArea,
-    hallazgos: (hallazgos.data || []).map((h) => ({ ...h, area: h.asa_areas?.nombre || null })),
+    hallazgos: (hallazgos.data || []).map((h) => ({ ...h, area: h.asa_areas?.nombre || null, punto: h.asa_puntos_control?.codigo_visible || null })),
   };
 }
 
