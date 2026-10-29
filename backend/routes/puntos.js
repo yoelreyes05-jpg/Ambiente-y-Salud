@@ -293,6 +293,36 @@ router.get("/estado", async (req, res) => {
     puntos = puntos.filter((p) => permitidos.has(p.tipo_codigo || "otro"));
   }
 
+  // La última inspección REALIZADA de cada punto, tomada directo de las
+  // inspecciones. La vista la trae ya así (29_vista_puntos_sin_no_realizados),
+  // pero si esa migración no se corrió, un "no se pudo" (habitación ocupada,
+  // sin llave) contaba como hecho y la habitación salía en verde todo el ciclo.
+  // Se miran 95 días: el ciclo más largo (trimestral) es de 90.
+  const VENTANA = 95 * 86400000;
+  const corte = Date.now() - VENTANA;
+  const ultimaReal = new Map();
+  try {
+    const hechas = await traerTodo(() => supabase.from("asa_inspecciones")
+      .select("punto_id, fecha")
+      .eq("sitio_id", sitio_id)
+      .is("motivo_no_realizado", null)
+      .gte("fecha", new Date(corte).toISOString())
+      .order("fecha", { ascending: false })
+      .order("id"));
+    for (const h of hechas) if (!ultimaReal.has(h.punto_id)) ultimaReal.set(h.punto_id, h.fecha);
+    const DIAS = { diaria: 1, semanal: 7, quincenal: 15, mensual: 30, trimestral: 90 };
+    for (const p of puntos) {
+      // Lo de la vista solo vale si es más viejo que la ventana (fuera de ella
+      // no se miró); dentro de la ventana manda lo que se encontró aquí.
+      const vista = p.ultima_inspeccion && Date.parse(p.ultima_inspeccion) < corte ? p.ultima_inspeccion : null;
+      p.ultima_inspeccion = ultimaReal.get(p.id) || vista;
+      const dias = DIAS[p.frecuencia];
+      p.vencido = !p.ultima_inspeccion ? true
+        : p.frecuencia === "por_orden" || !dias ? false
+        : Date.now() - Date.parse(p.ultima_inspeccion) >= dias * 86400000;
+    }
+  } catch { /* si falla, queda lo que dijo la vista */ }
+
   // Por punto: el último realizado de hoy manda sobre un no realizado de hoy
   // (si primero no lo dejaron entrar y después sí, el punto quedó hecho).
   const hechoHoy = new Map();
