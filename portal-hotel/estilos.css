@@ -510,3 +510,4 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .eq-area{font-weight:500;color:var(--suave);font-size:13px}
 .eq-cambio{color:var(--verde,#2e6b32);font-weight:600}
 .eq-capt{color:#b45309;font-weight:600}
+.version-portal{text-align:center;font-size:11px;color:var(--suave);padding:6px 0 18px;opacity:.7}

@@ -17,6 +17,9 @@ let USUARIO = leerJSON("asa_portal_usuario");
 let PLANTA = leerJSON("asa_portal_planta");
 let PLANTAS = [];
 let PESTANA = "hoy";
+// Para saber qué versión del portal tiene abierta el teléfono (si no coincide
+// con la última, Vercel no la ha publicado o el navegador guarda una copia).
+const VERSION_PORTAL = "2026-10-30f";
 let AVISO_ORDEN = null;   // mensaje a mostrar tras crear una orden
 
 const app = () => document.getElementById("app");
@@ -192,7 +195,8 @@ function pintarMarco() {
         .map(([k, t]) => `<button class="pestana${k === PESTANA ? " activa" : ""}" data-p="${k}">${t}</button>`)
         .join("")}
     </nav>
-    <main class="contenido" id="cuerpo"><div class="cargando">Cargando…</div></main>`;
+    <main class="contenido" id="cuerpo"><div class="cargando">Cargando…</div></main>
+    <div class="version-portal">Portal ${esc(VERSION_PORTAL)}</div>`;
 
   $("#btn-salir").addEventListener("click", () => salir());
   $("#sel-planta").addEventListener("change", (e) => {
