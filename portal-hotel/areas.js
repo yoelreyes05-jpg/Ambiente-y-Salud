@@ -37,9 +37,9 @@ async function vistaHistorial(cuerpo) {
   if (!AREA_P.desde) { AREA_P.desde = masDiasP(hoy, -29); AREA_P.hasta = hoy; }
   const [areas, eq] = await Promise.all([
     GET(`/sitios/${PLANTA.id}/areas`),
-    GET(`/puntos/equipos?sitio_id=${PLANTA.id}`).catch(() => ({ tipos: [] })),
+    GET(`/puntos/equipos?sitio_id=${PLANTA.id}`).catch(() => null),
   ]);
-  const tiposEquipo = eq.tipos || [];
+  const tiposEquipo = ordenarEquipos(eq?.tipos?.length ? eq.tipos : await tiposEquipoRespaldo());
   if (AREA_P.area && !areas.some((a) => a.id === AREA_P.area)) AREA_P.area = "";
   if (AREA_P.equipo && !tiposEquipo.some((e) => e.id === AREA_P.equipo)) AREA_P.equipo = "";
 
@@ -171,6 +171,23 @@ async function cargarArea(areas) {
   await montarEstadisticasPlagas($("#pl-estadisticas", caja), { desde: AREA_P.desde, hasta: AREA_P.hasta, area_id: area?.id }).catch(() => {});
 }
 
+// Los tipos de equipo cuando el servidor todavía no tiene /puntos/equipos
+// (versión vieja en Railway): se sacan de /puntos/estado, que siempre estuvo.
+async function tiposEquipoRespaldo() {
+  try {
+    const r = await GET(`/puntos/estado?sitio_id=${PLANTA.id}`);
+    return (r.tipos || [])
+      .filter((t) => !/habitaci/i.test(`${t.nombre} ${t.codigo}`))
+      .map((t) => ({ id: `codigo:${t.codigo}`, nombre: t.nombre || t.codigo, icono: t.icono, total: t.total }));
+  } catch { return []; }
+}
+// Primero lo que más se consulta: lámparas, dispensadores, cebaderos, registros
+const ORDEN_EQUIPOS = [/l[aá]mpara|mosca/i, /dispens|aerosol/i, /cebader|roedor|rata/i, /registro|c[aá]rcamo/i];
+const ordenarEquipos = (lista) => [...(lista || [])].sort((a, b) => {
+  const r = (t) => { const i = ORDEN_EQUIPOS.findIndex((x) => x.test(t.nombre || "")); return i < 0 ? 99 : i; };
+  return r(a) - r(b) || String(a.nombre).localeCompare(String(b.nombre), "es");
+});
+
 // ── Equipos (lámparas para moscas, dispensadores de aerosol…) ──────────
 // Del tipo elegido: resumen del período (servicios, cambios, capturas) y dos
 // vistas. "Todos los servicios": todo lo que se hizo, del más nuevo al más
@@ -182,8 +199,14 @@ let EQ_ABIERTO = null;
 async function pintarEquiposEstrategia(caja, area) {
   let d;
   try {
+    if (String(AREA_P.equipo).startsWith("codigo:")) throw Object.assign(new Error("viejo"), { status: 404 });
     d = await GET(`/puntos/equipos?${new URLSearchParams({ sitio_id: PLANTA.id, tipo_id: AREA_P.equipo, desde: AREA_P.desde, hasta: AREA_P.hasta })}`);
-  } catch (e) { caja.innerHTML = `<div class="tarjeta"><div class="error">${esc(e.message)}</div></div>`; return; }
+  } catch (e) {
+    caja.innerHTML = `<div class="tarjeta"><div class="error">${/404|viejo|uuid|no encontrad|not found/i.test(`${e.status} ${e.message}`)
+      ? "El servidor todavía no tiene esta función. En Railway hay que desplegar la última versión (2.4.5 o mayor) y volver a abrir el Historial."
+      : esc(e.message)}</div></div>`;
+    return;
+  }
   const equipos = (d.puntos || []).filter((p) => !area || p.area_id === area.id);
   const fCorta = (f) => (f ? fecha(String(f).slice(0, 10)) : "");
   const servicios = equipos.flatMap((p) => p.servicios.map((x) => ({ ...x, equipo: p })))
