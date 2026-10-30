@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "rm -rf public && mkdir -p public && cp -r inicio panel-web portal-hotel app-tecnico public/",
+  "buildCommand": "R=.; for i in 1 2 3 4; do [ -d \"$R/portal-hotel\" ] && break; R=\"$R/..\"; done; T=$(mktemp -d); cp -r \"$R/inicio\" \"$R/panel-web\" \"$R/portal-hotel\" \"$R/app-tecnico\" \"$T\"/ && rm -rf public && mv \"$T\" public",
   "installCommand": "",
   "outputDirectory": "public",
   "cleanUrls": false,
