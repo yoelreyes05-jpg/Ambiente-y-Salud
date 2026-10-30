@@ -21,8 +21,12 @@ let CR = { vista: "mes", anio: null, mes: null, semana: null, desde: null, hasta
 // Quita el nombre del contrato, que no dice nada del servicio.
 const sinMIP = (t) => String(t || "").replace(/manejo\s+integrado\s+de\s+plagas/gi, "").replace(/^[\s\-–·:/|]+|[\s\-–·:/|]+$/g, "").trim();
 // Qué servicio es: lo que dicen las notas ("Fumigación de cocina") o el título.
-const nombreServicioCr = (f) => sinMIP(f.notas) || sinMIP(f.titulo) || "Servicio sin descripción";
+// Si las notas son la lista de áreas ("Áreas: Cocina, Sancho…"), el servicio es
+// el título ("Tratamiento profundo") y las áreas van debajo como detalle.
+const esListaAreas = (t) => /^\s*[áa]reas?\s*:/i.test(String(t || ""));
+const nombreServicioCr = (f) => (esListaAreas(f.notas) ? sinMIP(f.titulo) : sinMIP(f.notas) || sinMIP(f.titulo)) || "Servicio sin descripción";
 const detalleServicioCr = (f) => {
+  if (esListaAreas(f.notas)) return String(f.notas).trim();
   const t = sinMIP(f.titulo);
   return t && t !== nombreServicioCr(f) ? t : "";
 };
