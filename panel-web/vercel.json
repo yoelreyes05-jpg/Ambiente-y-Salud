@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": null,
-  "installCommand": null,
-  "outputDirectory": ".",
+  "buildCommand": "T=$(mktemp -d); cp -r . \"$T\"/ && rm -rf \"$T/public\" public && mv \"$T\" public",
+  "installCommand": "",
+  "outputDirectory": "public",
   "cleanUrls": true,
   "headers": [
     {
