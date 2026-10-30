@@ -16,7 +16,17 @@
 
 const MESES_CR = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const ESTADO_CR = { pendiente: "Pendiente", realizado: "Realizado", cancelado: "Cancelado", reprogramado: "Reprogramado" };
-let CR = { vista: "mes", anio: null, mes: null, semana: null, desde: null, hasta: null, semMes: null };
+let CR = { vista: "mes", anio: null, mes: null, semana: null, desde: null, hasta: null, semMes: null, area: "" };
+
+// Áreas de la planta, para el filtro "Área" (una vez por planta)
+const AREAS_CR = new Map();
+async function areasCr() {
+  if (!AREAS_CR.has(PLANTA.id)) AREAS_CR.set(PLANTA.id, await GET(`/sitios/${PLANTA.id}/areas`).catch(() => []));
+  return AREAS_CR.get(PLANTA.id);
+}
+const areaElegidaCr = (areas) => areas.find((a) => a.id === CR.area) || null;
+// ¿Esta fila del cronograma toca el área elegida? (coincideArea, en extras.js)
+const filaDelAreaCr = (f, area) => !area || coincideArea(f.notas, area.nombre) || coincideArea(f.titulo, area.nombre);
 
 // Quita el nombre del contrato, que no dice nada del servicio.
 const sinMIP = (t) => String(t || "").replace(/manejo\s+integrado\s+de\s+plagas/gi, "").replace(/^[\s\-–·:/|]+|[\s\-–·:/|]+$/g, "").trim();
@@ -57,19 +67,30 @@ async function vistaCronograma(cuerpo) {
   CR.desde ??= hoy;
   CR.hasta ??= hoy;
 
+  const areas = await areasCr();
+  if (CR.area && !areas.some((a) => a.id === CR.area)) CR.area = "";
+  const areaSel = areaElegidaCr(areas);
+
   cuerpo.innerHTML = `
     <div class="tarjeta cr-barra">
       <div class="cr-vistas">
         ${[["anio", "Año"], ["mes", "Mes"], ["semana", "Semana"], ["fechas", "Fechas"]].map(([k, t]) =>
           `<button class="btn${CR.vista === k ? " principal" : ""}" data-vista="${k}">${t}</button>`).join("")}
       </div>
+      ${areas.length ? `<label class="cr-area">Área
+        <select class="btn" id="cr-area">
+          <option value="">Todas las áreas</option>
+          ${areas.map((a) => `<option value="${esc(a.id)}"${a.id === CR.area ? " selected" : ""}>${esc(a.nombre)}</option>`).join("")}
+        </select></label>` : ""}
       <div class="cr-nav" id="cr-nav"></div>
     </div>
+    ${areaSel ? `<p class="pl-nota cr-aviso-area">Mostrando solo lo programado para <strong>${esc(areaSel.nombre)}</strong>.</p>` : ""}
     <div id="cr-cuerpo"><div class="cargando">Cargando…</div></div>`;
 
   $$(".cr-vistas [data-vista]", cuerpo).forEach((b) => b.addEventListener("click", () => {
     CR.vista = b.dataset.vista; CR.semMes = null; vistaCronograma(cuerpo);
   }));
+  $("#cr-area")?.addEventListener("change", (e) => { CR.area = e.target.value; vistaCronograma(cuerpo); });
   const nav = $("#cr-nav");
   const caja = $("#cr-cuerpo");
   const ir = () => vistaCronograma(cuerpo);
@@ -84,11 +105,19 @@ async function vistaCronograma(cuerpo) {
     // el cronograma.
     const prog = await programaOficialCr(CR.anio);
     if (prog) {
-      caja.innerHTML = htmlProgramaOficial(prog);
+      // Con un área elegida, solo sus filas del programa
+      const progVer = areaSel
+        ? { ...prog, areas: prog.areas.filter((a) => coincideArea(a.area, areaSel.nombre) || coincideArea(areaSel.nombre, a.area)) }
+        : prog;
+      if (areaSel && !progVer.areas.length) {
+        caja.innerHTML = `<div class="vacio">El programa anual no tiene una fila para <strong>${esc(areaSel.nombre)}</strong>. Escoge "Todas las áreas" para verlo completo.</div>`;
+        return;
+      }
+      caja.innerHTML = htmlProgramaOficial(progVer);
       $$("[data-sem-anio]", caja).forEach((el) => el.addEventListener("click", () => {
         CR.vista = "semana"; CR.semana = lunesSemanaAnio(CR.anio, Number(el.dataset.semAnio)); ir();
       }));
-      $("#cr-imp").onclick = () => imprimirHtmlCr(`Programa anual ${prog.anio}`, htmlProgramaOficial(prog, true));
+      $("#cr-imp").onclick = () => imprimirHtmlCr(`Programa anual ${prog.anio}${areaSel ? ` · ${areaSel.nombre}` : ""}`, htmlProgramaOficial(progVer, true));
       return;
     }
     const filas = await traerCrono(`${CR.anio}-01-01`, `${CR.anio}-12-31`, caja);
@@ -160,7 +189,8 @@ async function vistaCronograma(cuerpo) {
 async function traerCrono(desde, hasta, caja) {
   try {
     const r = await GET(`/cronograma?sitio_id=${PLANTA.id}&desde=${desde}&hasta=${hasta}`);
-    return r.filas || [];
+    const area = areaElegidaCr(await areasCr());
+    return (r.filas || []).filter((f) => filaDelAreaCr(f, area));
   } catch (e) {
     caja.innerHTML = `<div class="error">${esc(e.message)}</div>`;
     return null;
@@ -314,7 +344,8 @@ async function pintarCalendario(caja, filas, desde, hasta) {
   for (let d = desde; d <= hasta; d = masDiasP(d, 1)) dias.push(d);
   const hechos = {};
   try {
-    const r = await GET(`/inspecciones?sitio_id=${PLANTA.id}&desde=${desde}&hasta=${hasta}&limite=1000`);
+    // Lo registrado ese día, en el área elegida si hay una
+    const r = await GET(`/inspecciones?sitio_id=${PLANTA.id}&desde=${desde}&hasta=${hasta}&limite=1000${CR.area ? `&area_id=${CR.area}` : ""}`);
     for (const i of Array.isArray(r) ? r : []) if (!i.motivo_no_realizado) {
       const d = String(i.fecha_local || i.fecha).slice(0, 10);
       hechos[d] = (hechos[d] || 0) + 1;
@@ -341,8 +372,8 @@ async function pintarCalendario(caja, filas, desde, hasta) {
       }).join("")}
     </div>`);
   $$(".cr-hechos", caja).forEach((b) => b.addEventListener("click", () => {
-    // Historial (areas.js) en ese día, todas las áreas
-    AREA_P.area = ""; AREA_P.desde = b.dataset.dia; AREA_P.hasta = b.dataset.dia;
+    // Historial (areas.js) en ese día, con el área elegida aquí (o todas)
+    AREA_P.area = CR.area || ""; AREA_P.desde = b.dataset.dia; AREA_P.hasta = b.dataset.dia;
     PESTANA = "historial";
     pintarMarco();
     pintarPestana();

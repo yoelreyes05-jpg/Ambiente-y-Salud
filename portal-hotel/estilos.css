@@ -492,3 +492,15 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .ar-hall-ver{font-size:13px;font-weight:700;color:var(--azul)}
 .ar-hall-cab.abierto .ar-hall-ver{opacity:.7}
 #ar-hall-lista{margin-top:10px}
+.cr-area{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--suave);font-weight:600}
+.cr-area select{width:100%}
+.cr-aviso-area{margin:-4px 2px 10px}
+
+/* ── Equipos (dispensadores de aerosol, lámparas atrapamoscas) ─────────── */
+.eq-tipos{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.eq-periodo{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--suave);font-weight:600;max-width:260px}
+.eq-item{border-bottom:1px solid var(--borde)}
+.eq-item:last-child{border-bottom:0}
+.eq-item .eq-cab{border-bottom:0}
+.eq-item.abierto .eq-cab{background:var(--azul-pastel,#EAF0F8)}
+.eq-hist{padding:4px 0 12px 14px;border-left:3px solid var(--azul);margin:0 0 10px 4px}

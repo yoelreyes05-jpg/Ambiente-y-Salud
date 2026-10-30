@@ -20,15 +20,8 @@ const ES_FUMIGACION = /fumig|aplicaci|asperj|aspers|nebuliz|termonebul|tratamien
 const normP = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
 
 // ¿Esta fila del cronograma es para esta área? El cronograma no guarda el área:
-// se busca su nombre (o todas sus palabras largas) en el título y las notas.
-function cronoDelArea(f, area) {
-  const texto = normP(`${f.titulo} ${f.notas || ""} ${f.tipo || ""}`);
-  const nombre = normP(area.nombre);
-  if (!nombre) return false;
-  if (texto.includes(nombre)) return true;
-  const palabras = nombre.split(" ").filter((p) => p.length >= 4);
-  return palabras.length > 0 && palabras.every((p) => texto.includes(p));
-}
+// se busca su nombre en las notas y el título (coincideArea, en extras.js).
+const cronoDelArea = (f, area) => coincideArea(f.notas, area.nombre) || coincideArea(f.titulo, area.nombre);
 
 const esFumigacionInsp = (i) => ES_FUMIGACION.test(normP(i.asa_puntos_control?.asa_tipos_punto?.nombre));
 const esFumigacionCrono = (f) => ES_FUMIGACION.test(normP(`${f.tipo} ${f.titulo} ${f.notas || ""}`));
@@ -56,15 +49,20 @@ async function vistaHistorial(cuerpo) {
         </label>
         <label>Desde <input type="date" class="btn" id="ar-desde" value="${esc(AREA_P.desde)}" max="${hoy}" /></label>
         <label>Hasta <input type="date" class="btn" id="ar-hasta" value="${esc(AREA_P.hasta)}" max="${hoy}" /></label>
-        <div class="ar-rapidos">
-          <button class="btn" data-dias="7">7 días</button>
-          <button class="btn" data-dias="30">30 días</button>
-          <button class="btn" data-dias="90">90 días</button>
-          <button class="btn" data-dias="365">1 año</button>
-        </div>
+        <label>Período
+          <select class="btn" id="ar-rango">
+            <option value="">Escoger…</option>
+            <option value="7">Últimos 7 días</option>
+            <option value="30">Últimos 30 días</option>
+            <option value="90">Últimos 90 días</option>
+            <option value="365">Último año</option>
+            <option value="mes">Este mes</option>
+            <option value="mes-1">Mes pasado</option>
+          </select>
+        </label>
       </div>
       <div class="ar-acciones">
-        <button class="btn principal" id="ar-imprimir">🖨 Imprimir lo que se ve</button>
+        <button class="btn principal" id="ar-imprimir">🖨 Imprimir</button>
         <button class="btn" id="btn-pdf">Reporte de auditoría (PDF)</button>
         <button class="btn" id="btn-pdf-pend">Reporte de no realizados</button>
       </div>
@@ -79,11 +77,22 @@ async function vistaHistorial(cuerpo) {
     cargarArea(areas);
   };
   ["#ar-area", "#ar-desde", "#ar-hasta"].forEach((s) => $(s).addEventListener("change", recargar));
-  $$(".ar-rapidos [data-dias]").forEach((b) => b.addEventListener("click", () => {
-    $("#ar-desde").value = masDiasP(hoy, -(Number(b.dataset.dias) - 1));
-    $("#ar-hasta").value = hoy;
+  $("#ar-rango").addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    if (v === "mes" || v === "mes-1") {
+      let [y, m] = hoy.split("-").map(Number);
+      if (v === "mes-1") { m--; if (!m) { m = 12; y--; } }
+      const ini = `${y}-${String(m).padStart(2, "0")}-01`;
+      const fin = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+      $("#ar-desde").value = ini;
+      $("#ar-hasta").value = fin < hoy ? fin : hoy;
+    } else {
+      $("#ar-desde").value = masDiasP(hoy, -(Number(v) - 1));
+      $("#ar-hasta").value = hoy;
+    }
     recargar();
-  }));
+  });
   $("#ar-imprimir").addEventListener("click", () => imprimirAreaP(areas));
   $("#btn-pdf").addEventListener("click", () => descargarReportePdf());
   $("#btn-pdf-pend").addEventListener("click", () => descargarReportePdf("pendientes"));
@@ -275,11 +284,7 @@ function htmlTodasLasAreas(areas, recientes, proximos) {
           </tbody>
         </table>
       </div>
-    </details>
-    <div class="tarjeta">
-      <h2>📅 Próximos servicios</h2>
-      ${proximos.length ? htmlListaCrono(proximos.slice(0, 3)) : `<div class="vacio">No hay servicios programados en los próximos 6 meses.</div>`}
-    </div>`;
+    </details>`;
 }
 
 // Habitación o punto, área y fecha de cada registro de una plaga. También la

@@ -153,3 +153,46 @@ function engancharCertificadoOrden(raiz) {
     })
   );
 }
+
+// ── ¿Este texto del cronograma menciona esta área? ─────────────────────────
+// El cronograma no guarda el área: la trae escrita ("Áreas: Cocina Palapa, Bar
+// Barco…", "Fumigación buffet cocina central"). Se compara por palabras, sin
+// acentos ni mayúsculas, tolerando plurales ("cocina"/"cocinas") y un error
+// de una letra ("Sotanos"/"Sótano", "Cancamos"/"Cárcamos").
+const VACIAS_AREA = new Set(["de", "del", "la", "las", "el", "los", "y", "e", "a", "en", "al", "con", "para", "por", "area", "areas", "zona", "zonas", "incluyendo"]);
+const normArea = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+// Palabras del servicio, no del lugar: "Tratamientos sótanos" es el área "sótanos"
+const DEL_SERVICIO = new Set(["tratamiento", "tratamientos", "control", "monitoreo", "fumigacion", "aplicacion", "inspeccion", "recorrido", "servicio", "nocturno", "diario"]);
+const palabrasArea = (t) => normArea(t).split(" ").filter((p) => p && !VACIAS_AREA.has(p));
+const lugarArea = (t) => { const p = palabrasArea(t); const l = p.filter((x) => !DEL_SERVICIO.has(x)); return l.length ? l : p; };
+function palabraIgual(a, b) {
+  if (a === b) return true;
+  if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)) && Math.abs(a.length - b.length) <= 2) return true;
+  if (a.length < 5 || b.length < 5 || Math.abs(a.length - b.length) > 1) return false;
+  // una letra distinta, de más o de menos
+  let i = 0, j = 0, dif = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++dif > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return dif + (a.length - i) + (b.length - j) <= 1;
+}
+const contienePalabras = (todas, de) => de.length > 0 && de.every((p) => todas.some((q) => palabraIgual(p, q)));
+function coincideArea(texto, nombreArea) {
+  // Un área con nombre compuesto ("Registros y cárcamos", "Bar Lobby y Star
+  // Prestige"): cuenta si cada parte aparece en el texto.
+  const partesArea = String(nombreArea || "").split(/[,;/]| y /i).map((x) => x.trim()).filter((x) => lugarArea(x).length);
+  if (partesArea.length > 1) return partesArea.every((pa) => coincideArea(texto, pa));
+  const area = lugarArea(nombreArea);
+  if (!area.length) return false;
+  // Cada parte de la lista por separado: "Bar Lobby, Star Prestige" no es "Bar
+  // Star", ni "Cocina Palapa, Buffet Central" es "Cocina Central".
+  const partes = String(texto || "").split(/[,;·•:\n/()]| y /i).map(lugarArea).filter((p) => p.length);
+  for (const parte of partes) {
+    if (contienePalabras(parte, area)) return true;      // la parte trae todas las palabras del área
+    if (contienePalabras(area, parte) && parte.length >= Math.min(2, area.length)) return true; // el área contiene la parte entera
+  }
+  // Escrito corrido, sin lista ("Fumigación buffet cocina central")
+  return partes.length <= 1 && contienePalabras(lugarArea(texto), area);
+}

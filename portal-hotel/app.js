@@ -165,6 +165,7 @@ function pintarMarco() {
   const pestanas = [
     ["hoy", "Hoy"],
     ["historial", "Historial"],
+    ["equipos", "Equipos"],
     ["pendientes", "Por hacer"],
     ["mapa", "Mapa"],
     ["hallazgos", "Hallazgos"],
@@ -212,7 +213,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, equipos: vistaEquipos, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {
