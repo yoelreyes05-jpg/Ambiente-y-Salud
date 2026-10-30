@@ -87,6 +87,24 @@
           "value": "no-cache"
         }
       ]
+    },
+    {
+      "source": "/(.*)\\.(html|js|css)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/(admin|hotel|tecnico)/",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     }
   ],
   "git": {

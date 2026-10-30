@@ -19,7 +19,7 @@ let PLANTAS = [];
 let PESTANA = "hoy";
 // Para saber qué versión del portal tiene abierta el teléfono (si no coincide
 // con la última, Vercel no la ha publicado o el navegador guarda una copia).
-const VERSION_PORTAL = "2026-10-30f";
+const VERSION_PORTAL = "2026-10-30 v2";
 let AVISO_ORDEN = null;   // mensaje a mostrar tras crear una orden
 
 const app = () => document.getElementById("app");
