@@ -12,7 +12,10 @@ import { supabase } from "./supabaseClient.js";
 // que no se realizó", "Razón", "No se realizó porque…"
 export const PREGUNTA_MOTIVO = /no\s+se\s+(pudo|realiz|hizo)|por\s*qu[eé]\s+no|motivo|raz[oó]n/i;
 // Pregunta "¿Se realizó…?" (si/no)
-export const PREGUNTA_SE_REALIZO = /se\s+realiz/i;
+// "¿Se realizó el tratamiento / la aplicación?" = ¿se hizo el servicio? Pero NO
+// "¿Se realizó recambio de aerosol / cambio de lámina?": eso es una parte del
+// servicio; responder No ahí no quiere decir que el servicio no se hizo.
+export const PREGUNTA_SE_REALIZO = /^(?!.*(cambi|reempla|recarg|sustitu|reposici|renov)).*se\s+realiz/i;
 
 const VACIO = /^(n\/?a|no aplica|ninguno|ninguna|-+|—|\.)$/i;
 

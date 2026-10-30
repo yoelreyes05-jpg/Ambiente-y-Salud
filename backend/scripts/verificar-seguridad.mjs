@@ -59,11 +59,15 @@ revisar((await pedir("POST", "/puntos", tokenHotel)) === 403, "no puede crear pu
 revisar((await pedir("POST", "/inspecciones", tokenHotel)) === 403, "no puede registrar inspecciones");
 revisar((await pedir("POST", "/inspecciones/eliminar", tokenHotel)) === 403, "no puede eliminar servicios");
 revisar((await pedir("PUT", "/sitios/x/tecnicos", tokenHotel)) === 403, "no puede asignar técnicos");
+revisar((await pedir("PUT", "/estrategias/x/cotejo", tokenHotel)) === 403, "no puede cambiar el cotejo");
+revisar((await pedir("PUT", "/documentos/productos/x/grupo", tokenHotel)) === 403, "no puede cambiar el grupo de plaga");
+revisar((await pedir("POST", "/documentos", tokenHotel)) === 403, "no puede subir documentos");
 
 console.log("\nTécnico (no administra)");
 const tokenTec = jwt.sign({ id: "u2", rol: "tecnico_plagas", nombre: "Técnico" }, process.env.JWT_SECRET);
 revisar((await pedir("POST", "/inspecciones/eliminar", tokenTec)) === 403, "no puede eliminar servicios");
 revisar((await pedir("PUT", "/sitios/x/tecnicos", tokenTec)) === 403, "no puede asignarse plantas");
+revisar((await pedir("PUT", "/estrategias/x/cotejo", tokenTec)) === 403, "no puede cambiar el cotejo");
 
 console.log("\nToken inválido");
 revisar((await pedir("GET", "/clientes", "token-falso")) === 401, "se rechaza");

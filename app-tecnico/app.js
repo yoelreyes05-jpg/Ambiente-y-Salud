@@ -1327,7 +1327,8 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO, 
   // amarillo y sigue pendiente.
   const estadoNoSePudo = estados.find((e) => e.requiere_motivo && e.activo !== false) || estados.find((e) => e.requiere_motivo);
   for (const p of preguntas) {
-    if (p.tipo_respuesta !== "si_no" || !/se\s+realiz/i.test(p.texto || "")) continue;
+    // No cuenta "¿Se realizó recambio / cambio de lámina?": es parte del servicio
+    if (p.tipo_respuesta !== "si_no" || !/^(?!.*(cambi|reempla|recarg|sustitu|reposici|renov)).*se\s+realiz/i.test(p.texto || "")) continue;
     form.querySelector(`[data-grupo="p_${p.id}"]`)?.addEventListener("click", (e) => {
       const op = e.target.closest(".opcion");
       if (!op || op.dataset.valor !== "false" || !estadoNoSePudo) return;
