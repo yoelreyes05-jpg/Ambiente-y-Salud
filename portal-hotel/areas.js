@@ -13,7 +13,7 @@
 // Se carga antes de app.js; usa sus utilidades (GET, esc, fecha, PLANTA…) en
 // tiempo de ejecución, y fechaRDp / horaRDp / masDiasP de extras.js.
 
-let AREA_P = { area: "", desde: null, hasta: null };
+let AREA_P = { area: "", desde: null, hasta: null, estrategia: "" };
 
 // Tipos de punto o servicios del cronograma que son una fumigación / aplicación
 const ES_FUMIGACION = /fumig|aplicaci|asperj|aspers|nebuliz|termonebul|tratamiento|desinsect|roci/;
@@ -35,8 +35,13 @@ const fechaHoraCrono = (f) =>
 async function vistaHistorial(cuerpo) {
   const hoy = hoyLocal();
   if (!AREA_P.desde) { AREA_P.desde = masDiasP(hoy, -29); AREA_P.hasta = hoy; }
-  const areas = await GET(`/sitios/${PLANTA.id}/areas`);
+  const [areas, porEstr] = await Promise.all([
+    GET(`/sitios/${PLANTA.id}/areas`),
+    GET(`/puntos/por-estrategia?sitio_id=${PLANTA.id}`).catch(() => ({ estrategias: [] })),
+  ]);
+  const estrategias = porEstr.estrategias || [];
   if (AREA_P.area && !areas.some((a) => a.id === AREA_P.area)) AREA_P.area = "";
+  if (AREA_P.estrategia && !estrategias.some((e) => e.id === AREA_P.estrategia)) AREA_P.estrategia = "";
 
   cuerpo.innerHTML = `
     <div class="tarjeta">
@@ -47,6 +52,12 @@ async function vistaHistorial(cuerpo) {
             ${areas.map((a) => `<option value="${esc(a.id)}"${a.id === AREA_P.area ? " selected" : ""}>${esc(a.nombre)}</option>`).join("")}
           </select>
         </label>
+        ${estrategias.length ? `<label>Estrategia
+          <select class="btn" id="ar-estrategia">
+            <option value="">Todas</option>
+            ${estrategias.map((e) => `<option value="${esc(e.id)}"${e.id === AREA_P.estrategia ? " selected" : ""}>${esc(e.nombre)} (${e.total})</option>`).join("")}
+          </select>
+        </label>` : ""}
         <label>Desde <input type="date" class="btn" id="ar-desde" value="${esc(AREA_P.desde)}" max="${hoy}" /></label>
         <label>Hasta <input type="date" class="btn" id="ar-hasta" value="${esc(AREA_P.hasta)}" max="${hoy}" /></label>
         <label>Período
@@ -71,12 +82,13 @@ async function vistaHistorial(cuerpo) {
 
   const recargar = () => {
     AREA_P.area = $("#ar-area").value;
+    AREA_P.estrategia = $("#ar-estrategia")?.value || "";
     AREA_P.desde = $("#ar-desde").value || AREA_P.desde;
     AREA_P.hasta = $("#ar-hasta").value || AREA_P.hasta;
     if (AREA_P.hasta < AREA_P.desde) [AREA_P.desde, AREA_P.hasta] = [AREA_P.hasta, AREA_P.desde];
     cargarArea(areas);
   };
-  ["#ar-area", "#ar-desde", "#ar-hasta"].forEach((s) => $(s).addEventListener("change", recargar));
+  ["#ar-area", "#ar-estrategia", "#ar-desde", "#ar-hasta"].forEach((s) => $(s)?.addEventListener("change", recargar));
   $("#ar-rango").addEventListener("change", (e) => {
     const v = e.target.value;
     if (!v) return;
@@ -134,6 +146,11 @@ async function cargarArea(areas) {
     ? await htmlUnaArea(area, recientes, proximos)
     : htmlTodasLasAreas(areas, recientes, proximos);
   caja.insertAdjacentHTML("afterbegin", htmlHallazgosPorCorregir(hallazgos, area));
+  // Estrategia elegida: sus equipos, con cuándo se les hizo el cambio
+  if (AREA_P.estrategia) {
+    caja.insertAdjacentHTML("afterbegin", `<div id="ar-equipos"><div class="tarjeta"><div class="cargando">Cargando equipos…</div></div></div>`);
+    pintarEquiposEstrategia($("#ar-equipos", caja), area);
+  }
   caja.insertAdjacentHTML("beforeend", `<div id="pl-estadisticas"></div>` + htmlServiciosRango(servicios));
 
   engancharServicios(caja);
@@ -152,6 +169,64 @@ async function cargarArea(areas) {
   // Las plagas, con la misma área y fechas (plagas.js). Tocar una plaga
   // despliega dónde se encontró.
   await montarEstadisticasPlagas($("#pl-estadisticas", caja), { desde: AREA_P.desde, hasta: AREA_P.hasta, area_id: area?.id }).catch(() => {});
+}
+
+// ── Equipos de una estrategia (dispensadores, lámparas…) ────────────────
+// Cada equipo con su último servicio y la fecha del último CAMBIO (recambio de
+// aerosol, cambio de lámina, reemplazo). Al tocarlo se despliega todo lo que se
+// le hizo en el período; los servicios con cambio van marcados.
+let EQ_ABIERTO = null;
+async function pintarEquiposEstrategia(caja, area) {
+  let d;
+  try {
+    d = await GET(`/puntos/por-estrategia?${new URLSearchParams({ sitio_id: PLANTA.id, estrategia_id: AREA_P.estrategia, desde: AREA_P.desde, hasta: AREA_P.hasta })}`);
+  } catch (e) { caja.innerHTML = `<div class="tarjeta"><div class="error">${esc(e.message)}</div></div>`; return; }
+  const lista = (d.puntos || []).filter((p) => !area || p.area === area.nombre);
+  const fechaCorta = (f) => (f ? fecha(String(f).slice(0, 10)) : "");
+  const conCambio = lista.filter((p) => p.ultimo_cambio).length;
+  caja.innerHTML = `
+    <div class="tarjeta">
+      <h2>🔧 ${esc(d.estrategia?.nombre || "Equipos")}${area ? ` · ${esc(area.nombre)}` : ""}</h2>
+      <p class="pl-nota">${lista.length} equipo${lista.length === 1 ? "" : "s"} · ${conCambio} con cambio del ${esc(fecha(AREA_P.desde))} al ${esc(fecha(AREA_P.hasta))}. Toca uno para ver cada servicio y cuándo se le hizo el cambio.</p>
+      ${lista.length ? lista.map((p) => `
+        <div class="eq-item${EQ_ABIERTO === p.id ? " abierto" : ""}" data-eq="${esc(p.id)}">
+          <div class="registro clicable eq-cab">
+            <div class="cab">
+              <div>
+                <div class="punto">${esc(p.nombre)}</div>
+                <div class="meta">${esc([p.codigo, p.area].filter(Boolean).join(" · "))}</div>
+                <div class="meta">${p.ultimo_servicio ? `Último servicio: ${esc(fechaCorta(p.ultimo_servicio))}` : "Sin servicios en el período"}</div>
+              </div>
+              <div class="fecha">${p.ultimo_cambio
+                ? `<div class="marca ok">🔄 Cambio: ${esc(fechaCorta(p.ultimo_cambio))}</div>${p.total_cambios > 1 ? `<div class="meta" style="margin-top:4px">${p.total_cambios} cambios</div>` : ""}`
+                : `<div class="marca alerta">Sin cambio</div>`}</div>
+            </div>
+          </div>
+          <div class="eq-hist" ${EQ_ABIERTO === p.id ? "" : "hidden"}>
+            ${p.servicios.length ? p.servicios.map((x) => `
+              <div class="registro clicable" data-insp="${esc(x.id)}">
+                <div class="cab">
+                  <div>
+                    <div class="punto">${esc(fechaCorta(x.fecha_local || x.fecha))}
+                      ${x.no_realizado ? `<span class="marca nopudo">No realizado</span>` : x.cambio ? `<span class="marca ok">🔄 Cambio</span>` : `<span class="marca neutra">Revisión</span>`}</div>
+                    ${x.cambio ? `<div class="meta">${esc(x.cambio.join(" · "))}</div>` : ""}
+                    <div class="meta">${esc([ESTADO_TEXTO[x.estado_punto] || x.estado_punto, x.tecnico].filter(Boolean).join(" · "))}</div>
+                    ${x.notas ? `<div class="meta">${esc(x.notas)}</div>` : ""}
+                  </div>
+                  <div class="fecha">${esc(horaCorta(x.fecha))}${x.fotos ? `<div class="marca neutra" style="margin-top:4px">${x.fotos} fotos</div>` : ""}</div>
+                </div>
+              </div>`).join("") : `<div class="vacio">Sin servicios en el período.</div>`}
+          </div>
+        </div>`).join("") : `<div class="vacio">No hay equipos de esta estrategia${area ? " en esta área" : ""}.</div>`}
+    </div>`;
+  $$(".eq-item", caja).forEach((item) => $(".eq-cab", item).addEventListener("click", () => {
+    const h = $(".eq-hist", item);
+    const abrir = h.hidden;
+    $$(".eq-item", caja).forEach((x) => { x.classList.remove("abierto"); $(".eq-hist", x).hidden = true; });
+    h.hidden = !abrir; item.classList.toggle("abierto", abrir);
+    EQ_ABIERTO = abrir ? item.dataset.eq : null;
+  }));
+  engancharServicios(caja);   // solo los servicios tienen data-insp: abren su ficha
 }
 
 // ── Hallazgos por corregir ───────────────────────────────────────────────

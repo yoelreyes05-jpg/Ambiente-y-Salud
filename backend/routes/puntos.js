@@ -621,6 +621,113 @@ router.delete("/etiquetas/:token", requireRol("operaciones"), async (req, res) =
 // medio hotel); desde dos letras, los que la contienen.
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /puntos/por-estrategia?sitio_id=&desde=&hasta=&estrategia_id=
+//
+// Para el Historial del portal: las estrategias que tiene el hotel (la del
+// punto o la de su tipo) y, de la elegida, cada equipo con lo que se le hizo
+// en el período y CUÁNDO SE LE HIZO EL CAMBIO (recambio de aerosol, cambio de
+// lámina/pega, reemplazo…). El cambio sale de las respuestas del técnico
+// ("¿Se cambió la lámina?" Sí, "Recambio de aerosol") o del estado
+// "reemplazado". Va antes de /:id.
+// ─────────────────────────────────────────────────────────────────────────────
+const PREGUNTA_CAMBIO = /cambi|recambi|reempla|sustitu|repuest|recarg|reposici|renov|coloc\w* (nuev|otr)/;
+const NEGATIVO = /^(no|ninguno|ninguna|n\/a|no aplica|sin cambio|-)\b/;
+const normE = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+function cambioDe(insp, respuestas) {
+  if (insp.motivo_no_realizado) return null;
+  const hechos = [];
+  for (const r of respuestas || []) {
+    if (!PREGUNTA_CAMBIO.test(normE(r.pregunta_texto))) continue;
+    if (r.valor_bool === true) { hechos.push(r.pregunta_texto); continue; }
+    if (r.valor_bool === false) continue;
+    const ops = Array.isArray(r.valor_opciones) ? r.valor_opciones.filter((o) => !NEGATIVO.test(normE(o))) : [];
+    if (ops.length) { hechos.push(`${r.pregunta_texto}: ${ops.join(", ")}`); continue; }
+    if (r.valor_numero != null && Number(r.valor_numero) > 0) { hechos.push(`${r.pregunta_texto}: ${r.valor_numero}`); continue; }
+    const t = String(r.valor_texto || "").trim();
+    if (t && !NEGATIVO.test(normE(t))) hechos.push(/^(si|true)$/.test(normE(t)) ? r.pregunta_texto : `${r.pregunta_texto}: ${t}`);
+  }
+  if (insp.estado_punto === "reemplazado" && !hechos.length) hechos.push("Equipo reemplazado");
+  return hechos.length ? hechos : null;
+}
+
+router.get("/por-estrategia", async (req, res) => {
+  const { sitio_id, estrategia_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || "") ? req.query.desde : hoy;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || "") ? req.query.hasta : hoy;
+  try {
+    let puntos = await traerTodo(() => supabase.from("asa_puntos_control")
+      .select("id, codigo_visible, nombre, numero_habitacion, estrategia_id, tipo_punto_id, area_id, asa_areas(nombre), asa_tipos_punto(codigo, nombre, icono)")
+      .eq("sitio_id", sitio_id).eq("activo", true).order("codigo_visible").order("id"));
+    if (ROLES_EXTERNOS.includes(req.usuario?.rol)) {
+      const permitidos = new Set(await tiposVisiblesPortal(sitio_id));
+      puntos = puntos.filter((p) => permitidos.has(p.asa_tipos_punto?.codigo || "otro"));
+    }
+    const tipos = [...new Set(puntos.map((p) => p.tipo_punto_id).filter(Boolean))];
+    const { data: tpe } = tipos.length
+      ? await supabase.from("asa_tipo_punto_estrategias").select("tipo_punto_id, estrategia_id").in("tipo_punto_id", tipos)
+      : { data: [] };
+    const estrDeTipo = new Map();
+    for (const x of tpe || []) (estrDeTipo.get(x.tipo_punto_id) || estrDeTipo.set(x.tipo_punto_id, []).get(x.tipo_punto_id)).push(String(x.estrategia_id));
+    const estrDe = (p) => (p.estrategia_id ? [String(p.estrategia_id)] : estrDeTipo.get(p.tipo_punto_id) || []);
+    const ids = [...new Set(puntos.flatMap(estrDe))];
+    const { data: estr } = ids.length
+      ? await supabase.from("asa_estrategias").select("id, nombre").in("id", ids).eq("activo", true)
+      : { data: [] };
+    const estrategias = (estr || []).map((e) => ({ id: String(e.id), nombre: e.nombre, total: puntos.filter((p) => estrDe(p).includes(String(e.id))).length }))
+      .filter((e) => e.total).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    if (!estrategia_id) return res.json({ estrategias, puntos: [] });
+
+    const sel = puntos.filter((p) => estrDe(p).includes(String(estrategia_id)));
+    const insp = [];
+    for (let i = 0; i < sel.length; i += 200) {
+      const lote = sel.slice(i, i + 200).map((p) => p.id);
+      insp.push(...await traerTodo(() => supabase.from("asa_inspecciones")
+        .select("id, punto_id, fecha, fecha_local, estado_punto, nivel_actividad, motivo_no_realizado, notas, fotos, asa_empleados(nombre_completo)")
+        .in("punto_id", lote).gte("fecha_local", desde).lte("fecha_local", hasta)
+        .order("fecha", { ascending: false }).order("id")));
+    }
+    const resp = new Map();
+    for (let i = 0; i < insp.length; i += 200) {
+      const lote = insp.slice(i, i + 200).map((x) => x.id);
+      const { data } = await supabase.from("asa_inspeccion_respuestas")
+        .select("inspeccion_id, pregunta_texto, valor_bool, valor_texto, valor_numero, valor_opciones").in("inspeccion_id", lote);
+      for (const r of data || []) (resp.get(r.inspeccion_id) || resp.set(r.inspeccion_id, []).get(r.inspeccion_id)).push(r);
+    }
+    const porPunto = new Map();
+    for (const x of insp) (porPunto.get(x.punto_id) || porPunto.set(x.punto_id, []).get(x.punto_id)).push(x);
+    res.json({
+      estrategias,
+      estrategia: estrategias.find((e) => e.id === String(estrategia_id)) || null,
+      desde, hasta,
+      puntos: sel.map((p) => {
+        const servicios = (porPunto.get(p.id) || []).map((x) => ({
+          id: x.id, fecha: x.fecha, fecha_local: x.fecha_local, estado_punto: x.estado_punto,
+          nivel_actividad: x.nivel_actividad, no_realizado: !!x.motivo_no_realizado, notas: x.notas,
+          fotos: Array.isArray(x.fotos) ? x.fotos.length : 0,
+          tecnico: x.asa_empleados?.nombre_completo || null,
+          cambio: cambioDe(x, resp.get(x.id)),
+        }));
+        const cambios = servicios.filter((x) => x.cambio);
+        return {
+          id: p.id, codigo: p.codigo_visible,
+          nombre: p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre || p.asa_tipos_punto?.nombre || p.codigo_visible,
+          area: p.asa_areas?.nombre || "Sin área", tipo: p.asa_tipos_punto?.nombre || null, icono: p.asa_tipos_punto?.icono || null,
+          ultimo_servicio: servicios.find((x) => !x.no_realizado)?.fecha || null,
+          ultimo_cambio: cambios[0]?.fecha || null,
+          total_cambios: cambios.length,
+          servicios,
+        };
+      }),
+    });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /puntos/cotejo?sitio_id=
 //
 // Los puntos del hotel que van en el cotejo de fumigación de la app: los de
