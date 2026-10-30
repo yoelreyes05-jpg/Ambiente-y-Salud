@@ -13,7 +13,7 @@
 // Se carga antes de app.js; usa sus utilidades (GET, esc, fecha, PLANTA…) en
 // tiempo de ejecución, y fechaRDp / horaRDp / masDiasP de extras.js.
 
-let AREA_P = { area: "", desde: null, hasta: null, estrategia: "" };
+let AREA_P = { area: "", desde: null, hasta: null, equipo: "" };
 
 // Tipos de punto o servicios del cronograma que son una fumigación / aplicación
 const ES_FUMIGACION = /fumig|aplicaci|asperj|aspers|nebuliz|termonebul|tratamiento|desinsect|roci/;
@@ -35,13 +35,13 @@ const fechaHoraCrono = (f) =>
 async function vistaHistorial(cuerpo) {
   const hoy = hoyLocal();
   if (!AREA_P.desde) { AREA_P.desde = masDiasP(hoy, -29); AREA_P.hasta = hoy; }
-  const [areas, porEstr] = await Promise.all([
+  const [areas, eq] = await Promise.all([
     GET(`/sitios/${PLANTA.id}/areas`),
-    GET(`/puntos/por-estrategia?sitio_id=${PLANTA.id}`).catch(() => ({ estrategias: [] })),
+    GET(`/puntos/equipos?sitio_id=${PLANTA.id}`).catch(() => ({ tipos: [] })),
   ]);
-  const estrategias = porEstr.estrategias || [];
+  const tiposEquipo = eq.tipos || [];
   if (AREA_P.area && !areas.some((a) => a.id === AREA_P.area)) AREA_P.area = "";
-  if (AREA_P.estrategia && !estrategias.some((e) => e.id === AREA_P.estrategia)) AREA_P.estrategia = "";
+  if (AREA_P.equipo && !tiposEquipo.some((e) => e.id === AREA_P.equipo)) AREA_P.equipo = "";
 
   cuerpo.innerHTML = `
     <div class="tarjeta">
@@ -52,10 +52,10 @@ async function vistaHistorial(cuerpo) {
             ${areas.map((a) => `<option value="${esc(a.id)}"${a.id === AREA_P.area ? " selected" : ""}>${esc(a.nombre)}</option>`).join("")}
           </select>
         </label>
-        ${estrategias.length ? `<label>Estrategia
-          <select class="btn" id="ar-estrategia">
-            <option value="">Todas</option>
-            ${estrategias.map((e) => `<option value="${esc(e.id)}"${e.id === AREA_P.estrategia ? " selected" : ""}>${esc(e.nombre)} (${e.total})</option>`).join("")}
+        ${tiposEquipo.length ? `<label>Equipos
+          <select class="btn" id="ar-equipo">
+            <option value="">—</option>
+            ${tiposEquipo.map((e) => `<option value="${esc(e.id)}"${e.id === AREA_P.equipo ? " selected" : ""}>${esc(`${e.icono ? e.icono + " " : ""}${e.nombre}`)} (${e.total})</option>`).join("")}
           </select>
         </label>` : ""}
         <label>Desde <input type="date" class="btn" id="ar-desde" value="${esc(AREA_P.desde)}" max="${hoy}" /></label>
@@ -82,13 +82,13 @@ async function vistaHistorial(cuerpo) {
 
   const recargar = () => {
     AREA_P.area = $("#ar-area").value;
-    AREA_P.estrategia = $("#ar-estrategia")?.value || "";
+    AREA_P.equipo = $("#ar-equipo")?.value || "";
     AREA_P.desde = $("#ar-desde").value || AREA_P.desde;
     AREA_P.hasta = $("#ar-hasta").value || AREA_P.hasta;
     if (AREA_P.hasta < AREA_P.desde) [AREA_P.desde, AREA_P.hasta] = [AREA_P.hasta, AREA_P.desde];
     cargarArea(areas);
   };
-  ["#ar-area", "#ar-estrategia", "#ar-desde", "#ar-hasta"].forEach((s) => $(s)?.addEventListener("change", recargar));
+  ["#ar-area", "#ar-equipo", "#ar-desde", "#ar-hasta"].forEach((s) => $(s)?.addEventListener("change", recargar));
   $("#ar-rango").addEventListener("change", (e) => {
     const v = e.target.value;
     if (!v) return;
@@ -146,8 +146,8 @@ async function cargarArea(areas) {
     ? await htmlUnaArea(area, recientes, proximos)
     : htmlTodasLasAreas(areas, recientes, proximos);
   caja.insertAdjacentHTML("afterbegin", htmlHallazgosPorCorregir(hallazgos, area));
-  // Estrategia elegida: sus equipos, con cuándo se les hizo el cambio
-  if (AREA_P.estrategia) {
+  // Equipo elegido (lámparas, dispensadores…): todo lo que se les hizo
+  if (AREA_P.equipo) {
     caja.insertAdjacentHTML("afterbegin", `<div id="ar-equipos"><div class="tarjeta"><div class="cargando">Cargando equipos…</div></div></div>`);
     pintarEquiposEstrategia($("#ar-equipos", caja), area);
   }
@@ -171,54 +171,85 @@ async function cargarArea(areas) {
   await montarEstadisticasPlagas($("#pl-estadisticas", caja), { desde: AREA_P.desde, hasta: AREA_P.hasta, area_id: area?.id }).catch(() => {});
 }
 
-// ── Equipos de una estrategia (dispensadores, lámparas…) ────────────────
-// Cada equipo con su último servicio y la fecha del último CAMBIO (recambio de
-// aerosol, cambio de lámina, reemplazo). Al tocarlo se despliega todo lo que se
-// le hizo en el período; los servicios con cambio van marcados.
+// ── Equipos (lámparas para moscas, dispensadores de aerosol…) ──────────
+// Del tipo elegido: resumen del período (servicios, cambios, capturas) y dos
+// vistas. "Todos los servicios": todo lo que se hizo, del más nuevo al más
+// viejo. "Por equipo": cada equipo con su último cambio y su historial. Cada
+// servicio dice si hubo cambio, qué capturó (moscas…), estado, nivel, técnico y
+// fotos, y abre su ficha.
+let EQ_VISTA = "todos";
 let EQ_ABIERTO = null;
 async function pintarEquiposEstrategia(caja, area) {
   let d;
   try {
-    d = await GET(`/puntos/por-estrategia?${new URLSearchParams({ sitio_id: PLANTA.id, estrategia_id: AREA_P.estrategia, desde: AREA_P.desde, hasta: AREA_P.hasta })}`);
+    d = await GET(`/puntos/equipos?${new URLSearchParams({ sitio_id: PLANTA.id, tipo_id: AREA_P.equipo, desde: AREA_P.desde, hasta: AREA_P.hasta })}`);
   } catch (e) { caja.innerHTML = `<div class="tarjeta"><div class="error">${esc(e.message)}</div></div>`; return; }
-  const lista = (d.puntos || []).filter((p) => !area || p.area === area.nombre);
-  const fechaCorta = (f) => (f ? fecha(String(f).slice(0, 10)) : "");
-  const conCambio = lista.filter((p) => p.ultimo_cambio).length;
+  const equipos = (d.puntos || []).filter((p) => !area || p.area_id === area.id);
+  const fCorta = (f) => (f ? fecha(String(f).slice(0, 10)) : "");
+  const servicios = equipos.flatMap((p) => p.servicios.map((x) => ({ ...x, equipo: p })))
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  const hechos = servicios.filter((x) => !x.no_realizado).length;
+  const cambios = servicios.filter((x) => x.cambio).length;
+  const capt = {};
+  for (const x of servicios) for (const c of x.capturas || []) capt[c.plaga] = (capt[c.plaga] || 0) + c.cantidad;
+  const capturasTxt = Object.entries(capt).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${p}: ${n}`).join(" · ");
+  const sinServicio = equipos.filter((p) => !p.ultimo_servicio).length;
+
+  const filaServ = (x, conEquipo) => `
+    <div class="registro clicable" data-insp="${esc(x.id)}">
+      <div class="cab">
+        <div>
+          <div class="punto">${conEquipo ? `${esc(x.equipo.codigo)} <span class="eq-area">· ${esc(x.equipo.area)}</span>` : esc(fCorta(x.fecha_local || x.fecha))}
+            ${x.no_realizado ? `<span class="marca nopudo">No realizado</span>` : x.cambio ? `<span class="marca ok">🔄 Cambio</span>` : `<span class="marca neutra">Revisión</span>`}</div>
+          ${x.cambio ? `<div class="meta eq-cambio">${esc(x.cambio.join(" · "))}</div>` : ""}
+          ${x.capturas?.length ? `<div class="meta eq-capt">🪰 ${esc(x.capturas.map((c) => `${c.plaga}: ${c.cantidad}`).join(" · "))}</div>` : ""}
+          <div class="meta">${esc([ESTADO_TEXTO[x.estado_punto] || x.estado_punto, x.nivel_actividad && x.nivel_actividad !== "ninguna" ? NIVEL_TEXTO[x.nivel_actividad] : null, x.tecnico].filter(Boolean).join(" · "))}</div>
+          ${x.notas ? `<div class="meta">${esc(x.notas)}</div>` : ""}
+        </div>
+        <div class="fecha">${conEquipo ? `${esc(fCorta(x.fecha_local || x.fecha))}<br>` : ""}${esc(horaCorta(x.fecha))}${x.fotos ? `<div class="marca neutra" style="margin-top:4px">${x.fotos} fotos</div>` : ""}</div>
+      </div>
+    </div>`;
+
   caja.innerHTML = `
     <div class="tarjeta">
-      <h2>🔧 ${esc(d.estrategia?.nombre || "Equipos")}${area ? ` · ${esc(area.nombre)}` : ""}</h2>
-      <p class="pl-nota">${lista.length} equipo${lista.length === 1 ? "" : "s"} · ${conCambio} con cambio del ${esc(fecha(AREA_P.desde))} al ${esc(fecha(AREA_P.hasta))}. Toca uno para ver cada servicio y cuándo se le hizo el cambio.</p>
-      ${lista.length ? lista.map((p) => `
-        <div class="eq-item${EQ_ABIERTO === p.id ? " abierto" : ""}" data-eq="${esc(p.id)}">
-          <div class="registro clicable eq-cab">
-            <div class="cab">
-              <div>
-                <div class="punto">${esc(p.nombre)}</div>
-                <div class="meta">${esc([p.codigo, p.area].filter(Boolean).join(" · "))}</div>
-                <div class="meta">${p.ultimo_servicio ? `Último servicio: ${esc(fechaCorta(p.ultimo_servicio))}` : "Sin servicios en el período"}</div>
-              </div>
-              <div class="fecha">${p.ultimo_cambio
-                ? `<div class="marca ok">🔄 Cambio: ${esc(fechaCorta(p.ultimo_cambio))}</div>${p.total_cambios > 1 ? `<div class="meta" style="margin-top:4px">${p.total_cambios} cambios</div>` : ""}`
-                : `<div class="marca alerta">Sin cambio</div>`}</div>
-            </div>
-          </div>
-          <div class="eq-hist" ${EQ_ABIERTO === p.id ? "" : "hidden"}>
-            ${p.servicios.length ? p.servicios.map((x) => `
-              <div class="registro clicable" data-insp="${esc(x.id)}">
+      <h2>${esc(`${d.tipo?.icono ? d.tipo.icono + " " : ""}${d.tipo?.nombre || "Equipos"}`)}${area ? ` · ${esc(area.nombre)}` : ""}</h2>
+      <p class="pl-nota">Del ${esc(fecha(AREA_P.desde))} al ${esc(fecha(AREA_P.hasta))}.</p>
+      <div class="kpis eq-kpis">
+        <div class="kpi"><div class="n">${equipos.length}</div><div class="t">Equipos</div></div>
+        <div class="kpi ok"><div class="n">${hechos}</div><div class="t">Servicios hechos</div></div>
+        <div class="kpi"><div class="n">${cambios}</div><div class="t">Cambios</div></div>
+        <div class="kpi${sinServicio ? " mal" : ""}"><div class="n">${sinServicio}</div><div class="t">Sin servicio en el período</div></div>
+      </div>
+      ${capturasTxt ? `<p class="eq-capt-total">Capturado en el período: <strong>${esc(capturasTxt)}</strong></p>` : ""}
+      <div class="eq-vistas">
+        <button type="button" class="btn${EQ_VISTA === "todos" ? " principal" : ""}" data-eq-vista="todos">Todos los servicios (${servicios.length})</button>
+        <button type="button" class="btn${EQ_VISTA === "equipo" ? " principal" : ""}" data-eq-vista="equipo">Por equipo (${equipos.length})</button>
+      </div>
+      <div id="eq-contenido">
+        ${EQ_VISTA === "todos"
+          ? (servicios.length ? servicios.map((x) => filaServ(x, true)).join("") : `<div class="vacio">No se hicieron servicios a estos equipos en el período.</div>`)
+          : (equipos.length ? equipos.map((p) => `
+            <div class="eq-item${EQ_ABIERTO === p.id ? " abierto" : ""}" data-eq="${esc(p.id)}">
+              <div class="registro clicable eq-cab">
                 <div class="cab">
                   <div>
-                    <div class="punto">${esc(fechaCorta(x.fecha_local || x.fecha))}
-                      ${x.no_realizado ? `<span class="marca nopudo">No realizado</span>` : x.cambio ? `<span class="marca ok">🔄 Cambio</span>` : `<span class="marca neutra">Revisión</span>`}</div>
-                    ${x.cambio ? `<div class="meta">${esc(x.cambio.join(" · "))}</div>` : ""}
-                    <div class="meta">${esc([ESTADO_TEXTO[x.estado_punto] || x.estado_punto, x.tecnico].filter(Boolean).join(" · "))}</div>
-                    ${x.notas ? `<div class="meta">${esc(x.notas)}</div>` : ""}
+                    <div class="punto">${esc(p.codigo)}</div>
+                    <div class="meta">${esc([p.nombre !== p.codigo ? p.nombre : null, p.area].filter(Boolean).join(" · "))}</div>
+                    <div class="meta">${p.ultimo_servicio ? `Último servicio: ${esc(fCorta(p.ultimo_servicio))} · ${p.servicios.length} en el período` : "Sin servicios en el período"}</div>
                   </div>
-                  <div class="fecha">${esc(horaCorta(x.fecha))}${x.fotos ? `<div class="marca neutra" style="margin-top:4px">${x.fotos} fotos</div>` : ""}</div>
+                  <div class="fecha">${p.ultimo_cambio
+                    ? `<div class="marca ok">🔄 Cambio: ${esc(fCorta(p.ultimo_cambio))}</div>${p.total_cambios > 1 ? `<div class="meta" style="margin-top:4px">${p.total_cambios} cambios</div>` : ""}`
+                    : `<div class="marca alerta">Sin cambio</div>`}</div>
                 </div>
-              </div>`).join("") : `<div class="vacio">Sin servicios en el período.</div>`}
-          </div>
-        </div>`).join("") : `<div class="vacio">No hay equipos de esta estrategia${area ? " en esta área" : ""}.</div>`}
+              </div>
+              <div class="eq-hist" ${EQ_ABIERTO === p.id ? "" : "hidden"}>
+                ${p.servicios.length ? p.servicios.map((x) => filaServ({ ...x, equipo: p }, false)).join("") : `<div class="vacio">Sin servicios en el período.</div>`}
+              </div>
+            </div>`).join("") : `<div class="vacio">No hay equipos de este tipo${area ? " en esta área" : ""}.</div>`)}
+      </div>
     </div>`;
+
+  $$("[data-eq-vista]", caja).forEach((b) => b.addEventListener("click", () => { EQ_VISTA = b.dataset.eqVista; pintarEquiposEstrategia(caja, area); }));
   $$(".eq-item", caja).forEach((item) => $(".eq-cab", item).addEventListener("click", () => {
     const h = $(".eq-hist", item);
     const abrir = h.hidden;

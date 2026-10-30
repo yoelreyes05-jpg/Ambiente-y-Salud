@@ -504,3 +504,9 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .eq-item .eq-cab{border-bottom:0}
 .eq-item.abierto .eq-cab{background:var(--azul-pastel,#EAF0F8)}
 .eq-hist{padding:4px 0 12px 14px;border-left:3px solid var(--azul);margin:0 0 10px 4px}
+.eq-kpis{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+.eq-capt-total{font-size:13.5px;margin:4px 0 10px}
+.eq-vistas{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+.eq-area{font-weight:500;color:var(--suave);font-size:13px}
+.eq-cambio{color:var(--verde,#2e6b32);font-weight:600}
+.eq-capt{color:#b45309;font-weight:600}

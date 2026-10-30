@@ -12,6 +12,7 @@ import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
 import { estrategiasCotejo } from "../lib/cotejo.js";
+import { unificarPlaga } from "../lib/plagasUnificadas.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
 import { datosAgrupacion, normalizarAgrupacion, pisoDeNumero } from "../lib/agrupacion.js";
@@ -621,11 +622,12 @@ router.delete("/etiquetas/:token", requireRol("operaciones"), async (req, res) =
 // medio hotel); desde dos letras, los que la contienen.
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /puntos/por-estrategia?sitio_id=&desde=&hasta=&estrategia_id=
+// GET /puntos/equipos?sitio_id=&desde=&hasta=&tipo_id=
 //
-// Para el Historial del portal: las estrategias que tiene el hotel (la del
-// punto o la de su tipo) y, de la elegida, cada equipo con lo que se le hizo
-// en el período y CUÁNDO SE LE HIZO EL CAMBIO (recambio de aerosol, cambio de
+// Para el Historial del portal: los tipos de equipo del hotel (lámparas para
+// moscas, dispensadores de aerosol, cebaderos…; todo menos habitaciones) y, del
+// elegido, cada equipo con todo lo que se le hizo en el período (capturas,
+// estado, nivel, técnico, fotos) y CUÁNDO SE LE HIZO EL CAMBIO (recambio de aerosol, cambio de
 // lámina/pega, reemplazo…). El cambio sale de las respuestas del técnico
 // ("¿Se cambió la lámina?" Sí, "Recambio de aerosol") o del estado
 // "reemplazado". Va antes de /:id.
@@ -650,8 +652,8 @@ function cambioDe(insp, respuestas) {
   return hechos.length ? hechos : null;
 }
 
-router.get("/por-estrategia", async (req, res) => {
-  const { sitio_id, estrategia_id } = req.query;
+router.get("/equipos", async (req, res) => {
+  const { sitio_id, tipo_id } = req.query;
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
   if (!exigirSitioPermitido(req, res, sitio_id)) return;
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
@@ -659,28 +661,25 @@ router.get("/por-estrategia", async (req, res) => {
   const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || "") ? req.query.hasta : hoy;
   try {
     let puntos = await traerTodo(() => supabase.from("asa_puntos_control")
-      .select("id, codigo_visible, nombre, numero_habitacion, estrategia_id, tipo_punto_id, area_id, asa_areas(nombre), asa_tipos_punto(codigo, nombre, icono)")
+      .select("id, codigo_visible, nombre, numero_habitacion, tipo_punto_id, area_id, asa_areas(nombre), asa_tipos_punto(id, codigo, nombre, icono)")
       .eq("sitio_id", sitio_id).eq("activo", true).order("codigo_visible").order("id"));
     if (ROLES_EXTERNOS.includes(req.usuario?.rol)) {
       const permitidos = new Set(await tiposVisiblesPortal(sitio_id));
       puntos = puntos.filter((p) => permitidos.has(p.asa_tipos_punto?.codigo || "otro"));
     }
-    const tipos = [...new Set(puntos.map((p) => p.tipo_punto_id).filter(Boolean))];
-    const { data: tpe } = tipos.length
-      ? await supabase.from("asa_tipo_punto_estrategias").select("tipo_punto_id, estrategia_id").in("tipo_punto_id", tipos)
-      : { data: [] };
-    const estrDeTipo = new Map();
-    for (const x of tpe || []) (estrDeTipo.get(x.tipo_punto_id) || estrDeTipo.set(x.tipo_punto_id, []).get(x.tipo_punto_id)).push(String(x.estrategia_id));
-    const estrDe = (p) => (p.estrategia_id ? [String(p.estrategia_id)] : estrDeTipo.get(p.tipo_punto_id) || []);
-    const ids = [...new Set(puntos.flatMap(estrDe))];
-    const { data: estr } = ids.length
-      ? await supabase.from("asa_estrategias").select("id, nombre").in("id", ids).eq("activo", true)
-      : { data: [] };
-    const estrategias = (estr || []).map((e) => ({ id: String(e.id), nombre: e.nombre, total: puntos.filter((p) => estrDe(p).includes(String(e.id))).length }))
-      .filter((e) => e.total).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-    if (!estrategia_id) return res.json({ estrategias, puntos: [] });
+    // Equipos = todo tipo de punto menos las habitaciones (esas van por área)
+    const esEquipo = (p) => p.tipo_punto_id && !/habitaci/.test(normE(`${p.asa_tipos_punto?.nombre} ${p.asa_tipos_punto?.codigo}`));
+    puntos = puntos.filter(esEquipo);
+    const tiposM = new Map();
+    for (const p of puntos) {
+      const t = p.asa_tipos_punto || {};
+      if (!tiposM.has(p.tipo_punto_id)) tiposM.set(p.tipo_punto_id, { id: String(p.tipo_punto_id), nombre: t.nombre || "Equipo", icono: t.icono || null, total: 0 });
+      tiposM.get(p.tipo_punto_id).total++;
+    }
+    const tipos = [...tiposM.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    if (!tipo_id) return res.json({ tipos, puntos: [] });
 
-    const sel = puntos.filter((p) => estrDe(p).includes(String(estrategia_id)));
+    const sel = puntos.filter((p) => String(p.tipo_punto_id) === String(tipo_id));
     const insp = [];
     for (let i = 0; i < sel.length; i += 200) {
       const lote = sel.slice(i, i + 200).map((p) => p.id);
@@ -689,38 +688,61 @@ router.get("/por-estrategia", async (req, res) => {
         .in("punto_id", lote).gte("fecha_local", desde).lte("fecha_local", hasta)
         .order("fecha", { ascending: false }).order("id")));
     }
-    const resp = new Map();
+    // Respuestas (para saber si hubo cambio) y capturas (moscas en la lámpara…)
+    const resp = new Map(), caps = new Map();
     for (let i = 0; i < insp.length; i += 200) {
       const lote = insp.slice(i, i + 200).map((x) => x.id);
-      const { data } = await supabase.from("asa_inspeccion_respuestas")
-        .select("inspeccion_id, pregunta_texto, valor_bool, valor_texto, valor_numero, valor_opciones").in("inspeccion_id", lote);
-      for (const r of data || []) (resp.get(r.inspeccion_id) || resp.set(r.inspeccion_id, []).get(r.inspeccion_id)).push(r);
+      const [r1, r2] = await Promise.all([
+        supabase.from("asa_inspeccion_respuestas").select("inspeccion_id, pregunta_texto, valor_bool, valor_texto, valor_numero, valor_opciones").in("inspeccion_id", lote),
+        supabase.from("asa_capturas").select("inspeccion_id, cantidad, asa_plagas(codigo, nombre)").in("inspeccion_id", lote),
+      ]);
+      for (const r of r1.data || []) (resp.get(r.inspeccion_id) || resp.set(r.inspeccion_id, []).get(r.inspeccion_id)).push(r);
+      for (const c of r2.data || []) {
+        if (!(Number(c.cantidad) > 0)) continue;
+        const nombre = unificarPlaga(c.asa_plagas)?.nombre || "Plaga";
+        const m = caps.get(c.inspeccion_id) || caps.set(c.inspeccion_id, new Map()).get(c.inspeccion_id);
+        m.set(nombre, (m.get(nombre) || 0) + Number(c.cantidad));
+      }
     }
     const porPunto = new Map();
     for (const x of insp) (porPunto.get(x.punto_id) || porPunto.set(x.punto_id, []).get(x.punto_id)).push(x);
-    res.json({
-      estrategias,
-      estrategia: estrategias.find((e) => e.id === String(estrategia_id)) || null,
-      desde, hasta,
-      puntos: sel.map((p) => {
-        const servicios = (porPunto.get(p.id) || []).map((x) => ({
+    const totalCapturas = {};
+    const salida = sel.map((p) => {
+      const servicios = (porPunto.get(p.id) || []).map((x) => {
+        const capturas = [...(caps.get(x.id) || new Map())].map(([plaga, cantidad]) => ({ plaga, cantidad }));
+        for (const c of capturas) totalCapturas[c.plaga] = (totalCapturas[c.plaga] || 0) + c.cantidad;
+        return {
           id: x.id, fecha: x.fecha, fecha_local: x.fecha_local, estado_punto: x.estado_punto,
           nivel_actividad: x.nivel_actividad, no_realizado: !!x.motivo_no_realizado, notas: x.notas,
           fotos: Array.isArray(x.fotos) ? x.fotos.length : 0,
           tecnico: x.asa_empleados?.nombre_completo || null,
           cambio: cambioDe(x, resp.get(x.id)),
-        }));
-        const cambios = servicios.filter((x) => x.cambio);
-        return {
-          id: p.id, codigo: p.codigo_visible,
-          nombre: p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre || p.asa_tipos_punto?.nombre || p.codigo_visible,
-          area: p.asa_areas?.nombre || "Sin área", tipo: p.asa_tipos_punto?.nombre || null, icono: p.asa_tipos_punto?.icono || null,
-          ultimo_servicio: servicios.find((x) => !x.no_realizado)?.fecha || null,
-          ultimo_cambio: cambios[0]?.fecha || null,
-          total_cambios: cambios.length,
-          servicios,
+          capturas,
         };
-      }),
+      });
+      const cambios = servicios.filter((x) => x.cambio);
+      return {
+        id: p.id, codigo: p.codigo_visible,
+        nombre: p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.nombre || p.asa_tipos_punto?.nombre || p.codigo_visible,
+        area: p.asa_areas?.nombre || "Sin área", area_id: p.area_id,
+        ultimo_servicio: servicios.find((x) => !x.no_realizado)?.fecha || null,
+        ultimo_cambio: cambios[0]?.fecha || null,
+        total_cambios: cambios.length,
+        servicios,
+      };
+    });
+    const todos = salida.flatMap((p) => p.servicios);
+    res.json({
+      tipos, tipo: tipos.find((t) => t.id === String(tipo_id)) || null, desde, hasta,
+      resumen: {
+        equipos: salida.length,
+        servicios: todos.filter((x) => !x.no_realizado).length,
+        no_realizados: todos.filter((x) => x.no_realizado).length,
+        cambios: todos.filter((x) => x.cambio).length,
+        equipos_sin_servicio: salida.filter((p) => !p.ultimo_servicio).length,
+        capturas: Object.entries(totalCapturas).sort((a, b) => b[1] - a[1]).map(([plaga, cantidad]) => ({ plaga, cantidad })),
+      },
+      puntos: salida,
     });
   } catch (e) {
     res.status(500).json({ error: true, mensaje: mensajeAmable(e) });
