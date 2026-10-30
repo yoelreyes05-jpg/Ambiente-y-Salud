@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": null,
-  "installCommand": null,
-  "outputDirectory": ".",
+  "buildCommand": "rm -rf public && mkdir -p public && cp -r inicio panel-web portal-hotel app-tecnico public/",
+  "installCommand": "",
+  "outputDirectory": "public",
   "cleanUrls": false,
   "redirects": [
     {
