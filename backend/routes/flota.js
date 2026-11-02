@@ -776,7 +776,7 @@ router.get("/vehiculos/:id/ficha", ruta(async (req, res) => {
     mantenimientos,
     asignaciones: asign.data || [],
     rendimientos,
-    tanqueos: analizarTanqueos(gastos.data || []),
+    tanqueos: analizarTanqueos(gastos.data || [], { capacidad_tanque: veh.data?.capacidad_tanque }),
   });
 }));
 
@@ -791,7 +791,7 @@ router.get("/gastos/:id/ticket", ruta(async (req, res) => {
   if (error) return fallo(res, 500, error.message);
   if (!g) return fallo(res, 404, "Ese gasto no existe.");
   const [veh, resumen, config] = await Promise.all([
-    supabase.from("asa_flota_vehiculos").select("id,codigo,placa,marca,modelo,anio,color,combustible,km_actual").eq("id", g.vehiculo_id).maybeSingle(),
+    supabase.from("asa_flota_vehiculos").select("id,codigo,placa,marca,modelo,anio,color,combustible,km_actual,capacidad_tanque").eq("id", g.vehiculo_id).maybeSingle(),
     supabase.from("asa_flota_v_resumen_vehiculo").select("conductor").eq("id", g.vehiculo_id).maybeSingle(),
     leerConfig(),
   ]);
@@ -799,7 +799,7 @@ router.get("/gastos/:id/ticket", ruta(async (req, res) => {
   if (g.tipo === "COMBUSTIBLE") {
     const { data: comb } = await supabase.from("asa_flota_gastos").select("*")
       .eq("vehiculo_id", g.vehiculo_id).eq("tipo", "COMBUSTIBLE");
-    const a = analizarTanqueos(comb || []);
+    const a = analizarTanqueos(comb || [], { capacidad_tanque: veh.data?.capacidad_tanque });
     tanqueo = a.cargas.find((c) => String(c.id) === String(g.id)) || null;
     promedio = a.promedio;
     es_peor = String(a.peor_id) === String(g.id);

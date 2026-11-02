@@ -21,7 +21,8 @@ function diasEntre(a, b) {
  * @param gastos gastos de UNA unidad (cualquier tipo; se usan los de COMBUSTIBLE)
  * @returns { cargas: [...] del más viejo al más nuevo, promedio: {...}, peor: carga|null }
  */
-export function analizarTanqueos(gastos) {
+export function analizarTanqueos(gastos, opciones = {}) {
+  const capacidad = num(opciones.capacidad_tanque);
   const cargas = (gastos || [])
     .filter((g) => g.tipo === "COMBUSTIBLE")
     .map((g) => ({ ...g, km: num(g.km), galones: num(g.galones), monto: num(g.monto) || 0, fecha: String(g.fecha).slice(0, 10) }))
@@ -87,6 +88,43 @@ export function analizarTanqueos(gastos) {
       f.consumio_mas = f.costo_km >= promedio.costo_km * 1.1;
     }
   }
+
+  // ── Posibles causas de un consumo alto ─────────────────────────────────────
+  // Lo que se puede saber con los números del llenado, del más probable al
+  // menos. No acusa a nadie: dice qué revisar.
+  filas.forEach((f, i) => {
+    f.causas = [];
+    const ant = filas[i - 1];
+    const sig = filas[i + 1];
+    const alto = f.consumio_mas || (f.vs_promedio && f.vs_promedio.pct <= -10 && f.vs_promedio.medida === "km_galon");
+    if (!alto) return;
+    // 1. El llenado anterior no se llenó completo: el anterior salió "muy bueno"
+    //    y este "muy malo". Juntos dan el rendimiento real.
+    if (ant?.km_galon != null && promedio.km_galon && ant.km_galon >= promedio.km_galon * 1.08 && ant.km_recorridos && f.km_recorridos && ant.galones && f.galones) {
+      const junto = r2((ant.km_recorridos + f.km_recorridos) / (ant.galones + f.galones));
+      f.causas.push({ codigo: "llenado_incompleto",
+        texto: `El llenado anterior (${ant.fecha}) probablemente no llenó el tanque completo: rindió de más (${ant.km_galon} km/gal) y lo que faltó se cargó aquí. Juntando los dos llenados rinde ${junto} km/gal${Math.abs(junto - promedio.km_galon) <= promedio.km_galon * 0.08 ? ", que es lo normal de la unidad" : ""}.` });
+    }
+    // 2. Más galones de los que caben en el tanque
+    if (capacidad && f.galones && f.galones > capacidad * 1.05) {
+      f.causas.push({ codigo: "excede_tanque", texto: `Se registraron ${f.galones} galones y el tanque es de ${capacidad}: revisar la factura (galones mal escritos o combustible que no fue a esta unidad).` });
+    }
+    // 3. Este llenado sí llenó y el siguiente rinde normal: consumo real alto
+    if (f.km_dia != null && promedio.km_dia && f.km_dia >= promedio.km_dia * 1.25) {
+      f.causas.push({ codigo: "mas_km", texto: `Recorrió más de lo normal: ${f.km_dia} km por día contra ${promedio.km_dia} de promedio. Más uso gasta más; revisar que esos recorridos correspondan a las rutas.` });
+    }
+    // 4. Kilometraje: si no cuadra con los días, puede estar mal anotado
+    if (f.km_recorridos != null && f.dias === 0) {
+      f.causas.push({ codigo: "mismo_dia", texto: "Dos llenados el mismo día: revisar si uno fue parcial o si el kilometraje está mal anotado." });
+    }
+    if (!f.causas.length) {
+      f.causas.push({ codigo: "consumo_real", texto: "Los números no muestran un error de registro: el vehículo gastó de más en ese tramo. Revisar presión de llantas, filtro de aire, mucho tiempo encendido sin moverse, aire acondicionado, carga, forma de manejo o una fuga." });
+    }
+    // Si el siguiente rinde bien de nuevo, lo más probable es lo puntual del tramo
+    if (sig?.km_galon != null && promedio.km_galon && sig.km_galon >= promedio.km_galon * 0.95 && f.causas[0]?.codigo === "consumo_real") {
+      f.causas[0].texto += " En el llenado siguiente volvió a rendir normal: fue algo de ese tramo, no una falla permanente.";
+    }
+  });
 
   // La de más consumo: peor km/galón; si ninguna tiene, la de mayor costo por km
   const conKmGal = filas.filter((f) => f.km_galon != null);

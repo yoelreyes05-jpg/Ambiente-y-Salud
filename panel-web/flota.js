@@ -369,7 +369,7 @@ async function fichaVehiculo(id, contenedor, tabInicial = "partes") {
         <button class="tab active" data-t="partes">Partes (${f.chequeos.length})</button>
         <button class="tab" data-t="fallas">Fallas (${f.fallas.length})</button>
         <button class="tab" data-t="gastos">Gastos (${f.gastos.length})</button>
-        <button class="tab" data-t="tanqueos">Tanqueos (${f.tanqueos?.cargas.length || 0})</button>
+        <button class="tab" data-t="tanqueos">Llenados del vehículo (${f.tanqueos?.cargas.length || 0})</button>
         <button class="tab" data-t="mant">Mantenimiento${(() => {
           const n = f.mantenimientos.filter((m) => m.nivel === "rojo").length;
           const a = f.mantenimientos.filter((m) => m.nivel === "amarillo").length;
@@ -1008,11 +1008,11 @@ async function modalGasto(g, vehiculoId, onSaved) {
       <div id="fg-combustible" class="form-grid" style="display:none">
         <div class="form-group"><label>Galones</label><input name="galones" type="number" step="any" value="${esc(g?.galones || "")}" /></div>
         <div class="form-group"><label>Precio por galón</label><input name="precio_galon" type="number" step="any" value="${esc(g?.precio_galon || "")}" /></div>
-        <div class="form-group"><label>Kilometraje al tanquear</label><input name="km" type="number" step="any" value="${esc(g?.km || "")}" /></div>
+        <div class="form-group"><label>Kilometraje al llenar</label><input name="km" type="number" step="any" value="${esc(g?.km || "")}" /></div>
         <div class="form-group full">
           <label class="campo-check"><input type="checkbox" name="tanque_lleno" ${g?.tanque_lleno !== false ? "checked" : ""} /> Se llenó el tanque</label>
           <div class="form-hint">
-            El rendimiento se calcula de tanqueo lleno a tanqueo lleno. Marcar esto
+            El rendimiento se calcula de llenado a llenado. Marcar esto
             mal ensucia el km/galón de toda la unidad, así que si fue una carga
             parcial, desmárcalo.
           </div>
@@ -1495,7 +1495,7 @@ function textoVsPromedio(c) {
 }
 
 function vistaTanqueos(t) {
-  if (!t || !t.cargas.length) return `<div class="center-msg">Sin cargas de combustible registradas.</div>`;
+  if (!t || !t.cargas.length) return `<div class="center-msg">Sin llenados del vehículo registrados.</div>`;
   const p = t.promedio;
   const peor = t.cargas.find((c) => c.id === t.peor_id);
   const filas = [...t.cargas].reverse();
@@ -1503,13 +1503,13 @@ function vistaTanqueos(t) {
     <div class="kpi-grid">
       <div class="kpi-card"><div class="lbl">Km/galón promedio</div><div class="val">${p.km_galon == null ? "—" : NUM(p.km_galon, 1)}</div></div>
       <div class="kpi-card"><div class="lbl">Costo por km promedio</div><div class="val">${p.costo_km == null ? "—" : MONEDA(p.costo_km)}</div></div>
-      <div class="kpi-card"><div class="lbl">Entre cargas (promedio)</div><div class="val">${p.km_recorridos == null ? "—" : NUM(p.km_recorridos) + " km"} · ${p.dias == null ? "—" : NUM(p.dias, 1) + " días"}</div></div>
-      <div class="kpi-card"><div class="lbl">Donde más consumió</div><div class="val" style="font-size:15px">${peor
+      <div class="kpi-card"><div class="lbl">Entre llenados (promedio)</div><div class="val">${p.km_recorridos == null ? "—" : NUM(p.km_recorridos) + " km"} · ${p.dias == null ? "—" : NUM(p.dias, 1) + " días"}</div></div>
+      <div class="kpi-card"><div class="lbl">Llenado de más consumo</div><div class="val" style="font-size:15px">${peor
         ? `${fmtDate(peor.fecha)} · ${peor.km_galon != null ? NUM(peor.km_galon, 1) + " km/gal" : MONEDA(peor.costo_km) + "/km"}` : "—"}</div></div>
     </div>
     ${tableHTML([
       { key: "fecha", label: "Fecha", fmt: (c) => `${fmtDate(c.fecha)}${c.id === t.peor_id ? ' <span class="badge badge-red">más consumo</span>' : ""}` },
-      { key: "km", label: "Km al tanquear", fmt: (c) => (c.km == null ? "—" : NUM(c.km)) },
+      { key: "km", label: "Km al llenar", fmt: (c) => (c.km == null ? "—" : NUM(c.km)) },
       { key: "km_recorridos", label: "Recorrió", fmt: (c) => (c.km_recorridos == null ? "—" : `${NUM(c.km_recorridos)} km`) },
       { key: "dias", label: "Días", fmt: (c) => (c.dias == null ? "—" : NUM(c.dias)) },
       { key: "galones", label: "Galones", fmt: (c) => (c.galones ? NUM(c.galones, 2) : "—") + (c.tanque_lleno ? "" : " <small>(parcial)</small>") },
@@ -1517,11 +1517,13 @@ function vistaTanqueos(t) {
       { key: "km_galon", label: "Km/gal", fmt: (c) => (c.km_galon == null ? "—" : NUM(c.km_galon, 1)) },
       { key: "costo_km", label: "Costo/km", fmt: (c) => (c.costo_km == null ? "—" : MONEDA(c.costo_km)) },
       { key: "vs", label: "Vs promedio", fmt: textoVsPromedio },
+      { key: "causas", label: "Posible causa", fmt: (c) => (c.causas?.length ? c.causas.map((x) => `<small>${esc(x.texto)}</small>`).join("<br>") : "—") },
       { key: "_t", label: "", fmt: (c) => `<button class="btn btn-sm" data-ticket="${c.id}" title="Imprimir ticket">🧾 Ticket</button>` },
     ], filas, "")}
     <p class="text-muted" style="margin-top:10px">
-      Km/galón: de tanque lleno a tanque lleno, sumando las cargas parciales del medio.
-      Costo/km: lo pagado en esa carga entre los km recorridos desde la anterior.
+      Km/galón: de llenado a llenado (tanque lleno), sumando las cargas parciales del medio.
+      Costo/km: lo pagado en ese llenado entre los km recorridos desde el anterior.
+      Si un llenado no se hace hasta el tope, ese sale con km/galón alto y el siguiente bajo: juntos dan el real.
       “Consumió más” = 10% o más por debajo del km/galón promedio de la unidad.
     </p>`;
 }
@@ -1554,29 +1556,30 @@ async function imprimirTicketGasto(gastoId) {
       <table>
         ${fila("Galones", `${N(g.galones, 3)}${g.tanque_lleno === false ? " (parcial)" : " (lleno)"}`)}
         ${fila("Precio por galón", M(g.precio_galon))}
-        ${fila("Km al tanquear", N(g.km))}
+        ${fila("Km al llenar", N(g.km))}
       </table>
-      <h3>Desde la carga anterior</h3>
+      <h3>Desde el llenado anterior</h3>
       ${c?.anterior ? `<table>
-        ${fila("Carga anterior", `${fmtDate(c.anterior.fecha)}${c.anterior.km != null ? ` · ${N(c.anterior.km)} km` : ""}`)}
+        ${fila("Llenado anterior", `${fmtDate(c.anterior.fecha)}${c.anterior.km != null ? ` · ${N(c.anterior.km)} km` : ""}`)}
         ${fila("Km recorridos", c.km_recorridos == null ? "—" : `${N(c.km_recorridos)} km`)}
         ${fila("Días transcurridos", N(c.dias))}
         ${fila("Km por día", N(c.km_dia, 1))}
         ${fila("Km por galón", c.km_galon == null ? "—" : N(c.km_galon, 2))}
         ${fila("Costo por km", M(c.costo_km))}
         ${fila("Costo por día", M(c.costo_dia))}
-      </table>` : `<p>Es la primera carga registrada de esta unidad.</p>`}
+      </table>` : `<p>Es el primer llenado registrado de esta unidad.</p>`}
       <h3>Contra el promedio de la unidad</h3>
       <table>
         ${fila("Km/galón promedio", N(p.km_galon, 2))}
         ${fila("Costo/km promedio", M(p.costo_km))}
-        ${fila("Km entre cargas", N(p.km_recorridos))}
-        ${fila("Días entre cargas", N(p.dias, 1))}
+        ${fila("Km entre llenados", N(p.km_recorridos))}
+        ${fila("Días entre llenados", N(p.dias, 1))}
         ${fila("Monto promedio", M(p.monto))}
         ${c?.vs_promedio ? fila("Diferencia", `${c.vs_promedio.pct > 0 ? "+" : ""}${N(c.vs_promedio.pct, 1)}% ${c.vs_promedio.medida === "km_galon" ? "km/gal" : "costo/km"}`) : ""}
       </table>
-      <div class="veredicto ${c?.consumio_mas ? "mal" : ""}">${esc(ver)}${d.es_peor ? "<br>Es la carga de mayor consumo registrada" : ""}</div>
-      <p class="nota">Basado en ${d.cargas_analizadas} cargas registradas. Km/galón de tanque lleno a tanque lleno.</p>`;
+      <div class="veredicto ${c?.consumio_mas ? "mal" : ""}">${esc(ver)}${d.es_peor ? "<br>Es el llenado de mayor consumo registrado" : ""}</div>
+      ${c?.causas?.length ? `<h3>Posible causa</h3>${c.causas.map((x) => `<p class="nota" style="font-size:11px">• ${esc(x.texto)}</p>`).join("")}` : ""}
+      <p class="nota">Basado en ${d.cargas_analizadas} llenados registrados. Km/galón de llenado a llenado.</p>`;
   }
   w.document.open();
   w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Ticket de gasto #${esc(g.id)}</title>
