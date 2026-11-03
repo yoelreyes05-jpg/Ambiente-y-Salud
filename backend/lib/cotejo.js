@@ -42,7 +42,23 @@ const NINGUNA = /^(ningun[oa]?|nada|sin\b|no\b|no se|no hay|negativo|ausente)/;
  * @param preguntas   preguntas de la estrategia del punto (asa_preguntas)
  * @param plagas      [{ nombre, cantidad }] lo que el técnico marcó (vacío = sin plaga)
  */
-export function respuestasCotejo(preguntas, plagas = []) {
+// Lo que el técnico escogió en "Datos del servicio" del cotejo (tipo de
+// tratamiento, áreas, producto…): { pregunta_id | texto normalizado → valor }.
+function respuestaDada(p, base) {
+  if (!base) return undefined;
+  const v = base[String(p.id)] ?? base[norm(p.texto).trim()];
+  if (v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length)) return undefined;
+  const r = { pregunta_id: p.id, pregunta_texto: p.texto };
+  if (p.tipo_respuesta === "si_no") r.valor_bool = v === true || /^(true|si|sí)$/i.test(String(v));
+  else if (p.tipo_respuesta === "seleccion" || p.tipo_respuesta === "multiple") {
+    const lista = (Array.isArray(v) ? v : String(v).split(",")).map((x) => String(x).trim()).filter(Boolean);
+    r.valor_opciones = lista; r.valor_texto = lista.join(", ");
+  } else if (p.tipo_respuesta === "numero" || p.tipo_respuesta === "escala") { r.valor_numero = Number(v); r.valor_texto = String(v); }
+  else r.valor_texto = String(v);
+  return r;
+}
+
+export function respuestasCotejo(preguntas, plagas = [], base = null) {
   const hay = plagas.some((p) => Number(p.cantidad) > 0 || p.cantidad == null);
   const total = plagas.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
   const nombres = plagas.map((p) => p.nombre);
@@ -50,6 +66,8 @@ export function respuestasCotejo(preguntas, plagas = []) {
   const salida = [];
 
   for (const p of preguntas || []) {
+    const dada = respuestaDada(p, base);
+    if (dada) { salida.push(dada); continue; }   // lo que escogió el técnico manda
     const t = norm(p.texto);
     const r = { pregunta_id: p.id, pregunta_texto: p.texto };
     if (p.tipo_respuesta === "si_no") {
@@ -78,7 +96,8 @@ export function respuestasCotejo(preguntas, plagas = []) {
       r.valor_numero = hay ? Math.min(5, Math.max(2, Math.ceil(total / 3) + 1)) : 1;
       r.valor_texto = String(r.valor_numero);
     } else if (p.tipo_respuesta === "texto") {
-      if (!DE_PLAGA.test(t) && !/observ|nota|coment|hallazg/.test(t)) continue;
+      // Observaciones: vacías salvo que el técnico escriba algo
+      if (!DE_PLAGA.test(t) || /observ|nota|coment/.test(t)) continue;
       r.valor_texto = texto;
     } else {
       continue;                                     // fotos u otros: no se inventan

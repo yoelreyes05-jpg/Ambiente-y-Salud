@@ -800,8 +800,21 @@ router.get("/cotejo", async (req, res) => {
     enLista.sort((a, b) => String(a.estrategia).localeCompare(String(b.estrategia), "es") || a.area_orden - b.area_orden
       || a.area.localeCompare(b.area, "es") || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
     const usadas = [...new Set(enLista.map((p) => p.estrategia_id))];
+    // Las preguntas de cada estrategia (las de sus tipos de punto), para que el
+    // técnico llene en "Datos del servicio" lo que no se puede adivinar: tipo
+    // de tratamiento, áreas, producto…
+    const tiposDe = new Map(usadas.map((id) => [id, new Set(puntos.filter((p) => enLista.some((e) => e.id === p.id && e.estrategia_id === id)).map((p) => p.tipo_punto_id))]));
+    const { data: pregs } = usadas.length
+      ? await supabase.from("asa_preguntas").select("id, estrategia_id, tipo_punto_id, texto, tipo_respuesta, opciones, unidad, obligatoria, orden")
+          .in("estrategia_id", usadas).eq("activa", true).order("orden")
+      : { data: [] };
+    const preguntasDe = (id) => {
+      const vistas = new Set();
+      return (pregs || []).filter((q) => String(q.estrategia_id) === id && (!q.tipo_punto_id || tiposDe.get(id).has(q.tipo_punto_id)))
+        .filter((q) => { const k = String(q.texto || "").trim().toLowerCase(); if (vistas.has(k)) return false; vistas.add(k); return true; });
+    };
     res.json({
-      estrategias: usadas.map((id) => ({ id, nombre: nombreEstr.get(id), total: enLista.filter((p) => p.estrategia_id === id).length })),
+      estrategias: usadas.map((id) => ({ id, nombre: nombreEstr.get(id), total: enLista.filter((p) => p.estrategia_id === id).length, preguntas: preguntasDe(id) })),
       puntos: enLista,
       plagas: plagas || [],
     });

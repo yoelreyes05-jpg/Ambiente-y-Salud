@@ -668,7 +668,7 @@ const MOTIVOS_NO_REALIZADO = [
 ];
 
 async function registrarInspeccion(req, cuerpo) {
-  let { punto_id, respuestas = [], capturas = [], clave_local: _omit, cotejo, ...resto } = cuerpo;
+  let { punto_id, respuestas = [], capturas = [], clave_local: _omit, cotejo, respuestas_base, ...resto } = cuerpo;
   if (!punto_id) return { error: true, codigo: 400, mensaje: "punto_id es requerido" };
 
   // ── Cotejo de fumigación ──────────────────────────────────────────────────
@@ -688,7 +688,7 @@ async function registrarInspeccion(req, cuerpo) {
     }
     const hay = plagas.length > 0;
     const total = plagas.reduce((a, p) => a + p.cantidad, 0);
-    if (!respuestas.length && pc) respuestas = respuestasCotejo(await preguntasDelPunto(pc), plagas);
+    if (!respuestas.length && pc) respuestas = respuestasCotejo(await preguntasDelPunto(pc), plagas, respuestas_base);
     capturas = conCant;
     resto.nivel_actividad = nivelCotejo(total, hay);
     if (!resto.estado_punto) {
@@ -696,7 +696,8 @@ async function registrarInspeccion(req, cuerpo) {
       resto.estado_punto = hay && est.some((e) => e.codigo === "actividad") ? "actividad" : (est.find((e) => !e.requiere_motivo)?.codigo || "ok");
     }
     resto.metodo_acceso = "manual";
-    resto.notas = [resto.notas, hay ? `Cotejo de fumigación · ${plagas.map((p) => `${p.nombre}: ${p.cantidad}`).join(", ")}` : "Cotejo de fumigación · sin incidencia"].filter(Boolean).join(" · ");
+    // Observaciones: solo lo que escribió el técnico (si no, vacías)
+    resto.notas = String(resto.notas || "").trim() || null;
   }
 
   // ── Estado del punto ──────────────────────────────────────────────────────
