@@ -83,6 +83,8 @@ async function viewEvaluacion(content) {
         <option value="">— Escoge el colaborador a evaluar —</option>
         ${activos.map((c) => `<option value="${esc(c.id)}" ${EVAL_SEL === c.id ? "selected" : ""}>${evals[c.id] ? "✓ " : ""}${esc(c.nombre)}${evals[c.id] ? ` · ${pctTxt(evals[c.id].porcentaje)}` : ""}</option>`).join("")}
       </select>
+      <span class="toolbar-sep"></span>
+      ${USUARIO?.rol === "admin" ? `<button class="btn btn-sm" id="ev-param">⚙️ Parámetros de la evaluación</button>` : ""}
     </div>
     <div id="ev-form"></div>
     <div class="card">
@@ -101,6 +103,7 @@ async function viewEvaluacion(content) {
 
   $("#ev-mes").addEventListener("change", (ev) => { if (ev.target.value) { INC_MES = ev.target.value; viewEvaluacion(content); } });
   $("#ev-col").addEventListener("change", (ev) => { EVAL_SEL = ev.target.value; pintarFormEval(); });
+  $("#ev-param")?.addEventListener("click", () => modalParametrosEval(plantilla, () => { INC_PLANTILLA = null; viewEvaluacion(content); }));
   content.querySelectorAll("[data-ev]").forEach((tr) => {
     const abrir = () => { EVAL_SEL = tr.dataset.ev; $("#ev-col").value = EVAL_SEL; pintarFormEval(); $("#ev-form").scrollIntoView({ behavior: "smooth" }); };
     tr.addEventListener("click", abrir);
@@ -155,6 +158,7 @@ async function viewEvaluacion(content) {
         <p class="text-muted" id="ev-faltan"></p>
         <div class="ev-botones">
           <button class="btn" id="ev-guardar">💾 Guardar evaluación</button>
+          <button class="btn btn-sm" id="ev-copiar" title="Pone las mismas notas que tuvo el mes anterior para que solo cambies lo distinto">📋 Copiar notas del mes anterior</button>
           <button class="btn btn-sm" id="ev-imprimir">🖨 Imprimir</button>
           ${e.actualizado ? `<button class="btn btn-sm btn-danger" id="ev-borrar">Borrar</button>` : ""}
         </div>
@@ -181,6 +185,24 @@ async function viewEvaluacion(content) {
         calif[id] = calif[id] === (b.dataset.n === "NA" ? "NA" : Number(b.dataset.n)) ? "" : b.dataset.n === "NA" ? "NA" : Number(b.dataset.n);
         fila.querySelectorAll(".ev-n").forEach((x) => x.classList.toggle("activa", String(calif[id]) === x.dataset.n));
         recalcular();
+        return;
+      }
+      if (ev.target.closest("#ev-copiar")) {
+        const [ya, ym] = INC_MES.split("-").map(Number);
+        const previo = ym === 1 ? `${ya - 1}-12` : `${ya}-${String(ym - 1).padStart(2, "0")}`;
+        try {
+          const ant = (await get(`/incentivos/evaluaciones?mes=${previo}`))[c.id];
+          if (!ant) return toast(`${c.nombre} no tiene evaluación en ${nombreMes(previo)}`, true);
+          let n = 0;
+          zona.querySelectorAll("[data-preg]").forEach((fila) => {
+            const v = ant.calificaciones?.[fila.dataset.preg];
+            if (v == null || v === "") return;
+            calif[fila.dataset.preg] = v; n++;
+            fila.querySelectorAll(".ev-n").forEach((x) => x.classList.toggle("activa", String(v) === x.dataset.n));
+          });
+          recalcular();
+          toast(`Copiadas ${n} notas de ${nombreMes(previo)}. Cambia lo que sea distinto y guarda.`);
+        } catch (e2) { toast(e2.message, true); }
         return;
       }
       if (ev.target.closest("#ev-imprimir")) return imprimirEvaluacion(c, plantilla, calif, datosForm(), recalcular());
@@ -380,6 +402,71 @@ async function modalColaboradores(alGuardar) {
       closeModal();
       toast("Lista guardada");
       alGuardar?.();
+    },
+  });
+}
+
+// ── Parámetros de la evaluación (renglones, preguntas, ponderaciones) ────────
+function modalParametrosEval(plantilla, alGuardar) {
+  const preg = (p = {}) => `
+    <div class="par-preg" data-pid="${esc(p.id || "")}">
+      <input class="par-texto" value="${esc(p.texto || "")}" placeholder="Texto de la pregunta">
+      <input class="par-peso" type="number" min="0.01" step="0.01" value="${p.peso ?? ""}" placeholder="Peso" title="Ponderación">
+      <button type="button" class="btn btn-sm btn-danger par-quitar-p" title="Quitar pregunta">✕</button>
+    </div>`;
+  const sec = (s = { preguntas: [{}] }) => `
+    <div class="par-sec">
+      <div class="par-sec-cab">
+        <input class="par-id" value="${esc(s.id || "")}" placeholder="Código" title="Código (I.1, II.1…)">
+        <input class="par-titulo" value="${esc(s.titulo || "")}" placeholder="Nombre del renglón">
+        <span class="par-suma"></span>
+        <button type="button" class="btn btn-sm btn-danger par-quitar-s" title="Quitar renglón">Quitar renglón</button>
+      </div>
+      <div class="par-pregs">${s.preguntas.map(preg).join("")}</div>
+      <button type="button" class="btn btn-sm par-mas-p">+ Pregunta</button>
+    </div>`;
+  openModal({
+    title: "Parámetros de la evaluación", large: true, submitLabel: "Guardar parámetros",
+    bodyHTML: `
+      <p class="text-muted">Aquí cambias lo que se evalúa cada mes. Cada renglón da un puntaje de 0 a 10
+        (calificación × ponderación); el % de evaluación es el promedio de los renglones × 10.
+        Lo normal es que las ponderaciones de cada renglón sumen <strong>1</strong>; si no, se reparten en proporción.
+        Las evaluaciones ya guardadas no cambian.</p>
+      <div id="par-secs">${plantilla.secciones.map(sec).join("")}</div>
+      <div class="ev-botones">
+        <button type="button" class="btn btn-sm" id="par-mas-s">+ Renglón</button>
+        ${plantilla.original ? "" : `<button type="button" class="btn btn-sm" id="par-restaurar">↺ Volver a los del formulario original</button>`}
+      </div>`,
+    onMount(o) {
+      const sumas = () => o.querySelectorAll(".par-sec").forEach((s) => {
+        const t = [...s.querySelectorAll(".par-peso")].reduce((a, x) => a + (Number(x.value) || 0), 0);
+        const el = s.querySelector(".par-suma");
+        el.textContent = `Suma: ${Math.round(t * 100) / 100}`;
+        el.classList.toggle("mal", Math.abs(t - 1) > 0.001);
+      });
+      sumas();
+      o.addEventListener("input", sumas);
+      o.addEventListener("click", async (e) => {
+        if (e.target.closest(".par-mas-p")) { e.target.closest(".par-sec").querySelector(".par-pregs").insertAdjacentHTML("beforeend", preg()); sumas(); }
+        else if (e.target.closest(".par-quitar-p")) { e.target.closest(".par-preg").remove(); sumas(); }
+        else if (e.target.closest(".par-quitar-s")) { if (confirm("¿Quitar este renglón y sus preguntas?")) e.target.closest(".par-sec").remove(); }
+        else if (e.target.closest("#par-mas-s")) { o.querySelector("#par-secs").insertAdjacentHTML("beforeend", sec()); sumas(); }
+        else if (e.target.closest("#par-restaurar")) {
+          if (!confirm("¿Volver a los parámetros del formulario original?")) return;
+          await put("/incentivos/plantilla", { restaurar: true });
+          closeModal(); toast("Parámetros restaurados"); alGuardar?.();
+        }
+      });
+    },
+    async onSubmit(fd, o) {
+      const secciones = [...o.querySelectorAll(".par-sec")].map((s) => ({
+        id: s.querySelector(".par-id").value.trim(), titulo: s.querySelector(".par-titulo").value.trim(),
+        preguntas: [...s.querySelectorAll(".par-preg")].map((p) => ({
+          id: p.dataset.pid || undefined, texto: p.querySelector(".par-texto").value.trim(), peso: Number(p.querySelector(".par-peso").value),
+        })).filter((p) => p.texto),
+      }));
+      await put("/incentivos/plantilla", { secciones });
+      closeModal(); toast("Parámetros guardados"); alGuardar?.();
     },
   });
 }

@@ -140,6 +140,36 @@ export async function escribir(clave, valor) {
   return valor;
 }
 
+// Parámetros de la evaluación (renglones, preguntas y ponderaciones). ASA los
+// puede cambiar en el panel; si nunca se cambiaron, son los del formulario.
+export async function plantilla() {
+  const v = await leer("evaluacion_plantilla", null);
+  return Array.isArray(v) && v.length ? v : PLANTILLA;
+}
+
+export function limpiarPlantilla(secciones) {
+  if (!Array.isArray(secciones)) throw new Error("Parámetros inválidos");
+  const ids = new Set();
+  const salida = secciones.map((s, i) => {
+    const id = String(s.id || "").trim() || `S${i + 1}`;
+    if (ids.has(id)) throw new Error(`El código ${id} está repetido`);
+    ids.add(id);
+    const preguntas = (s.preguntas || []).filter((p) => String(p.texto || "").trim()).map((p, j) => {
+      let pid = String(p.id || "").trim() || `${id}.${Date.now().toString(36)}${j}`;
+      while (ids.has(pid)) pid += "x";
+      ids.add(pid);
+      const peso = Number(p.peso);
+      if (!(peso > 0)) throw new Error(`Ponderación inválida en "${String(p.texto).slice(0, 40)}"`);
+      return { id: pid, texto: String(p.texto).trim(), peso };
+    });
+    if (!String(s.titulo || "").trim()) throw new Error(`Falta el nombre del renglón ${id}`);
+    if (!preguntas.length) throw new Error(`El renglón "${s.titulo}" no tiene preguntas`);
+    return { id, titulo: String(s.titulo).trim(), preguntas };
+  });
+  if (!salida.length) throw new Error("Debe haber al menos un renglón");
+  return salida;
+}
+
 export async function colaboradores() {
   const v = await leer("incentivos_colaboradores", null);
   return Array.isArray(v) ? v : INICIALES;
@@ -152,9 +182,9 @@ const num = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? 0 : Numbe
 const r2 = (n) => Math.round(n * 100) / 100;
 
 /** calificaciones: { "I.1.a": 9, "I.4.a": "NA", … } → { renglones, porcentaje, completa } */
-export function calcularEvaluacion(calificaciones = {}) {
+export function calcularEvaluacion(calificaciones = {}, secciones = PLANTILLA) {
   let faltan = 0;
-  const renglones = PLANTILLA.map((s) => {
+  const renglones = secciones.map((s) => {
     let suma = 0, pesos = 0;
     for (const p of s.preguntas) {
       const v = calificaciones[p.id];

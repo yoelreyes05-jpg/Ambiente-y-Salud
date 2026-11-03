@@ -16,7 +16,7 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { requireRol } from "../middleware/auth.js";
 import {
-  PLANTILLA, ESCALA, AJUSTES, colaboradores, leer, escribir, mesValido,
+  PLANTILLA, ESCALA, AJUSTES, plantilla, limpiarPlantilla, colaboradores, leer, escribir, mesValido,
   calcularEvaluacion, filaIncentivo, fechaPago, ultimoDia,
 } from "../lib/incentivos.js";
 
@@ -27,7 +27,23 @@ const pagar = requireRol("admin");                     // sueldos e incentivos: 
 const err = (res, e, st = 500) => res.status(st).json({ error: true, mensaje: e.message || String(e) });
 const fechaLarga = (d) => d.toLocaleDateString("es-DO", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
-router.get("/plantilla", evaluar, (req, res) => res.json({ secciones: PLANTILLA, escala: ESCALA, ajustes: AJUSTES }));
+router.get("/plantilla", evaluar, async (req, res) => {
+  try {
+    const secciones = await plantilla();
+    res.json({ secciones, escala: ESCALA, ajustes: AJUSTES, original: secciones === PLANTILLA });
+  } catch (e) { err(res, e); }
+});
+
+// Cambiar los parámetros de la evaluación (solo admin). Las evaluaciones ya
+// guardadas conservan su % (no se recalculan).
+router.put("/plantilla", pagar, async (req, res) => {
+  try {
+    if (req.body?.restaurar) { await escribir("evaluacion_plantilla", []); return res.json({ secciones: PLANTILLA }); }
+    const secciones = limpiarPlantilla(req.body?.secciones);
+    await escribir("evaluacion_plantilla", secciones);
+    res.json({ secciones });
+  } catch (e) { err(res, e, 400); }
+});
 
 router.get("/colaboradores", evaluar, async (req, res) => {
   try {
@@ -67,12 +83,13 @@ router.put("/evaluaciones/:mes/:col", evaluar, async (req, res) => {
     if (!c) return err(res, new Error("Colaborador no encontrado"), 404);
     const b = req.body || {};
     const calif = {};
-    for (const s of PLANTILLA) for (const p of s.preguntas) {
+    const secciones = await plantilla();
+    for (const s of secciones) for (const p of s.preguntas) {
       const v = b.calificaciones?.[p.id];
       if (v === "NA") calif[p.id] = "NA";
       else if (v !== "" && v != null && !Number.isNaN(Number(v))) calif[p.id] = Math.min(10, Math.max(1, Math.round(Number(v))));
     }
-    const calc = calcularEvaluacion(calif);
+    const calc = calcularEvaluacion(calif, secciones);
     const todas = await leer(`evaluacion_${mes}`, {});
     todas[col] = {
       colaborador_id: col, nombre: c.nombre,
@@ -115,6 +132,7 @@ router.get("/:mes/excel", pagar, async (req, res) => {
   try {
     const d = await calculo(mes);
     const evals = await leer(`evaluacion_${mes}`, {});
+    const PLANTILLA = await plantilla();
     const wb = new ExcelJS.Workbook();
     wb.creator = "Ambiente y Salud, ASA";
     const ws = wb.addWorksheet("Resultado", { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
