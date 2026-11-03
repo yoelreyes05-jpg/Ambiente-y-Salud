@@ -79,6 +79,7 @@ import cronogramaRouter from "./routes/cronograma.js";
 import rastreoRouter from "./routes/rastreo.js";
 import chatRouter from "./routes/chat.js";
 import puntosGpsRouter from "./routes/puntosGps.js";
+import incentivosRouter from "./routes/incentivos.js";
 import { readFileSync } from "fs";
 const VERSION_API = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
@@ -144,6 +145,7 @@ app.use("/rnc", rncRouter);
 // principio (lib/auditoria.js); lo que faltaba era poder verla.
 app.use("/config", configuracionRouter);
 app.use("/auditoria", auditoriaRouter);
+app.use("/incentivos", incentivosRouter);      // Técnicos → Evaluación e Incentivos (pago del día 5)
 
 // Flota y transportación (el resto del módulo, ya con token)
 app.use("/flota", flotaRouter);

@@ -18,7 +18,27 @@ const MODULOS_EXTRA_7 = [
 
 let TEC_DATOS = null;
 
+// Pestañas del módulo: Actividad (lo de siempre), Evaluación e Incentivos
+// (incentivos.js). Evaluación: admin y operaciones; Incentivos: solo admin.
+let TEC_SUB = "actividad";
+
 async function viewTecnicos(content) {
+  const rol = typeof USUARIO !== "undefined" ? USUARIO?.rol : "";
+  const tabs = [["actividad", "📊 Actividad"]];
+  if (["admin", "operaciones"].includes(rol)) tabs.push(["evaluacion", "📝 Evaluación"]);
+  if (rol === "admin") tabs.push(["incentivos", "💵 Incentivos"]);
+  if (!tabs.some(([k]) => k === TEC_SUB)) TEC_SUB = "actividad";
+  content.innerHTML = `
+    ${tabs.length > 1 ? `<div class="subtabs">${tabs.map(([k, l]) => `<div class="subtab ${TEC_SUB === k ? "active" : ""}" data-t="${k}">${l}</div>`).join("")}</div>` : ""}
+    <div id="tec-pestana"></div>`;
+  $$(".subtab", content).forEach((t) => t.addEventListener("click", () => { TEC_SUB = t.dataset.t; viewTecnicos(content); }));
+  const zona = $("#tec-pestana");
+  if (TEC_SUB === "evaluacion") return viewEvaluacion(zona);
+  if (TEC_SUB === "incentivos") return viewIncentivos(zona);
+  return viewActividadTecnicos(zona);
+}
+
+async function viewActividadTecnicos(content) {
   content.innerHTML = `
     <div class="toolbar">
       <label class="oculto-panel" for="tec-dias">Período</label>

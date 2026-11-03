@@ -835,3 +835,40 @@ tr.sem-fila-amarillo{background:#fefce8}
 .cotejo-switch input:checked + .cotejo-pista::after{left:19px}
 .cotejo-switch input:disabled + .cotejo-pista{opacity:.6}
 .cotejo-txt{font-weight:600;color:#475569;min-width:20px}
+
+/* ── Técnicos → Evaluación e Incentivos ─────────────────────────────── */
+.inc-pago{font-size:13px}
+.ev-col{min-width:260px;max-width:100%}
+.ev-cab{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
+.ev-total{text-align:right;display:flex;flex-direction:column}
+.ev-total #ev-pct{font-size:30px;font-weight:800;color:var(--asa-green)}
+.ev-total small{color:#64748b}
+.ev-datos label,.ev-larga{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600}
+.ev-datos input,.ev-larga textarea{font:inherit;font-weight:400;padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px}
+.ev-larga{margin-top:12px}
+.ev-escala{margin:12px 0;font-size:13px}
+.ev-escala summary{cursor:pointer;font-weight:600}
+.ev-sec{border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:12px}
+.ev-sec-t{display:flex;justify-content:space-between;gap:8px;font-weight:700;margin-bottom:6px}
+.ev-sec-t strong{color:var(--asa-green)}
+.ev-preg{padding:6px 0;border-top:1px dashed #e2e8f0}
+.ev-preg-t{font-size:13.5px;margin-bottom:5px}
+.ev-notas{display:flex;flex-wrap:wrap;gap:4px}
+.ev-n{min-width:34px;height:32px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;font:inherit;font-size:13px;cursor:pointer}
+.ev-n.na{min-width:44px;color:#64748b}
+.ev-n.activa{background:var(--asa-green);border-color:var(--asa-green);color:#fff;font-weight:700}
+.ev-botones{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.inc-tabla td,.inc-tabla th{white-space:nowrap}
+.inc-tabla th{font-size:12px}
+.inc-tabla .num{text-align:right;font-variant-numeric:tabular-nums}
+.inc-tabla .inc-neg{color:#b91c1c}
+.inc-in{width:92px;padding:5px 6px;border:1px solid #cbd5e1;border-radius:6px;font:inherit;text-align:right}
+.inc-in.inc-nota{width:160px;text-align:left}
+.inc-total{font-weight:800}
+.inc-tabla tr.inc-ok td{background:#ecfdf5;transition:background .3s}
+.inc-colabs input{width:100%;min-width:80px;padding:5px 6px;border:1px solid #cbd5e1;border-radius:6px;font:inherit}
+@media (max-width:640px){.ev-total{text-align:left}.ev-n{min-width:30px;height:34px}}
+.ev-datos input{width:100%;min-width:0;box-sizing:border-box}
+.ev-datos label{min-width:0}
+.inc-tabla th:first-child,.inc-tabla td:first-child{position:sticky;left:0;background:#fff;z-index:1;box-shadow:1px 0 0 #e2e8f0}
+@media (max-width:640px){.ev-datos{grid-template-columns:1fr}}
