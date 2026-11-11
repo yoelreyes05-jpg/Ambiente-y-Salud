@@ -304,19 +304,23 @@ router.get("/estado", async (req, res) => {
   const ultimaReal = new Map();
   try {
     const hechas = await traerTodo(() => supabase.from("asa_inspecciones")
-      .select("punto_id, fecha")
+      .select("id, punto_id, fecha, asa_empleados(nombre_completo), asa_usuarios(nombre_completo)")
       .eq("sitio_id", sitio_id)
       .is("motivo_no_realizado", null)
       .gte("fecha", new Date(corte).toISOString())
       .order("fecha", { ascending: false })
       .order("id"));
-    for (const h of hechas) if (!ultimaReal.has(h.punto_id)) ultimaReal.set(h.punto_id, h.fecha);
+    for (const h of hechas) if (!ultimaReal.has(h.punto_id)) ultimaReal.set(h.punto_id, h);
     const DIAS = { diaria: 1, semanal: 7, quincenal: 15, mensual: 30, trimestral: 90 };
     for (const p of puntos) {
       // Lo de la vista solo vale si es más viejo que la ventana (fuera de ella
       // no se miró); dentro de la ventana manda lo que se encontró aquí.
       const vista = p.ultima_inspeccion && Date.parse(p.ultima_inspeccion) < corte ? p.ultima_inspeccion : null;
-      p.ultima_inspeccion = ultimaReal.get(p.id) || vista;
+      const u = ultimaReal.get(p.id);
+      p.ultima_inspeccion = u?.fecha || vista;
+      // Para que el hotel, al tocar una habitación hecha, vea cuándo y quién
+      p.ultima_inspeccion_id = u?.id || null;
+      p.ultimo_tecnico = u ? u.asa_empleados?.nombre_completo || u.asa_usuarios?.nombre_completo || null : null;
       const dias = DIAS[p.frecuencia];
       p.vencido = !p.ultima_inspeccion ? true
         : p.frecuencia === "por_orden" || !dias ? false
@@ -383,6 +387,8 @@ router.get("/estado", async (req, res) => {
       tipo_icono: p.tipo_icono,
       frecuencia: p.frecuencia,
       ultima_inspeccion: p.ultima_inspeccion,
+      ultima_inspeccion_id: p.ultima_inspeccion_id || null,
+      ultimo_tecnico: p.ultimo_tecnico || null,
       estado,
       inspeccion_id: (h || n)?.inspeccion_id || null,
       hora: (h || n)?.fecha || null,

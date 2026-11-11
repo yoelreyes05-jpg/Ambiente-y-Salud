@@ -383,6 +383,49 @@ function textoNoSePudo(p) {
   return dia && dia !== hoyLocal() ? `No se pudo el ${fecha(p.fecha_no_realizado)}: ${motivo}` : `No se pudo hoy: ${motivo}`;
 }
 
+// Ventanita al tocar una celda del semáforo de "Por hacer"
+function detalleCelda(p) {
+  if (!p) return;
+  document.querySelector(".celda-pop")?.remove();
+  const cuandoLargo = (f) => new Date(f).toLocaleString("es-DO", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", timeZone: "America/Santo_Domingo" });
+  const hace = (f) => {
+    const dias = Math.floor((Date.now() - new Date(f)) / 86400000);
+    return dias <= 0 ? "hoy" : dias === 1 ? "ayer" : `hace ${dias} días`;
+  };
+  const nombre = p.numero_habitacion ? `Habitación ${p.numero_habitacion}` : p.punto_nombre || p.codigo_visible;
+  let cuerpoPop, verId = null;
+  if (p.estado === "hecho_hoy") {
+    cuerpoPop = `<div class="pop-estado ok">✅ Hecha hoy</div>
+      <p><b>${esc(cuandoLargo(p.hora))}</b>${p.tecnico ? `<br>Técnico: ${esc(p.tecnico)}` : ""}</p>`;
+    verId = p.inspeccion_id;
+  } else if (p.estado === "al_dia" && p.ultima_inspeccion) {
+    cuerpoPop = `<div class="pop-estado ok">✅ Al día</div>
+      <p>Se hizo <b>${esc(hace(p.ultima_inspeccion))}</b>:<br><b>${esc(cuandoLargo(p.ultima_inspeccion))}</b>${p.ultimo_tecnico ? `<br>Técnico: ${esc(p.ultimo_tecnico)}` : ""}</p>`;
+    verId = p.ultima_inspeccion_id;
+  } else if (p.estado === "no_realizado") {
+    cuerpoPop = `<div class="pop-estado amarillo">⚠ ${esc(textoNoSePudo(p))}</div>
+      ${p.tecnico ? `<p>Lo intentó: ${esc(p.tecnico)}${p.fecha_no_realizado ? ` · ${esc(cuandoLargo(p.fecha_no_realizado))}` : ""}</p>` : ""}
+      <p>${p.ultima_inspeccion ? `Último servicio hecho: <b>${esc(cuandoLargo(p.ultima_inspeccion))}</b> (${esc(hace(p.ultima_inspeccion))})` : "No tiene servicios hechos en los últimos 3 meses."}</p>`;
+    verId = p.inspeccion_id;
+  } else {
+    cuerpoPop = `<div class="pop-estado mal">Por hacer</div>
+      <p>${p.ultima_inspeccion ? `Último servicio: <b>${esc(cuandoLargo(p.ultima_inspeccion))}</b> (${esc(hace(p.ultima_inspeccion))})${p.ultimo_tecnico ? `<br>Técnico: ${esc(p.ultimo_tecnico)}` : ""}` : "No tiene servicios hechos en los últimos 3 meses."}</p>`;
+    verId = p.ultima_inspeccion_id;
+  }
+  const pop = document.createElement("div");
+  pop.className = "celda-pop";
+  pop.innerHTML = `<div class="pop-caja" role="dialog" aria-label="${esc(nombre)}">
+      <div class="pop-cab"><b>${esc(nombre)}</b><button type="button" class="pop-x" aria-label="Cerrar">✕</button></div>
+      <div class="pop-sub">${esc([p.area_nombre, textoPiso(p.piso)].filter(Boolean).join(" · "))}</div>
+      ${cuerpoPop}
+      ${verId ? `<button type="button" class="btn principal pop-ver" style="width:100%">Ver el servicio completo</button>` : ""}
+    </div>`;
+  document.body.appendChild(pop);
+  const cerrar = () => pop.remove();
+  pop.addEventListener("click", (ev) => { if (ev.target === pop || ev.target.closest(".pop-x")) cerrar(); });
+  pop.querySelector(".pop-ver")?.addEventListener("click", () => { cerrar(); abrirServicio(verId); });
+}
+
 async function vistaPendientes(cuerpo) {
   const qs = new URLSearchParams({ sitio_id: PLANTA.id });
   if (PH_TIPO) qs.set("tipo", PH_TIPO);
@@ -474,9 +517,8 @@ async function vistaPendientes(cuerpo) {
           ${piso ? `<div class="sub-piso">${esc(textoPiso(piso))}</div>` : ""}
           <div class="semaforo">
             ${lista.map((p) => `
-              <div class="celda ${esVerde(p) ? "verde" : p.estado === "no_realizado" ? "amarillo" : "rojo"}${p.inspeccion_id ? " clicable" : ""}"
-                   title="${esc(detalle(p))}"
-                   ${p.inspeccion_id ? `data-insp="${esc(p.inspeccion_id)}"` : ""}>
+              <div class="celda ${esVerde(p) ? "verde" : p.estado === "no_realizado" ? "amarillo" : "rojo"} clicable"
+                   title="${esc(detalle(p))}" data-celda="${esc(p.id)}" role="button" tabindex="0">
                 ${esc(p.numero_habitacion || p.codigo_visible)}
               </div>`).join("")}
           </div>`).join("")}
@@ -517,6 +559,13 @@ async function vistaPendientes(cuerpo) {
 
   $("#ph-tipo").addEventListener("change", (ev) => { PH_TIPO = ev.target.value; vistaPendientes(cuerpo); });
   $("#ph-ver").addEventListener("change", (ev) => { PH_VER = ev.target.value; vistaPendientes(cuerpo); });
+  // Tocar una habitación: cuándo se hizo, quién, y el servicio completo
+  const porId = new Map(e.puntos.map((p) => [String(p.id), p]));
+  cuerpo.querySelectorAll("[data-celda]").forEach((c) => {
+    const abrir = () => detalleCelda(porId.get(c.dataset.celda));
+    c.addEventListener("click", abrir);
+    c.addEventListener("keydown", (ev) => { if (ev.key === "Enter") abrir(); });
+  });
   $("#ph-area")?.addEventListener("change", (ev) => { PH_AREA = ev.target.value; vistaPendientes(cuerpo); });
   cuerpo.querySelectorAll("[data-villa]").forEach((b) => b.addEventListener("click", () => { PH_AREA = b.dataset.villa; vistaPendientes(cuerpo); }));
   engancharServicios(cuerpo);

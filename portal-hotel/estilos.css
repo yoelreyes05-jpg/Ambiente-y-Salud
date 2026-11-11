@@ -552,3 +552,15 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .chip-villa.mal{border-color:#fca5a5;color:var(--rojo)}
 @media (max-width:600px){.form-firma{grid-template-columns:1fr}.fila-orden{grid-template-columns:56px 1fr}.fo-res{grid-column:2;text-align:left}}
 @media print{.pad-firma,#ff-firmar{display:none}}
+/* Ventanita al tocar una habitación en "Por hacer" */
+.celda-pop{position:fixed;inset:0;background:rgba(15,23,42,.35);display:flex;align-items:flex-end;justify-content:center;z-index:60}
+.pop-caja{background:#fff;width:100%;max-width:440px;border-radius:16px 16px 0 0;padding:16px 16px 20px;box-shadow:0 -6px 24px rgba(0,0,0,.15)}
+@media (min-width:700px){.celda-pop{align-items:center}.pop-caja{border-radius:16px}}
+.pop-cab{display:flex;justify-content:space-between;align-items:center;font-size:17px}
+.pop-x{border:none;background:#f1f5f9;border-radius:999px;width:32px;height:32px;font-size:15px;cursor:pointer}
+.pop-sub{color:var(--suave);font-size:13px;margin:2px 0 10px}
+.pop-estado{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700;font-size:13px}
+.pop-estado.ok{background:var(--verde-claro);color:var(--verde)}
+.pop-estado.mal{background:#fee2e2;color:var(--rojo)}
+.pop-estado.amarillo{background:#fef3c7;color:#92400e}
+.pop-caja p{margin:10px 0;font-size:14.5px;line-height:1.45}
