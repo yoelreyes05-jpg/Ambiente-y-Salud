@@ -1829,6 +1829,44 @@ async function modalPortalVisible(sitioId, nombre) {
 }
 
 // ── Pestaña: puntos de control ───────────────────────────────────────────
+// Eliminar los puntos marcados: hay que escribir BORRAR para confirmar
+function modalEliminarMarcados(ids, alTerminar) {
+  const admin = typeof USUARIO !== "undefined" && USUARIO?.rol === "admin";
+  openModal({
+    title: `Eliminar ${ids.length} punto${ids.length === 1 ? "" : "s"} de control`,
+    bodyHTML: `
+      <p>Vas a eliminar <strong>${ids.length}</strong> punto${ids.length === 1 ? "" : "s"} marcado${ids.length === 1 ? "" : "s"}.</p>
+      ${admin ? `<div class="campo"><span>Qué hacer</span>
+        <select name="modo">
+          <option value="baja">Dar de baja: desaparecen de la ruta y del portal, el historial se conserva y se pueden reactivar</option>
+          <option value="definitivo">Eliminar definitivamente: se borran con todo su historial de inspecciones (no se puede deshacer)</option>
+        </select></div>` : `<p class="text-muted">Se dan de baja: desaparecen de la ruta del técnico y del portal; el historial se conserva.</p>`}
+      <div class="campo"><span>Para confirmar escribe <strong>BORRAR</strong></span>
+        <input name="confirmar" id="conf-borrar" autocomplete="off" placeholder="BORRAR"></div>`,
+    submitLabel: "Eliminar",
+    onMount() {
+      const b = $("#asa-modal-submit");
+      b.classList.add("btn-danger");
+      b.disabled = true;
+      $("#conf-borrar").addEventListener("input", (e) => { b.disabled = e.target.value.trim().toUpperCase() !== "BORRAR"; });
+      $("#conf-borrar").focus();
+    },
+    async onSubmit(fd) {
+      if (String(fd.get("confirmar") || "").trim().toUpperCase() !== "BORRAR") throw new Error("Escribe BORRAR para confirmar");
+      const definitivo = fd.get("modo") === "definitivo";
+      let hechos = 0;
+      // De a 200 para no pasar el largo máximo de la consulta
+      for (let i = 0; i < ids.length; i += 200) {
+        const r = await post("/puntos/eliminar", { punto_ids: ids.slice(i, i + 200), ...(definitivo ? { definitivo: true } : {}) });
+        hechos += r.eliminados ?? r.borrados ?? ids.slice(i, i + 200).length;
+      }
+      closeModal();
+      toast(definitivo ? `${hechos} punto(s) eliminados definitivamente` : `${hechos} punto(s) dados de baja`);
+      alTerminar?.();
+    },
+  });
+}
+
 async function tabPuntos(cuerpo, sitioId, areas, tipos) {
   cuerpo.innerHTML = `
     <div class="toolbar">
@@ -1853,7 +1891,32 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       <button class="btn btn-sm" id="pt-qr-impresos">Etiquetas QR</button>
       <button class="btn btn-sm btn-danger" id="pt-baja">Dar de baja</button>
     </div>
+    <div id="puntos-sel" class="puntos-sel"></div>
     <div id="puntos-tabla"><div class="center-msg">Cargando…</div></div>`;
+
+  // Puntos marcados para eliminar (se cotejan con la casilla de cada fila)
+  const marcados = new Set();
+  let listaActual = [];
+  const pintarSel = () => {
+    const visibles = listaActual.length;
+    const enVista = listaActual.filter((p) => marcados.has(p.id)).length;
+    $("#puntos-sel").innerHTML = visibles ? `
+      <label class="campo-check" style="margin:0"><input type="checkbox" id="sel-todos" ${enVista && enVista === visibles ? "checked" : ""}> Marcar todos los de este filtro (${visibles})</label>
+      <span class="text-muted">${marcados.size ? `<strong>${marcados.size}</strong> marcado${marcados.size === 1 ? "" : "s"}` : "Marca con la casilla los puntos que quieres eliminar"}</span>
+      ${marcados.size ? `<button type="button" class="btn btn-sm" id="sel-limpiar">Desmarcar</button>
+        <button type="button" class="btn btn-sm btn-danger" id="sel-eliminar">🗑 Eliminar ${marcados.size} marcado${marcados.size === 1 ? "" : "s"}</button>` : ""}` : "";
+    $("#sel-todos")?.addEventListener("change", (e) => {
+      for (const p of listaActual) e.target.checked ? marcados.add(p.id) : marcados.delete(p.id);
+      $("#puntos-tabla").querySelectorAll(".pt-sel").forEach((c) => { c.checked = marcados.has(c.dataset.sel); });
+      pintarSel();
+    });
+    $("#sel-limpiar")?.addEventListener("click", () => {
+      marcados.clear();
+      $("#puntos-tabla").querySelectorAll(".pt-sel").forEach((c) => { c.checked = false; });
+      pintarSel();
+    });
+    $("#sel-eliminar")?.addEventListener("click", () => modalEliminarMarcados([...marcados], () => { marcados.clear(); cargar(); }));
+  };
 
   async function cargar() {
     const tipo = $("#f-tipo").value;
@@ -1872,8 +1935,10 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
         ? ` · <span class="estado-chip pendiente">${sinPreguntas} sin preguntas para el técnico</span>`
         : "");
 
+    listaActual = lista;
     $("#puntos-tabla").innerHTML = tableHTML(
       [
+        { key: "sel", label: "✓", fmt: (p) => `<input type="checkbox" class="pt-sel" data-sel="${esc(p.id)}" ${marcados.has(p.id) ? "checked" : ""} aria-label="Marcar ${esc(p.codigo_visible)}">` },
         { key: "codigo_visible", label: "Código" },
         { key: "tipo_nombre", label: "Tipo", fmt: (p) => `${p.tipo_icono || ""} ${esc(p.tipo_nombre || "")}` },
         { key: "area_nombre", label: "Área", fmt: (p) => esc(p.area_nombre || "—") },
@@ -1903,10 +1968,15 @@ async function tabPuntos(cuerpo, sitioId, areas, tipos) {
       "Esta planta no tiene puntos de control con ese filtro."
     );
     $("#puntos-tabla").querySelectorAll("tr[data-id]").forEach((tr) =>
-      tr.addEventListener("click", () =>
-        modalPunto(sitioId, lista.find((p) => p.id === tr.dataset.id), areas, tipos, cargar)
-      )
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest(".pt-sel")) return;   // la casilla no abre el punto
+        modalPunto(sitioId, lista.find((p) => p.id === tr.dataset.id), areas, tipos, cargar);
+      })
     );
+    $("#puntos-tabla").querySelectorAll(".pt-sel").forEach((c) =>
+      c.addEventListener("change", () => { c.checked ? marcados.add(c.dataset.sel) : marcados.delete(c.dataset.sel); pintarSel(); })
+    );
+    pintarSel();
   }
 
   $("#f-tipo").addEventListener("change", cargar);

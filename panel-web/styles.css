@@ -879,3 +879,5 @@ tr.sem-fila-amarillo{background:#fefce8}
 .par-preg{display:flex;gap:6px;align-items:center;margin-bottom:5px}
 .par-preg .par-texto{flex:1;min-width:0}.par-preg .par-peso{width:80px}
 .par-sec input{padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font:inherit}
+.puntos-sel{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 10px}
+.pt-sel{width:18px;height:18px;cursor:pointer}

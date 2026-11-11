@@ -11,7 +11,7 @@
 // ═════════════════════════════════════════════════════════════════════════
 
 let INC_MES = null;           // AAAA-MM evaluado (se paga el 5 del mes siguiente)
-let INC_PLANTILLA = null;
+let INCV_PLANTILLA = null;
 let EVAL_SEL = "";            // colaborador abierto en Evaluación
 
 function mesAnterior() {
@@ -30,8 +30,8 @@ const rd = (n) => (Number(n) || 0).toLocaleString("es-DO", { minimumFractionDigi
 const pctTxt = (p) => (p == null ? "—" : `${Number(p).toLocaleString("es-DO", { maximumFractionDigits: 2 })}%`);
 
 async function plantillaIncentivos() {
-  if (!INC_PLANTILLA) INC_PLANTILLA = await get("/incentivos/plantilla");
-  return INC_PLANTILLA;
+  if (!INCV_PLANTILLA) INCV_PLANTILLA = await get("/incentivos/plantilla");
+  return INCV_PLANTILLA;
 }
 
 // Mismo cálculo que el servidor, para ver el % mientras se califica
@@ -103,7 +103,7 @@ async function viewEvaluacion(content) {
 
   $("#ev-mes").addEventListener("change", (ev) => { if (ev.target.value) { INC_MES = ev.target.value; viewEvaluacion(content); } });
   $("#ev-col").addEventListener("change", (ev) => { EVAL_SEL = ev.target.value; pintarFormEval(); });
-  $("#ev-param")?.addEventListener("click", () => modalParametrosEval(plantilla, () => { INC_PLANTILLA = null; viewEvaluacion(content); }));
+  $("#ev-param")?.addEventListener("click", () => modalParametrosEval(plantilla, () => { INCV_PLANTILLA = null; viewEvaluacion(content); }));
   content.querySelectorAll("[data-ev]").forEach((tr) => {
     const abrir = () => { EVAL_SEL = tr.dataset.ev; $("#ev-col").value = EVAL_SEL; pintarFormEval(); $("#ev-form").scrollIntoView({ behavior: "smooth" }); };
     tr.addEventListener("click", abrir);
