@@ -156,17 +156,32 @@ async function sincronizar(silencioso = true) {
   SINCRONIZANDO = true;
   pintarEstadoConexion();
   try {
-    const r = await POST("/inspecciones/sincronizar", { inspecciones: cola });
+    // Los campos que empiezan con "_" son solo de la app (nombre del punto,
+    // último error): no viajan al servidor.
+    const limpia = cola.map((c) => Object.fromEntries(Object.entries(c).filter(([k]) => !k.startsWith("_"))));
+    const r = await POST("/inspecciones/sincronizar", { inspecciones: limpia });
+    const fallos = [];
     for (const res of r.resultados || []) {
       // Se borra lo que el servidor aceptó. Lo que falló se queda en la cola
-      // para reintentar, salvo que el punto ya no exista: en ese caso
-      // reintentar mil veces no lo va a arreglar.
+      // con el motivo, para que el técnico lo vea (antes fallaba en silencio y
+      // el aviso de "por enviar" no se iba nunca), salvo que el punto ya no
+      // exista: reintentar mil veces no lo va a arreglar.
       if (res.ok || /no existe|dado de baja/i.test(res.mensaje || "")) {
         await BD.borrar("cola", res.clave_local);
+      } else {
+        const item = cola.find((c) => c.clave_local === res.clave_local);
+        if (item) {
+          fallos.push(res.mensaje || "Error desconocido");
+          await BD.guardar("cola", { ...item, _error: res.mensaje || "El servidor no lo aceptó", _intentos: (item._intentos || 0) + 1, _ultimo_intento: new Date().toISOString() });
+        }
       }
     }
     await actualizarContadorPendientes();
     if (r.guardadas && !silencioso) aviso(`${r.guardadas} inspección(es) enviadas`, "exito");
+    if (fallos.length && !silencioso) {
+      aviso(`${fallos.length} no se pudo enviar: ${fallos[0]}`, "error");
+      if (location.hash !== "#/por-enviar") location.hash = "#/por-enviar";
+    }
     if (r.guardadas) window.dispatchEvent(new Event("asa:sincronizado"));
   } catch (e) {
     if (!silencioso) aviso("No se pudo sincronizar: " + e.message, "error");
@@ -174,6 +189,46 @@ async function sincronizar(silencioso = true) {
     SINCRONIZANDO = false;
     pintarEstadoConexion();
   }
+}
+
+// ── Lo que está guardado en el teléfono esperando enviarse ───────────────
+async function pantallaPorEnviar() {
+  encabezado("Por enviar", "Guardado en el teléfono");
+  const cuerpo = document.createElement("div");
+  cuerpo.className = "contenido";
+  app().appendChild(cuerpo);
+  const pintar = async () => {
+    const cola = (await BD.todos("cola").catch(() => [])).sort((a, b) => String(a.creada).localeCompare(String(b.creada)));
+    if (!cola.length) {
+      cuerpo.innerHTML = `<div class="vacio"><span class="emoji">✅</span>No hay nada pendiente por enviar.</div>
+        <button class="btn secundario" onclick="location.hash='#/ruta'">Volver a la ruta</button>`;
+      return;
+    }
+    const cuando = (f) => (f ? new Date(f).toLocaleString("es-DO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
+    cuerpo.innerHTML = `
+      <p style="color:var(--gris-600);font-size:14px;margin-top:0">${cola.length} servicio(s) guardados sin señal. Se envían solos cuando hay conexión; si el servidor rechaza alguno, aquí sale el motivo.</p>
+      <button class="btn" id="pe-enviar" ${navigator.onLine ? "" : "disabled"}>${navigator.onLine ? "↻ Enviar ahora" : "📡 Sin señal: espera a tener conexión"}</button>
+      ${cola.map((c) => `
+        <div class="tarjeta" style="margin-top:10px;${c._error ? "border:1.5px solid var(--rojo)" : ""}">
+          <div style="font-weight:700">${esc(c._punto || (c.cotejo ? "Cotejo de fumigación" : "Servicio"))}</div>
+          <div style="color:var(--gris-600);font-size:13px">Hecho ${esc(cuando(c.creada))}${c.motivo_no_realizado ? " · No realizado" : c.cotejo ? " · Cotejo" : ""}${c._intentos ? ` · ${c._intentos} intento(s)` : ""}</div>
+          ${c._error ? `<div style="color:var(--rojo);font-size:13px;margin-top:6px">⚠ ${esc(c._error)}</div>` : `<div style="font-size:13px;margin-top:6px">Esperando señal para enviarse.</div>`}
+          <button class="btn secundario" data-descartar="${esc(c.clave_local)}" style="margin-top:8px">🗑 Descartar este servicio</button>
+        </div>`).join("")}`;
+    $("#pe-enviar", cuerpo)?.addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = "Enviando…";
+      await sincronizar(false);
+      pintar();
+    });
+    cuerpo.querySelectorAll("[data-descartar]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("¿Descartar este servicio? Se borra del teléfono y NO llega a la oficina. Hazlo solo si ya lo volviste a registrar o no hace falta.")) return;
+      await BD.borrar("cola", b.dataset.descartar);
+      await actualizarContadorPendientes();
+      aviso("Descartado");
+      pintar();
+    }));
+  };
+  pintar();
 }
 
 // ── Sesión ───────────────────────────────────────────────────────────────
@@ -327,7 +382,7 @@ function pintarEstadoConexion() {
   } else if (PENDIENTES) {
     caja.innerHTML = `<div class="aviso-offline">⏳ ${PENDIENTES} inspección(es) por enviar — toca para reintentar</div>`;
     caja.querySelector("div").style.cursor = "pointer";
-    caja.querySelector("div").addEventListener("click", () => sincronizar(false));
+    caja.querySelector("div").addEventListener("click", () => { location.hash = "#/por-enviar"; });
   } else {
     caja.innerHTML = "";
   }
@@ -345,6 +400,7 @@ function abrirMenu() {
     // lista de hoteles y había que tocar dos veces.
     ["🏨 Cambiar de hotel", () => { if (location.hash === "#/hoteles") elegirHotel(); else location.hash = "#/hoteles"; }],
     ["↻ Sincronizar ahora", () => sincronizar(false)],
+    ["⏳ Pendientes por enviar", () => { location.hash = "#/por-enviar"; }],
     ["🚪 Cerrar sesión", () => cerrarSesion()],
   ];
   const caja = document.createElement("div");
@@ -1456,6 +1512,8 @@ function pintarFormulario(form, punto, plagas = [], estados = ESTADOS_RESPALDO, 
 
     const inspeccion = {
       punto_id: punto.id,
+      // Solo para la lista de "por enviar" (el servidor lo descarta)
+      _punto: [punto.numero_habitacion ? `Habitación ${punto.numero_habitacion}` : punto.nombre, punto.codigo_visible, SITIO?.nombre].filter(Boolean).join(" · "),
       estado_punto: estado,
       nivel_actividad: noEntro
         ? "ninguna"
@@ -1928,13 +1986,14 @@ function enrutar() {
     return pantallaBuscar();
   }
   if (ruta === "hoteles") return elegirHotel();
+  if (ruta === "por-enviar") return pantallaPorEnviar();
+  if (ruta === "firma") return pantallaFirmaOrden();
   if (ruta.startsWith("solicitud/")) return pantallaSolicitud(ruta.slice(10));
   if (ruta === "cronograma") return pantallaCronograma();
   if (ruta === "incidencias") return pantallaIncidencias();
   if (ruta.startsWith("incidencia/")) return pantallaIncidencia(ruta.slice(11));
   if (!SITIO) return elegirHotel();
   if (ruta === "cotejo") return pantallaCotejo();
-  if (ruta === "firma") return pantallaFirmaOrden();
   return pantallaRuta();
 }
 

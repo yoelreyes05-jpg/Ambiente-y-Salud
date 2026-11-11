@@ -668,8 +668,23 @@ const MOTIVOS_NO_REALIZADO = [
 ];
 
 async function registrarInspeccion(req, cuerpo) {
-  let { punto_id, respuestas = [], capturas = [], clave_local: _omit, cotejo, respuestas_base, ...resto } = cuerpo;
+  let { punto_id, respuestas = [], capturas = [], clave_local: _omit, cotejo, respuestas_base, creada, ...resto } = cuerpo;
   if (!punto_id) return { error: true, codigo: 400, mensaje: "punto_id es requerido" };
+  // Campos que la app usa solo para sí misma (_punto, _error…): no son columnas
+  for (const k of Object.keys(resto)) if (k.startsWith("_")) delete resto[k];
+  // Lo que se hizo sin señal llega con "creada": la hora en que el técnico lo
+  // guardó en el teléfono. Esa es la fecha del servicio, no la del envío (si
+  // no, un servicio de ayer sin señal salía como de hoy). "creada" no es una
+  // columna: antes se mandaba tal cual y el servidor rechazaba todo lo que se
+  // guardó sin señal.
+  if (creada && !resto.fecha) {
+    const t = new Date(creada);
+    const ahora = Date.now();
+    if (!Number.isNaN(t.getTime()) && t.getTime() <= ahora + 5 * 60000 && ahora - t.getTime() < 45 * 86400000) {
+      resto.fecha = t.toISOString();
+      resto.fecha_local = t.toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+    }
+  }
 
   // ── Cotejo de fumigación ──────────────────────────────────────────────────
   // El técnico solo marcó la casilla (y, si hubo, la plaga y cuántas). Las

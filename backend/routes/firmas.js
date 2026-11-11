@@ -112,6 +112,38 @@ router.get("/orden", async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// Las órdenes del técnico que pregunta en un día, de TODOS sus hoteles, para
+// que escoja en cuál pide la firma (GET /firmas/mias?fecha=)
+router.get("/mias", async (req, res) => {
+  const fecha = fechaOk(req.query.fecha) ? req.query.fecha : hoyRD();
+  try {
+    const cols = "inspeccion_id, fecha, fecha_local, sitio_id, planta, tecnico_id, tecnico, tipo_codigo, tipo_nombre, tipo_icono, nivel_actividad, no_realizado";
+    let servicios = [];
+    if (req.usuario.empleado_id) {
+      servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(cols).eq("fecha_local", fecha).eq("tecnico_id", req.usuario.empleado_id).order("fecha").order("inspeccion_id"));
+    }
+    if (!servicios.length && req.usuario.nombre) {
+      servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(cols).eq("fecha_local", fecha).eq("tecnico", req.usuario.nombre).order("fecha").order("inspeccion_id"));
+    }
+    if (req.sitiosPermitidos) servicios = servicios.filter((s) => req.sitiosPermitidos.includes(s.sitio_id));
+    const porSitio = new Map();
+    for (const s of servicios) {
+      if (!porSitio.has(s.sitio_id)) porSitio.set(s.sitio_id, { sitio_id: s.sitio_id, planta: s.planta, lista: [] });
+      porSitio.get(s.sitio_id).lista.push(s);
+    }
+    const ordenes = [];
+    for (const g of porSitio.values()) {
+      const [o] = agrupar(g.lista);
+      const { data: firma, error } = await supabase.from("asa_firmas_servicio").select("*")
+        .eq("sitio_id", g.sitio_id).eq("fecha", fecha).eq("clave", o.clave).maybeSingle();
+      if (error) throw error;
+      ordenes.push({ ...o, sitio_id: g.sitio_id, planta: g.planta, estado: firma ? "finalizada" : "en_proceso", firma: publica(firma) });
+    }
+    ordenes.sort((a, b) => a.desde.localeCompare(b.desde));
+    res.json({ fecha, ordenes });
+  } catch (e) { err(res, e); }
+});
+
 // La orden de hoy del técnico que pregunta (para firmar en su teléfono)
 router.get("/mia", async (req, res) => {
   const { sitio_id } = req.query;

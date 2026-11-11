@@ -241,8 +241,10 @@ async function pantallaCotejo() {
       const lugar = typeof ubicacionActual === "function" ? ubicacionActual() || {} : {};
       for (const [punto_id, m] of marcados) {
         boton.textContent = `Guardando ${enviados + enCola + 1} de ${marcados.size}…`;
+        const pd = datos.puntos.find((x) => x.id === punto_id);
         const inspeccion = {
           punto_id,
+          _punto: [pd?.nombre, pd?.codigo, SITIO?.nombre].filter(Boolean).join(" · "),
           cotejo: true,
           capturas: Object.entries(m.plagas).filter(([, n]) => n > 0).map(([plaga_id, cantidad]) => ({ plaga_id, cantidad })),
           respuestas_base: baseDe(estrDe.get(punto_id)),
