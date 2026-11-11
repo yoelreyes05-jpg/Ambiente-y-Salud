@@ -22,7 +22,7 @@ async function tabFirmasPlanta(cuerpo, sitioId, dias = 7) {
         <tr class="clickable" data-orden="${esc(o.fecha)}|${esc(o.clave)}" tabindex="0">
           <td>${esc(new Date(`${o.fecha}T12:00:00`).toLocaleDateString("es-DO", { weekday: "short", day: "numeric", month: "short" }))}<div class="tec-sub">${hora(o.desde)} a ${hora(o.hasta)}</div></td>
           <td>${esc(o.tecnico)}</td>
-          <td>${o.hechos} hechos${o.no_realizados ? ` · <span style="color:#b91c1c">${o.no_realizados} no realizados</span>` : ""}</td>
+          <td>${o.hechos} puntos hechos${o.registros > o.puntos ? ` <span class="tec-sub">(${o.registros} registros)</span>` : ""}${o.no_realizados ? ` · <span style="color:#b91c1c">${o.no_realizados} no realizados</span>` : ""}</td>
           <td>${o.estado === "finalizada" ? `<span class="estado-chip hecho">Finalizada</span>` : `<span class="estado-chip pendiente">En proceso</span>`}</td>
           <td>${o.firma ? `${esc(o.firma.firmante_nombre)}${o.firma.firmante_cargo ? ` <span class="tec-sub">${esc(o.firma.firmante_cargo)}</span>` : ""}` : "—"}</td>
         </tr>`).join("")}</tbody></table></div>`
@@ -43,7 +43,7 @@ async function modalOrdenFirma(sitioId, fecha, clave, alCambiar) {
     large: true,
     bodyHTML: `
       <p>${o.estado === "finalizada" ? `<span class="estado-chip hecho">Finalizada</span>` : `<span class="estado-chip pendiente">En proceso · falta la firma del hotel</span>`}
-        &nbsp;${o.hechos} realizados${o.no_realizados ? ` · ${o.no_realizados} no realizados` : ""}</p>
+        &nbsp;${o.hechos} puntos realizados${o.no_realizados ? ` · ${o.no_realizados} no realizados` : ""}${o.registros > o.puntos ? ` · ${o.registros} registros (un punto registrado varias veces cuenta una)` : ""}</p>
       <div class="table-wrap"><table class="data">
         <thead><tr><th>Hora</th><th>Punto</th><th>Tipo</th><th>Resultado</th></tr></thead>
         <tbody>${o.servicios.map((s) => `<tr class="clickable" data-insp="${esc(s.inspeccion_id)}">

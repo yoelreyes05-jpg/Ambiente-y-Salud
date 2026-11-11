@@ -102,11 +102,12 @@ async function vistaFirmas(cuerpo) {
           <span class="marca-orden ${ESTADO_ORDEN[o.estado].clase}">${ESTADO_ORDEN[o.estado].txt}</span>
         </div>
         <div class="orden-tipos">
+          <span class="chip-tipo"><b>${o.hechos}</b> punto${o.hechos === 1 ? "" : "s"} realizado${o.hechos === 1 ? "" : "s"}</span>
           ${o.tipos.map((t) => `<span class="chip-tipo">${esc(t.icono || "•")} ${esc(t.nombre || "")} · ${t.n}</span>`).join("")}
           ${o.no_realizados ? `<span class="chip-tipo mal">⚠ ${o.no_realizados} no realizado${o.no_realizados === 1 ? "" : "s"}</span>` : ""}
         </div>
         ${o.firma ? `<div class="orden-firma">✍️ Firmó <b>${esc(o.firma.firmante_nombre)}</b>${o.firma.firmante_cargo ? ` (${esc(o.firma.firmante_cargo)})` : ""} · ${esc(new Date(o.firma.created_at).toLocaleString("es-DO"))}
-          ${o.nuevos_despues ? `<br><small>El técnico subió ${o.nuevos_despues} servicio(s) después de la firma.</small>` : ""}</div>`
+          ${o.nuevos_despues ? `<br><small>El técnico subió ${o.nuevos_despues} registro(s) después de la firma.</small>` : ""}</div>`
           : `<div class="orden-firma pend">Toca para revisar y firmar ›</div>`}
       </div>`).join("")
       : `<div class="vacio"><span class="emoji">✍️</span>${FIRMAS_VER === "en_proceso" ? "No hay órdenes por firmar." : "No hay órdenes en este período."}</div>`}`;
@@ -150,12 +151,13 @@ async function abrirOrden(fecha, clave, alFirmar) {
       <span class="marca-orden ${est.clase}">${est.txt}</span>
     </div>
     <div class="kpis">
-      <div class="kpi ok"><div class="n">${o.hechos}</div><div class="t">Realizados</div></div>
+      <div class="kpi ok"><div class="n">${o.hechos}</div><div class="t">Puntos realizados</div></div>
       <div class="kpi ${o.no_realizados ? "mal" : ""}"><div class="n">${o.no_realizados}</div><div class="t">No realizados</div></div>
       <div class="kpi"><div class="n">${o.servicios.reduce((a, s) => a + (s.plagas || 0), 0)}</div><div class="t">Plagas contadas</div></div>
     </div>
     <div class="tarjeta">
       <h2>Lo que hizo el técnico</h2>
+      ${o.registros > o.puntos ? `<p style="margin:-4px 0 8px;color:var(--suave);font-size:13px">${o.registros} registros de ${o.puntos} puntos: algunos se registraron más de una vez y en los totales cuentan una sola vez.</p>` : ""}
       <div class="tabla-orden">
         ${o.servicios.map((s) => `
           <div class="fila-orden ${s.no_realizado ? "nr" : ""}" ${s.inspeccion_id ? `data-insp="${esc(s.inspeccion_id)}"` : ""}>

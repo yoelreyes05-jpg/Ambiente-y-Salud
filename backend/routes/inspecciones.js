@@ -559,12 +559,15 @@ router.get("/avance/hoy", async (req, res) => {
 
   const [puntos, hechas] = await Promise.all([
     traerTodoComoRespuesta(() => supabase.from("asa_v_puntos_estado").select("*").eq("sitio_id", sitio_id).order("id")),
-    supabase
+    // Paginado: un hotel grande pasa de 1000 registros en un día y el conteo
+    // de "realizados" se quedaba corto.
+    traerTodoComoRespuesta(() => supabase
       .from("asa_inspecciones")
       .select("id, punto_id, fecha, estado_punto, nivel_actividad, motivo_no_realizado, metodo_acceso, tecnico_id, asa_empleados(nombre_completo), asa_usuarios(nombre_completo)")
       .eq("sitio_id", sitio_id)
       .eq("fecha_local", dia)
-      .order("fecha", { ascending: true }),
+      .order("fecha", { ascending: true })
+      .order("id")),
   ]);
   if (puntos.error) return res.status(500).json({ error: true, mensaje: puntos.error.message });
   if (hechas.error) return res.status(500).json({ error: true, mensaje: hechas.error.message });

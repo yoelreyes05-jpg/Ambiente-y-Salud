@@ -94,7 +94,7 @@ async function pantallaFirmaOrden() {
     <div class="firma-hoteles">${ordenes.map((x) => `
       <button type="button" class="firma-hotel ${x.sitio_id === FIRMA_SITIO ? "activa" : ""} ${x.estado}" data-sitio="${esc(x.sitio_id)}">
         <b>${esc(x.planta || "Hotel")}</b>
-        <small>${x.hechos + x.no_realizados} servicio(s) · ${x.estado === "finalizada" ? "✅ Firmada" : "⏳ En proceso"}</small>
+        <small>${x.hechos} punto(s) realizado(s)${x.no_realizados ? ` · ${x.no_realizados} no realizado(s)` : ""} · ${x.estado === "finalizada" ? "✅ Firmada" : "⏳ En proceso"}</small>
       </button>`).join("")}</div>` : "";
   const engancharArriba = () => {
     cuerpo.querySelectorAll("[data-dia]").forEach((b) => b.addEventListener("click", () => { FIRMA_DIA = Number(b.dataset.dia); FIRMA_SITIO = null; app().innerHTML = ""; pantallaFirmaOrden(); }));
@@ -108,14 +108,15 @@ async function pantallaFirmaOrden() {
   const resumen = `
     <div class="firma-resumen">
       <div><b>${esc(o.planta || "")}</b></div>
-      <div><b>${o.hechos}</b> realizado${o.hechos === 1 ? "" : "s"}${o.no_realizados ? ` · <b>${o.no_realizados}</b> no realizado${o.no_realizados === 1 ? "" : "s"}` : ""}</div>
+      <div><b>${o.hechos}</b> punto${o.hechos === 1 ? "" : "s"} realizado${o.hechos === 1 ? "" : "s"}${o.no_realizados ? ` · <b>${o.no_realizados}</b> no realizado${o.no_realizados === 1 ? "" : "s"}` : ""}</div>
+      ${o.registros > o.puntos ? `<div class="firma-sub">${o.registros} registros subidos (algunos puntos se registraron más de una vez; cuentan una sola vez)</div>` : ""}
       <div class="firma-sub">${hora(o.desde)} a ${hora(o.hasta)}</div>
       <div class="firma-tipos">${o.tipos.map((t) => `<span>${esc(t.icono || "•")} ${esc(t.nombre || "")} · ${t.n}</span>`).join("")}</div>
     </div>`;
   if (o.estado === "finalizada") {
     cuerpo.innerHTML = `${dias}${hoteles}${resumen}
       <div class="firma-ok">✅ Orden finalizada<br><small>Firmó ${esc(o.firma.firmante_nombre)}${o.firma.firmante_cargo ? ` (${esc(o.firma.firmante_cargo)})` : ""} a las ${hora(o.firma.created_at)}</small>
-      ${o.hechos + o.no_realizados > o.firma.servicios ? `<br><small>Subiste ${o.hechos + o.no_realizados - o.firma.servicios} servicio(s) después de la firma.</small>` : ""}</div>`;
+      ${o.registros > o.firma.servicios ? `<br><small>Subiste ${o.registros - o.firma.servicios} registro(s) después de la firma.</small>` : ""}</div>`;
     engancharArriba();
     return;
   }

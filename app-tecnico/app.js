@@ -492,10 +492,13 @@ async function pantallaRuta() {
   const total = realizados.length + pendientes.length;
   const pct = total ? Math.round((realizados.length / total) * 100) : 0;
   const tocan = pendientes.filter((p) => p.vencido).length;
+  // Puntos distintos hechos hoy en ESTE hotel (todos los técnicos) y los tuyos
+  const mios = realizados.filter((p) => p._local || (p.inspeccion?.tecnico && p.inspeccion.tecnico === USUARIO?.nombre)).length;
 
   cuerpo.innerHTML = `
     <div class="avance">
-      <div class="hechos"><div class="numero">${realizados.length}</div><div class="rotulo">Realizados</div></div>
+      <div class="hechos"><div class="numero">${realizados.length}</div><div class="rotulo">Realizados hoy</div>
+        <div class="rotulo-sub">${mios === realizados.length ? "todos tuyos" : `${mios} tuyos · ${realizados.length - mios} de otros técnicos`}</div></div>
       <div class="faltan"><div class="numero">${tocan}</div><div class="rotulo">Le toca hoy</div></div>
     </div>
     <div class="progreso"><span style="width:${pct}%"></span></div>
@@ -572,6 +575,7 @@ function listaDelDia(caja, pendientes, realizados) {
       <input type="search" id="filtro-texto" placeholder="Filtrar: habitación, código, área…"
              autocomplete="off" enterkeyhint="search" value="${esc(f.texto)}" />
     </div>
+    <div id="aviso-filtro"></div>
     <div id="listas" role="tabpanel"></div>`;
 
   // Tipos presentes en el hotel, en orden de cantidad. La clave es el código
@@ -602,6 +606,15 @@ function listaDelDia(caja, pendientes, realizados) {
     const nHech = realizados.filter((p) => pasaTipo(p) && pasaTexto(p)).length;
     $("#cuenta-pendientes", caja).textContent = nPend;
     $("#cuenta-hechos", caja).textContent = nHech;
+    // Con un filtro puesto los números de las pestañas son solo de lo filtrado:
+    // se dice claro para que no parezca que no cuadran con los de arriba.
+    const totPend = pendientes.filter((p) => verAlDia || p.vencido || p.intento).length;
+    const nombreTipo = tipo ? (tipos.get(tipo)?.nombre || tipo) : "";
+    $("#aviso-filtro", caja).innerHTML = tipo || t
+      ? `<div class="aviso-filtro">Filtro: <b>${esc([nombreTipo, texto.trim() && `“${texto.trim()}”`].filter(Boolean).join(" · "))}</b> — por hacer ${nPend} de ${totPend}, hechos ${nHech} de ${realizados.length}
+          <button type="button" id="quitar-filtro">Quitar filtro</button></div>`
+      : "";
+    $("#quitar-filtro", caja)?.addEventListener("click", () => { FILTRO_RUTA.set({ tipo: "", texto: "" }); entrada.value = ""; pintar(); });
     caja.querySelectorAll("[data-pestana]").forEach((b) => {
       const activa = b.dataset.pestana === pestana;
       b.classList.toggle("activa", activa);
