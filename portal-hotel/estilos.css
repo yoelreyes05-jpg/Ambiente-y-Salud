@@ -513,3 +513,42 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .version-portal{text-align:center;font-size:11px;color:var(--suave);padding:6px 0 18px;opacity:.7}
 
 .marca-version{display:inline-block;background:#e8f5e9;color:#2e6b32;border:1px solid #66a36a;border-radius:20px;padding:4px 12px;font-size:12.5px;font-weight:700;margin-bottom:10px}
+
+/* ── Firmas: órdenes del técnico y firma de recibido ─────────────────── */
+.nota-firmas{color:var(--suave);font-size:13px;margin:0 0 12px}
+.tarjeta.orden{cursor:pointer;border-left:5px solid #d97706}
+.tarjeta.orden.finalizada{border-left-color:var(--verde)}
+.orden-cab{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.orden-cab strong{text-transform:capitalize}
+.orden-cab.grande{margin-bottom:12px}
+.orden-sub{color:var(--suave);font-size:13px;margin-top:2px}
+.marca-orden{border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;white-space:nowrap}
+.marca-orden.proceso{background:#fef3c7;color:#92400e}
+.marca-orden.finalizada{background:var(--verde-claro);color:var(--verde)}
+.orden-tipos{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}
+.chip-tipo{background:#f1f5f9;border-radius:8px;padding:3px 8px;font-size:12.5px}
+.chip-tipo.mal{background:#fee2e2;color:var(--rojo)}
+.orden-firma{font-size:13px;color:#334155}
+.orden-firma.pend{color:#92400e;font-weight:600}
+.tabla-orden{display:flex;flex-direction:column}
+.fila-orden{display:grid;grid-template-columns:70px 1fr auto;gap:8px;padding:8px 0;border-top:1px solid #e2e8f0;font-size:13.5px;align-items:center}
+.fila-orden[data-insp]{cursor:pointer}
+.fila-orden.nr .fo-res{color:var(--rojo)}
+.fo-hora{color:var(--suave);font-variant-numeric:tabular-nums}
+.fo-punto small{display:block;color:var(--suave);font-size:12px}
+.fo-res{text-align:right;font-size:12.5px}
+.form-firma{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.form-firma label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600}
+.form-firma .ancho{grid-column:1/-1}
+.form-firma input{font:inherit;font-weight:400;padding:9px;border:1px solid #cbd5e1;border-radius:8px}
+.pad-firma{position:relative;height:190px;border:2px dashed #94a3b8;border-radius:12px;background:#fff;touch-action:none}
+.pad-firma canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.pad-linea{position:absolute;left:16px;right:16px;bottom:34px;border-top:1px solid #cbd5e1;color:#94a3b8;font-size:11px;padding-top:2px;pointer-events:none}
+.pad-borrar{position:absolute;top:6px;right:6px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:4px 10px;font:inherit;font-size:12px}
+.firma-img{max-width:320px;width:100%;border-bottom:1px solid #94a3b8;display:block}
+.resumen-villas{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.chip-villa{border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
+.chip-villa.ok{border-color:var(--verde-borde);color:var(--verde)}
+.chip-villa.mal{border-color:#fca5a5;color:var(--rojo)}
+@media (max-width:600px){.form-firma{grid-template-columns:1fr}.fila-orden{grid-template-columns:56px 1fr}.fo-res{grid-column:2;text-align:left}}
+@media print{.pad-firma,#ff-firmar{display:none}}

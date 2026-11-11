@@ -15,6 +15,7 @@
 //
 import jwt from "jsonwebtoken";
 import { supabase } from "../lib/supabaseClient.js";
+import { perfilDe, rutaBloqueada } from "../lib/perfilPortal.js";
 
 export const ROLES_INTERNOS = [
   "admin", "comercial", "operaciones", "tecnico_plagas",
@@ -106,6 +107,11 @@ export async function cargarAlcance(req, res, next) {
         mensaje: "Tu usuario no tiene ningún hotel asignado. Contacta a Ambiente y Salud.",
       });
     }
+    // Ama de llaves: solo las pestañas que ASA le marcó
+    req.perfilPortal = await perfilDe(req.usuario.id).catch(() => null);
+    if (rutaBloqueada(req.perfilPortal, req.path)) {
+      return res.status(403).json({ error: true, mensaje: "Tu usuario no tiene acceso a esta sección del portal." });
+    }
     return next();
   }
 
@@ -152,6 +158,7 @@ export function exigirSitioPermitido(req, res, sitioId) {
 const ESCRITURAS_PERMITIDAS_EXTERNAS = [
   { metodo: "POST", ruta: "/plagas/reportar" },
   { metodo: "POST", ruta: "/solicitudes" },
+  { metodo: "POST", ruta: "/firmas" },          // firmar de recibido la orden del técnico
   { metodo: "POST", patron: /^\/solicitudes\/[0-9a-f-]{36}\/(puntos|mensajes|cancelar)$/i },
 ];
 

@@ -19,7 +19,7 @@ let PLANTAS = [];
 let PESTANA = "hoy";
 // Para saber qué versión del portal tiene abierta el teléfono (si no coincide
 // con la última, Vercel no la ha publicado o el navegador guarda una copia).
-const VERSION_PORTAL = "2026-10-30 v2";
+const VERSION_PORTAL = "2026-11-11";
 let AVISO_ORDEN = null;   // mensaje a mostrar tras crear una orden
 
 const app = () => document.getElementById("app");
@@ -164,8 +164,10 @@ async function entrarConSesion(r) {
 }
 
 // ── Marco ────────────────────────────────────────────────────────────────
+let PERFIL_PORTAL = null;   // { perfil: "calidad" | "ama_llaves", pestanas: [...] }
+
 function pintarMarco() {
-  const pestanas = [
+  const todas = [
     ["hoy", "Hoy"],
     ["historial", "Historial"],
     ["pendientes", "Por hacer"],
@@ -175,7 +177,11 @@ function pintarMarco() {
     ["cronograma", "Cronograma"],
     ["incidencias", "Chinche"],
     ["documentos", "Documentos"],
+    ["firmas", "✍️ Firmas"],
   ];
+  // Ama de llaves: solo las pestañas que ASA le marcó
+  const pestanas = PERFIL_PORTAL?.pestanas ? todas.filter(([k]) => PERFIL_PORTAL.pestanas.includes(k)) : todas;
+  if (!pestanas.some(([k]) => k === PESTANA)) PESTANA = pestanas[0]?.[0] || "hoy";
 
   app().innerHTML = `
     <header class="barra">
@@ -216,7 +222,7 @@ function pintarMarco() {
 async function pintarPestana() {
   const cuerpo = $("#cuerpo");
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
-  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias };
+  const vistas = { hoy: vistaHoy, historial: vistaHistorial, pendientes: vistaPendientes, mapa: vistaMapa, hallazgos: vistaHallazgos, ordenes: vistaOrdenes, documentos: vistaDocumentos, cronograma: vistaCronograma, incidencias: vistaIncidencias, firmas: vistaFirmas };
   try {
     await vistas[PESTANA](cuerpo);
   } catch (e) {
@@ -342,6 +348,7 @@ function engancharServicios(raiz) {
 // autorizara el acceso a que ASA no llegara.
 let PH_TIPO = null;
 let PH_VER = "";
+let PH_AREA = "";   // villa / bloque / área elegida
 
 // ── Bloques, villas y pisos ───────────────────────────────────────────────
 const AGRUPACION_INFO = {
@@ -397,7 +404,12 @@ async function vistaPendientes(cuerpo) {
   const pct = e.puntos.length ? Math.round((verdes / e.puntos.length) * 100) : 0;
   const tipoNombre = e.tipos.find((t) => t.codigo === PH_TIPO)?.nombre || "Puntos";
 
-  const visibles = e.puntos.filter((p) => (PH_VER === "rojo" ? !esVerde(p) : PH_VER === "verde" ? esVerde(p) : true));
+  // Villas (o bloques, edificios…) de esta planta para el filtro
+  const conGrupo = e.areas.filter((a) => a.agrupacion && a.agrupacion !== "otro");
+  const tituloGrupo = conGrupo.length ? (AGRUPACION_INFO[conGrupo[0].agrupacion]?.txt || "Área") : "Área";
+  if (PH_AREA && !e.areas.some((a) => String(a.id || "sin_area") === PH_AREA)) PH_AREA = "";
+  const visibles = e.puntos.filter((p) => (PH_VER === "rojo" ? !esVerde(p) : PH_VER === "verde" ? esVerde(p) : true))
+    .filter((p) => !PH_AREA || String(p.area_id || "sin_area") === PH_AREA);
   const grupos = new Map();
   for (const p of visibles) {
     const k = p.area_id || "sin_area";
@@ -427,7 +439,16 @@ async function vistaPendientes(cuerpo) {
         <option value="rojo"${PH_VER === "rojo" ? " selected" : ""}>Solo lo que falta</option>
         <option value="verde"${PH_VER === "verde" ? " selected" : ""}>Solo lo hecho</option>
       </select>
+      ${e.areas.length > 1 ? `<select class="btn" id="ph-area">
+        <option value="">${conGrupo.length ? `Todas las ${esc(tituloGrupo.toLowerCase())}s` : "Todas las áreas"}</option>
+        ${e.areas.map((a) => `<option value="${esc(String(a.id || "sin_area"))}"${String(a.id || "sin_area") === PH_AREA ? " selected" : ""}>${esc((AGRUPACION_INFO[a.agrupacion]?.ic || "") + " " + (a.nombre || "Sin área"))}${a.por_hacer ? ` · ${a.por_hacer} por hacer` : " · completa"}</option>`).join("")}
+      </select>` : ""}
     </div>
+    ${conGrupo.length > 1 && !PH_AREA ? `
+    <div class="resumen-villas">
+      ${e.areas.map((a) => `<button type="button" class="chip-villa ${a.por_hacer ? "mal" : "ok"}" data-villa="${esc(String(a.id || "sin_area"))}">
+        ${AGRUPACION_INFO[a.agrupacion]?.ic || "📍"} ${esc(a.nombre || "Sin área")} <b>${a.total ? Math.round(((a.total - (a.por_hacer || 0)) / a.total) * 100) : 0}%</b></button>`).join("")}
+    </div>` : ""}
 
     <div class="kpis">
       <div class="kpi ok"><div class="n">${verdes}</div><div class="t">${esc(tipoNombre)} hechos</div></div>
@@ -496,6 +517,8 @@ async function vistaPendientes(cuerpo) {
 
   $("#ph-tipo").addEventListener("change", (ev) => { PH_TIPO = ev.target.value; vistaPendientes(cuerpo); });
   $("#ph-ver").addEventListener("change", (ev) => { PH_VER = ev.target.value; vistaPendientes(cuerpo); });
+  $("#ph-area")?.addEventListener("change", (ev) => { PH_AREA = ev.target.value; vistaPendientes(cuerpo); });
+  cuerpo.querySelectorAll("[data-villa]").forEach((b) => b.addEventListener("click", () => { PH_AREA = b.dataset.villa; vistaPendientes(cuerpo); }));
   engancharServicios(cuerpo);
 }
 
@@ -1465,6 +1488,8 @@ async function arrancar() {
     </div>`;
     return;
   }
+
+  PERFIL_PORTAL = await GET("/usuarios/portal/mi-perfil").catch(() => null);
 
   // Si la planta guardada ya no está asignada, se cae a la primera disponible
   PLANTA = PLANTAS.find((p) => p.id === PLANTA?.id) || PLANTAS[0];

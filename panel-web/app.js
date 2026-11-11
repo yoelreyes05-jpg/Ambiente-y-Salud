@@ -1660,6 +1660,7 @@ async function abrirPlanta(sitioId) {
         <button class="tab tab-rojo" data-tab="norealizados">No realizados</button>
         <button class="tab" data-tab="puntos">Puntos de control</button>
         <button class="tab" data-tab="pasadas">Días anteriores</button>
+        <button class="tab" data-tab="firmas">✍️ Órdenes y firmas</button>
         <button class="tab" data-tab="mapa">Mapa</button>
         <button class="tab" data-tab="areas">Áreas (${areas.length})</button>
       </div>
@@ -1690,6 +1691,7 @@ async function abrirPlanta(sitioId) {
     norealizados: () => tabNoRealizados(cuerpo, sitioId),
     puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
     pasadas: () => tabDiasAnteriores(cuerpo, sitioId),
+    firmas: () => tabFirmasPlanta(cuerpo, sitioId),
     mapa: () => tabMapa(cuerpo, sitioId, areas),
     areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
   };

@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { supabase } from "../lib/supabaseClient.js";
 import { requireAuth, requireRol, ROLES_INTERNOS, olvidarVigencia } from "../middleware/auth.js";
 import { logAccion } from "../lib/auditoria.js";
+import { perfilDe, perfilesPortal, guardarPerfil, PESTANAS_PORTAL, PERFILES } from "../lib/perfilPortal.js";
 
 const router = express.Router();
 
@@ -332,6 +333,26 @@ router.post("/", requireAuth, requireRol("admin"), async (req, res) => {
 // real y solo de lectura, lo que se ha hecho en los hoteles que se le asignen.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// GET /usuarios/portal/mi-perfil — qué pestañas ve la cuenta del hotel que entra
+router.get("/portal/mi-perfil", requireAuth, async (req, res) => {
+  try { res.json(await perfilDe(req.usuario.id)); } catch (e) { res.status(500).json({ error: true, mensaje: e.message }); }
+});
+
+// GET /usuarios/portal/perfiles — perfiles y pestañas que se pueden escoger
+router.get("/portal/perfiles", requireAuth, requireRol("admin", "comercial", "operaciones"), (req, res) =>
+  res.json({ perfiles: PERFILES, pestanas: PESTANAS_PORTAL.map(([clave, nombre]) => ({ clave, nombre })) }));
+
+// PUT /usuarios/portal/:id/perfil — { perfil: "calidad" | "ama_llaves", pestanas: [...] }
+router.put("/portal/:id/perfil", requireAuth, requireRol("admin", "comercial"), async (req, res) => {
+  const { perfil, pestanas } = req.body || {};
+  if (!PERFILES[perfil]) return res.status(400).json({ error: true, mensaje: "Perfil inválido" });
+  try {
+    const r = await guardarPerfil(req.params.id, perfil, pestanas);
+    logAccion(req, { accion: "perfil_portal", modulo: "usuarios", registroId: req.params.id, descripcion: `Perfil del portal: ${PERFILES[perfil]}`, detalle: r });
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: true, mensaje: e.message }); }
+});
+
 // GET /usuarios/portal?sitio_id= — cuentas de hotel y sus sitios asignados
 router.get("/portal", requireAuth, requireRol("admin", "comercial", "operaciones"), async (req, res) => {
   const { data, error } = await supabase
@@ -341,7 +362,8 @@ router.get("/portal", requireAuth, requireRol("admin", "comercial", "operaciones
     .order("nombre_completo");
   if (error) return res.status(500).json({ error: true, mensaje: error.message });
 
-  let lista = data || [];
+  const perfiles = await perfilesPortal().catch(() => ({}));
+  let lista = (data || []).map((u) => ({ ...u, perfil: perfiles[u.id]?.perfil === "ama_llaves" ? perfiles[u.id] : { perfil: "calidad" } }));
   if (req.query.sitio_id) {
     lista = lista.filter((u) => (u.asa_usuario_sitios || []).some((s) => s.sitio_id === req.query.sitio_id));
   }

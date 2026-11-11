@@ -2318,6 +2318,7 @@ async function viewAccesosHotel(content) {
               ? `<span class="estado-chip hecho">Activa</span>`
               : `<span class="estado-chip fuera">Desactivada</span>`,
         },
+        { key: "perfil", label: "Tipo", fmt: (u) => (u.perfil?.perfil === "ama_llaves" ? `<span class="estado-chip fuera">🛏 Ama de llaves</span>` : "Calidad") },
         { key: "ultimo_acceso", label: "Último acceso", fmt: (u) => (u.ultimo_acceso ? fmtDateTime(u.ultimo_acceso) : "Nunca entró") },
       ],
       cuentas,
@@ -2418,8 +2419,16 @@ function modalCambiarClave({ titulo, ruta, onDone }) {
   });
 }
 
+// Pestañas del portal que puede ver una cuenta de ama de llaves
+const PESTANAS_PORTAL_PANEL = [
+  ["hoy", "Hoy"], ["historial", "Historial"], ["pendientes", "Por hacer (habitaciones por villa)"], ["mapa", "Mapa"],
+  ["hallazgos", "Hallazgos"], ["ordenes", "Solicitudes"], ["cronograma", "Cronograma"],
+  ["incidencias", "Chinche"], ["documentos", "Documentos"], ["firmas", "Firmas (firmar las órdenes del técnico)"],
+];
+
 function modalAcceso(cuenta, plantas, onSaved) {
   const esNueva = !cuenta;
+  const perfil = cuenta?.perfil?.perfil === "ama_llaves" ? cuenta.perfil : { perfil: "calidad", pestanas: ["hoy", "pendientes", "firmas"] };
   const asignadas = new Set((cuenta?.asa_usuario_sitios || []).map((s) => s.sitio_id));
 
   const listaPlantas = plantas
@@ -2452,6 +2461,17 @@ function modalAcceso(cuenta, plantas, onSaved) {
            Solo vera estas. Es el mismo filtro que aplica el servidor en cada
            consulta, no un escondite de la pantalla.
          </small>
+       </div>
+       <div class="campo">
+         <span>Tipo de cuenta</span>
+         <select name="perfil" id="acceso-perfil">
+           <option value="calidad"${perfil.perfil === "calidad" ? " selected" : ""}>Calidad — ve todo el portal</option>
+           <option value="ama_llaves"${perfil.perfil === "ama_llaves" ? " selected" : ""}>Ama de llaves — solo lo que marques abajo</option>
+         </select>
+         <div id="acceso-pestanas" style="margin-top:8px;${perfil.perfil === "ama_llaves" ? "" : "display:none"}">
+           <small class="ayuda" style="display:block;margin-bottom:4px">Lo que verá del hotel:</small>
+           ${PESTANAS_PORTAL_PANEL.map(([k, t]) => `<label class="campo-check"><input type="checkbox" name="pestana" value="${k}" ${(perfil.pestanas || []).includes(k) ? "checked" : ""}/> ${esc(t)}</label>`).join("")}
+         </div>
        </div>` +
       (esNueva
         ? `<p class="text-muted" style="margin:10px 0 0">Después de crearla, ábrela otra vez para agregar a las <strong>personas</strong> que la van a usar.</p>`
@@ -2482,6 +2502,7 @@ function modalAcceso(cuenta, plantas, onSaved) {
              con las plantas que tenia asignadas.
            </p>`),
     onMount() {
+      $("#acceso-perfil")?.addEventListener("change", (e) => { $("#acceso-pestanas").style.display = e.target.value === "ama_llaves" ? "" : "none"; });
       if (!esNueva) montarPersonas(cuenta);
       $("#acceso-clave")?.addEventListener("click", () =>
         modalCambiarClave({
@@ -2523,13 +2544,17 @@ function modalAcceso(cuenta, plantas, onSaved) {
       const sitios = fd.getAll("sitio");
       if (!sitios.length) throw new Error("Asigna al menos una planta: sin plantas la cuenta no ve nada");
 
+      const tipo = fd.get("perfil") || "calidad";
+      const pestanas = fd.getAll("pestana");
+      if (tipo === "ama_llaves" && !pestanas.length) throw new Error("Marca al menos una sección que pueda ver el ama de llaves");
       if (esNueva) {
-        await post("/usuarios/portal", {
+        const creada = await post("/usuarios/portal", {
           nombre_completo: (fd.get("nombre_completo") || "").trim(),
           email: (fd.get("email") || "").trim().toLowerCase(),
           password: fd.get("password"),
           sitios,
         });
+        if (tipo === "ama_llaves") await put(`/usuarios/portal/${creada.id}/perfil`, { perfil: tipo, pestanas });
       } else {
         // Dos escrituras distintas: los datos de la cuenta y la lista de
         // plantas viven en tablas separadas (asa_usuarios y asa_usuario_sitios).
@@ -2538,6 +2563,7 @@ function modalAcceso(cuenta, plantas, onSaved) {
           email: (fd.get("email") || "").trim().toLowerCase(),
         });
         await put(`/usuarios/portal/${cuenta.id}/sitios`, { sitios });
+        await put(`/usuarios/portal/${cuenta.id}/perfil`, { perfil: tipo, pestanas });
       }
       closeModal();
       toast(esNueva ? "Cuenta creada" : "Cuenta actualizada");

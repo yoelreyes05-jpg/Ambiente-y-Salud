@@ -447,6 +447,7 @@ async function pantallaRuta() {
     <button class="btn grande" id="btn-escanear">📷 Escanear punto</button>
     <button class="btn secundario" id="btn-buscar">🔍 Buscar por nombre o habitación</button>
     <button class="btn secundario" id="btn-cotejo">☑️ Cotejo de fumigación (offices, carritos, registros…)</button>
+    <button class="btn secundario" id="btn-firma">✍️ Firma de recibido (finalizar la orden de hoy)</button>
 
     <div id="incidencias-hotel" style="margin-top:8px"></div>
     <div id="solicitudes-hotel" style="margin-top:8px"></div>
@@ -457,6 +458,7 @@ async function pantallaRuta() {
   $("#btn-escanear", cuerpo)?.addEventListener("click", () => (location.hash = "#/escanear"));
   $("#btn-buscar", cuerpo)?.addEventListener("click", () => (location.hash = "#/buscar"));
   $("#btn-cotejo", cuerpo)?.addEventListener("click", () => (location.hash = "#/cotejo"));
+  $("#btn-firma", cuerpo)?.addEventListener("click", () => (location.hash = "#/firma"));
 
   bloqueSolicitudes($("#solicitudes-hotel", cuerpo)).catch(() => {});
   if (typeof bloqueIncidencias === "function") bloqueIncidencias($("#incidencias-hotel", cuerpo)).catch(() => {});
@@ -1932,6 +1934,7 @@ function enrutar() {
   if (ruta.startsWith("incidencia/")) return pantallaIncidencia(ruta.slice(11));
   if (!SITIO) return elegirHotel();
   if (ruta === "cotejo") return pantallaCotejo();
+  if (ruta === "firma") return pantallaFirmaOrden();
   return pantallaRuta();
 }
 
