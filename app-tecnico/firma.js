@@ -65,27 +65,30 @@ function padFirma(contenedor) {
 let FIRMA_DIA = 0;          // 0 = hoy, 1 = ayer
 let FIRMA_SITIO = null;     // hotel escogido para la firma
 
+const ESTADO_FIRMA = {
+  en_proceso: { ic: "⏳", txt: "En proceso" },
+  parcial: { ic: "🟡", txt: "Firmada en parte" },
+  finalizada: { ic: "✅", txt: "Finalizada" },
+};
+
 async function pantallaFirmaOrden() {
-  encabezado("Firma de recibido", "Escoge el hotel y la persona firma");
+  encabezado("Firma de recibido", "Todo de una vez o por áreas");
   const cuerpo = document.createElement("div");
   cuerpo.className = "contenido";
   cuerpo.innerHTML = `<div class="cargando">Cargando…</div>`;
   app().appendChild(cuerpo);
-  const fechaDe = (n) => { const d = new Date(Date.now() - n * 86400000); return d.toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" }); };
+  const fechaDe = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
   const fecha = fechaDe(FIRMA_DIA);
-  let d;
-  try {
-    d = await GET(`/firmas/mias?fecha=${fecha}`);
-  } catch (e) {
-    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">⚠️</span>${esc(esSinSenal(e) ? "Sin señal: la firma necesita conexión. Si no hay, el hotel puede firmar luego en su portal." : e.message)}</div>`;
-    return;
-  }
   const hora = (f) => new Date(f).toLocaleTimeString("es-DO", { hour: "numeric", minute: "2-digit", timeZone: "America/Santo_Domingo" });
+  const recargar = () => { app().innerHTML = ""; pantallaFirmaOrden(); };
+  const sinSenal = (e) => `<div class="vacio"><span class="emoji">⚠️</span>${esc(esSinSenal(e) ? "Sin señal: la firma necesita conexión. Si no hay, el hotel puede firmar luego en su portal." : e.message)}</div>`;
+
+  let d;
+  try { d = await GET(`/firmas/mias?fecha=${fecha}`); } catch (e) { cuerpo.innerHTML = sinSenal(e); return; }
   const ordenes = d.ordenes || [];
   if (!ordenes.some((o) => o.sitio_id === FIRMA_SITIO)) {
-    FIRMA_SITIO = (ordenes.find((o) => o.sitio_id === SITIO?.id && o.estado === "en_proceso") || ordenes.find((o) => o.estado === "en_proceso") || ordenes[0])?.sitio_id || null;
+    FIRMA_SITIO = (ordenes.find((o) => o.sitio_id === SITIO?.id && o.estado !== "finalizada") || ordenes.find((o) => o.estado !== "finalizada") || ordenes[0])?.sitio_id || null;
   }
-  const o = ordenes.find((x) => x.sitio_id === FIRMA_SITIO);
   const dias = `<div class="firma-dias">
     <button type="button" class="cot-chip ${FIRMA_DIA === 0 ? "activa" : ""}" data-dia="0">Hoy</button>
     <button type="button" class="cot-chip ${FIRMA_DIA === 1 ? "activa" : ""}" data-dia="1">Ayer</button></div>`;
@@ -94,55 +97,107 @@ async function pantallaFirmaOrden() {
     <div class="firma-hoteles">${ordenes.map((x) => `
       <button type="button" class="firma-hotel ${x.sitio_id === FIRMA_SITIO ? "activa" : ""} ${x.estado}" data-sitio="${esc(x.sitio_id)}">
         <b>${esc(x.planta || "Hotel")}</b>
-        <small>${x.hechos} punto(s) realizado(s)${x.no_realizados ? ` · ${x.no_realizados} no realizado(s)` : ""} · ${x.estado === "finalizada" ? "✅ Firmada" : "⏳ En proceso"}</small>
+        <small>${x.hechos} punto(s) realizado(s) · ${ESTADO_FIRMA[x.estado].ic} ${ESTADO_FIRMA[x.estado].txt}${x.estado === "parcial" ? ` · faltan ${x.pendientes_puntos}` : ""}</small>
       </button>`).join("")}</div>` : "";
   const engancharArriba = () => {
-    cuerpo.querySelectorAll("[data-dia]").forEach((b) => b.addEventListener("click", () => { FIRMA_DIA = Number(b.dataset.dia); FIRMA_SITIO = null; app().innerHTML = ""; pantallaFirmaOrden(); }));
-    cuerpo.querySelectorAll("[data-sitio]").forEach((b) => b.addEventListener("click", () => { FIRMA_SITIO = b.dataset.sitio; app().innerHTML = ""; pantallaFirmaOrden(); }));
+    cuerpo.querySelectorAll("[data-dia]").forEach((b) => b.addEventListener("click", () => { FIRMA_DIA = Number(b.dataset.dia); FIRMA_SITIO = null; recargar(); }));
+    cuerpo.querySelectorAll("[data-sitio]").forEach((b) => b.addEventListener("click", () => { FIRMA_SITIO = b.dataset.sitio; recargar(); }));
   };
-  if (!o) {
-    cuerpo.innerHTML = `${dias}<div class="vacio"><span class="emoji">✍️</span>No tienes servicios ${FIRMA_DIA ? "de ayer" : "hoy"} en ningún hotel.<br><small>Cuando termines un hotel, vuelve aquí para que firmen de recibido.</small></div>`;
+  const elegida = ordenes.find((x) => x.sitio_id === FIRMA_SITIO);
+  if (!elegida) {
+    cuerpo.innerHTML = `${dias}<div class="vacio"><span class="emoji">✍️</span>No tienes servicios ${FIRMA_DIA ? "de ayer" : "hoy"} en tus hoteles.<br><small>Cuando termines (todo o una parte), vuelve aquí para que firmen de recibido.</small></div>`;
     engancharArriba();
     return;
   }
+
+  let o;
+  try { o = await GET(`/firmas/orden?${new URLSearchParams({ sitio_id: elegida.sitio_id, fecha: d.fecha, clave: elegida.clave })}`); }
+  catch (e) { cuerpo.innerHTML = dias + hoteles + sinSenal(e); engancharArriba(); return; }
+
   const resumen = `
     <div class="firma-resumen">
-      <div><b>${esc(o.planta || "")}</b></div>
-      <div><b>${o.hechos}</b> punto${o.hechos === 1 ? "" : "s"} realizado${o.hechos === 1 ? "" : "s"}${o.no_realizados ? ` · <b>${o.no_realizados}</b> no realizado${o.no_realizados === 1 ? "" : "s"}` : ""}</div>
-      ${o.registros > o.puntos ? `<div class="firma-sub">${o.registros} registros subidos (algunos puntos se registraron más de una vez; cuentan una sola vez)</div>` : ""}
-      <div class="firma-sub">${hora(o.desde)} a ${hora(o.hasta)}</div>
-      <div class="firma-tipos">${o.tipos.map((t) => `<span>${esc(t.icono || "•")} ${esc(t.nombre || "")} · ${t.n}</span>`).join("")}</div>
+      <div><b>${esc(elegida.planta || "")}</b> · ${ESTADO_FIRMA[o.estado].ic} ${ESTADO_FIRMA[o.estado].txt}</div>
+      <div><b>${o.hechos}</b> punto${o.hechos === 1 ? "" : "s"} realizado${o.hechos === 1 ? "" : "s"}${o.no_realizados ? ` · <b>${o.no_realizados}</b> no realizado${o.no_realizados === 1 ? "" : "s"}` : ""} · ${hora(o.desde)} a ${hora(o.hasta)}</div>
+      ${o.registros > o.puntos ? `<div class="firma-sub">${o.registros} registros (un punto registrado varias veces cuenta una)</div>` : ""}
     </div>`;
-  if (o.estado === "finalizada") {
-    cuerpo.innerHTML = `${dias}${hoteles}${resumen}
-      <div class="firma-ok">✅ Orden finalizada<br><small>Firmó ${esc(o.firma.firmante_nombre)}${o.firma.firmante_cargo ? ` (${esc(o.firma.firmante_cargo)})` : ""} a las ${hora(o.firma.created_at)}</small>
-      ${o.registros > o.firma.servicios ? `<br><small>Subiste ${o.registros - o.firma.servicios} registro(s) después de la firma.</small>` : ""}</div>`;
+  const hechas = o.firmas.length ? `
+    <div class="firma-t">Firmas de esta orden</div>
+    ${o.firmas.map((f) => `<div class="firma-hecha">✅ <b>${esc(f.firmante_nombre)}</b>${f.firmante_cargo ? ` (${esc(f.firmante_cargo)})` : ""} · ${esc(f.parte || "Todo")} · ${f.puntos} punto(s) · ${hora(f.created_at)}</div>`).join("")}` : "";
+
+  if (!o.areas_pendientes.length) {
+    cuerpo.innerHTML = `${dias}${hoteles}${resumen}${hechas}<div class="firma-ok">✅ Todo lo subido está firmado</div>`;
     engancharArriba();
     return;
   }
-  cuerpo.innerHTML = `${dias}${hoteles}${resumen}
-    <p class="firma-ayuda">Orden <b>en proceso</b>. Pásale el teléfono a la persona de <b>${esc(o.planta || "el hotel")}</b> que recibe el servicio para que firme. Con la firma la orden queda <b>finalizada</b>.</p>
+
+  // Qué se firma: todo lo pendiente, lo de un responsable, o las áreas marcadas
+  const seleccion = new Set(o.areas_pendientes.map((a) => String(a.area_id)));
+  let cargoSugerido = "", parte = "";
+  cuerpo.innerHTML = `${dias}${hoteles}${resumen}${hechas}
+    <div class="firma-t">¿Qué se va a firmar ahora?</div>
+    <div class="firma-modos">
+      <button type="button" class="firma-modo activa" data-modo="todo">📋 Todo lo pendiente · ${o.pendientes_puntos} punto(s)</button>
+      ${o.grupos.map((g) => `<button type="button" class="firma-modo" data-grupo="${esc(g.id)}">👤 ${esc(g.cargo)} · ${esc(g.nombres.join(", "))} · ${g.puntos} punto(s)</button>`).join("")}
+    </div>
+    <div class="firma-areas">
+      ${o.areas_pendientes.map((a) => `<label class="firma-area"><input type="checkbox" data-area="${esc(String(a.area_id))}" checked> <span>${esc(a.area)}</span> <small>${a.puntos} punto(s)</small></label>`).join("")}
+    </div>
+    <p class="firma-ayuda" id="fo-cuenta"></p>
     <label class="firma-campo">Nombre de quien recibe<input id="fo-nombre" autocomplete="off"></label>
-    <label class="firma-campo">Cargo<input id="fo-cargo" placeholder="Ama de llaves, Calidad, Supervisor…"></label>
+    <label class="firma-campo">Cargo<input id="fo-cargo" placeholder="Ama de llaves, Chef, Calidad, Supervisor…"></label>
     <div id="fo-pad"></div>
-    <button class="btn grande" id="fo-firmar" style="margin-top:12px">✍️ Firmar y finalizar</button>
-    <p class="firma-ayuda">Si no hay nadie para firmar ahora, el hotel puede firmarla después en su portal (pestaña Firmas).</p>`;
+    <button class="btn grande" id="fo-firmar" style="margin-top:12px">✍️ Firmar</button>
+    <p class="firma-ayuda">Puedes firmar una parte ahora y el resto después (con otra persona, o el hotel en su portal, pestaña Firmas).</p>`;
   engancharArriba();
+
+  const pintarSel = (modo) => {
+    cuerpo.querySelectorAll(".firma-modo").forEach((b) => b.classList.toggle("activa", b === modo));
+    cuerpo.querySelectorAll("[data-area]").forEach((c) => { c.checked = seleccion.has(c.dataset.area); });
+    const areas = o.areas_pendientes.filter((a) => seleccion.has(String(a.area_id)));
+    const puntos = areas.reduce((n, a) => n + a.puntos, 0);
+    $("#fo-cuenta", cuerpo).innerHTML = areas.length ? `Se firman <b>${puntos} punto(s)</b> de: ${esc(areas.map((a) => a.area).join(", "))}` : "Marca al menos un área.";
+    $("#fo-firmar", cuerpo).textContent = areas.length ? `✍️ Firmar ${puntos} punto(s)` : "✍️ Firmar";
+  };
+  pintarSel(cuerpo.querySelector('[data-modo="todo"]'));
+  cuerpo.querySelector('[data-modo="todo"]').addEventListener("click", (e) => {
+    seleccion.clear(); o.areas_pendientes.forEach((a) => seleccion.add(String(a.area_id))); cargoSugerido = ""; parte = ""; pintarSel(e.currentTarget);
+  });
+  cuerpo.querySelectorAll("[data-grupo]").forEach((b) => b.addEventListener("click", () => {
+    const g = o.grupos.find((x) => x.id === b.dataset.grupo);
+    seleccion.clear(); g.areas.forEach((id) => seleccion.add(String(id)));
+    cargoSugerido = g.cargo; parte = g.cargo;
+    if (!$("#fo-cargo", cuerpo).value.trim() || $("#fo-cargo", cuerpo).dataset.auto) { $("#fo-cargo", cuerpo).value = g.cargo; $("#fo-cargo", cuerpo).dataset.auto = "1"; }
+    pintarSel(b);
+  }));
+  cuerpo.querySelectorAll("[data-area]").forEach((c) => c.addEventListener("change", () => {
+    c.checked ? seleccion.add(c.dataset.area) : seleccion.delete(c.dataset.area);
+    parte = ""; pintarSel(null);
+  }));
+  $("#fo-cargo", cuerpo).addEventListener("input", (e) => { delete e.target.dataset.auto; });
+
   const pad = padFirma($("#fo-pad", cuerpo));
   $("#fo-firmar", cuerpo).addEventListener("click", async (ev) => {
+    const areas = o.areas_pendientes.filter((a) => seleccion.has(String(a.area_id)));
+    if (!areas.length) return aviso("Marca al menos un área", "error");
     const nombre = $("#fo-nombre", cuerpo).value.trim();
     if (nombre.length < 3) return aviso("Escribe el nombre de quien recibe", "error");
     if (pad.vacia()) return aviso("Falta la firma", "error");
     const b = ev.currentTarget;
     b.disabled = true; b.textContent = "Guardando…";
+    const todo = areas.length === o.areas_pendientes.length;
     try {
-      await POST("/firmas", { sitio_id: o.sitio_id, fecha: d.fecha, clave: o.clave, firmante_nombre: nombre, firmante_cargo: $("#fo-cargo", cuerpo).value, firma: pad.imagen() });
+      const r = await POST("/firmas", {
+        sitio_id: elegida.sitio_id, fecha: d.fecha, clave: o.clave,
+        firmante_nombre: nombre, firmante_cargo: $("#fo-cargo", cuerpo).value, firma: pad.imagen(),
+        ...(todo ? {} : { inspecciones: areas.flatMap((a) => a.inspecciones) }),
+        ...(parte ? { parte } : {}),
+      });
       vibrar([40, 30, 80]);
-      aviso(`Orden de ${o.planta || "el hotel"} finalizada ✓`, "exito");
-      app().innerHTML = ""; pantallaFirmaOrden();
+      aviso(r.estado === "finalizada" ? `Orden de ${elegida.planta || "el hotel"} finalizada ✓` : `Firmados ${r.puntos} punto(s) · faltan ${r.quedan_puntos}`, "exito");
+      recargar();
     } catch (e) {
       aviso(esSinSenal(e) ? "Sin señal: no se pudo guardar la firma. Intenta de nuevo o que firmen en el portal." : e.message, "error");
-      b.disabled = false; b.textContent = "✍️ Firmar y finalizar";
+      b.disabled = false; pintarSel(null);
     }
   });
 }

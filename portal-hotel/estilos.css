@@ -564,3 +564,15 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .pop-estado.mal{background:#fee2e2;color:var(--rojo)}
 .pop-estado.amarillo{background:#fef3c7;color:#92400e}
 .pop-caja p{margin:10px 0;font-size:14.5px;line-height:1.45}
+.tarjeta.orden.parcial{border-left-color:#eab308}
+.marca-orden.parcial{background:#fef9c3;color:#854d0e}
+.firma-bloque{border-top:1px solid #e2e8f0;padding:10px 0}
+.firma-bloque:first-of-type{border-top:none}
+.firma-parte{font-weight:700;font-size:13.5px;margin-bottom:6px}
+.ok-firma{color:var(--verde)}
+.sin-firma{color:#b45309}
+.firma-modos-p{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.firma-areas-p{border:1px solid #e2e8f0;border-radius:10px;padding:2px 10px;margin-bottom:10px}
+.firma-area-p{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:14px}
+.firma-area-p:last-child{border-bottom:none}
+.firma-area-p small{margin-left:auto;color:var(--suave)}

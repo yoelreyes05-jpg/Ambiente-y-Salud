@@ -640,3 +640,12 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--verde); bor
 .cot-foto button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:999px;border:none;background:#b91c1c;color:#fff;font-size:12px}
 .cot-foto-acc{display:flex;gap:6px}
 .cot-foto-acc .btn{flex:1;margin:0;padding:10px 8px;font-size:14px}
+.firma-hecha{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:8px 10px;font-size:13.5px;margin-bottom:6px}
+.firma-modos{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.firma-modo{text-align:left;border:1.5px solid var(--gris-200);background:#fff;border-radius:12px;padding:10px 12px;font:inherit;font-size:14px}
+.firma-modo.activa{border-color:var(--azul);background:#eef2ff;font-weight:700}
+.firma-areas{background:#fff;border:1.5px solid var(--gris-200);border-radius:12px;padding:4px 10px;margin-bottom:6px}
+.firma-area{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:14.5px}
+.firma-area:last-child{border-bottom:none}
+.firma-area input{width:20px;height:20px}
+.firma-area small{margin-left:auto;color:var(--gris-600)}

@@ -1691,7 +1691,7 @@ async function abrirPlanta(sitioId) {
     norealizados: () => tabNoRealizados(cuerpo, sitioId),
     puntos: () => tabPuntos(cuerpo, sitioId, areas, tipos),
     pasadas: () => tabDiasAnteriores(cuerpo, sitioId),
-    firmas: () => tabFirmasPlanta(cuerpo, sitioId),
+    firmas: () => tabFirmasPlanta(cuerpo, sitioId, areas),
     mapa: () => tabMapa(cuerpo, sitioId, areas),
     areas: () => tabAreas(cuerpo, areas, sitioId, () => abrirPlanta(sitioId)),
   };

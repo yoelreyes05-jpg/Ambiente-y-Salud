@@ -66,17 +66,20 @@ function padFirma(contenedor) {
 
 const ESTADO_ORDEN = {
   en_proceso: { txt: "En proceso", clase: "proceso" },
+  parcial: { txt: "Firmada en parte", clase: "parcial" },
   finalizada: { txt: "Finalizada", clase: "finalizada" },
 };
 const fechaLargaF = (f) => new Date(`${f}T12:00:00`).toLocaleDateString("es-DO", { weekday: "long", day: "numeric", month: "long" });
 const horaF = (d) => new Date(d).toLocaleTimeString("es-DO", { hour: "numeric", minute: "2-digit", timeZone: "America/Santo_Domingo" });
+const origenF = (o) => (o === "tecnico" ? "en el teléfono del técnico" : o === "portal" ? "en el portal del hotel" : "registrado por ASA");
 
 async function vistaFirmas(cuerpo) {
   const hasta = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
   const d0 = new Date(`${hasta}T12:00:00Z`); d0.setUTCDate(d0.getUTCDate() - (FIRMAS_DIAS - 1));
   const desde = d0.toISOString().slice(0, 10);
   const d = await GET(`/firmas/ordenes?${new URLSearchParams({ sitio_id: PLANTA.id, desde, hasta })}`);
-  const lista = d.ordenes.filter((o) => !FIRMAS_VER || o.estado === FIRMAS_VER);
+  const lista = d.ordenes.filter((o) => !FIRMAS_VER || (FIRMAS_VER === "por_firmar" ? o.estado !== "finalizada" : o.estado === FIRMAS_VER));
+  const porFirmar = d.resumen.en_proceso + (d.resumen.parciales || 0);
 
   cuerpo.innerHTML = `
     <div class="acciones">
@@ -85,16 +88,16 @@ async function vistaFirmas(cuerpo) {
       </select>
       <select class="btn" id="fi-ver">
         <option value="">Todas</option>
-        <option value="en_proceso"${FIRMAS_VER === "en_proceso" ? " selected" : ""}>Por firmar (en proceso)</option>
-        <option value="finalizada"${FIRMAS_VER === "finalizada" ? " selected" : ""}>Firmadas (finalizadas)</option>
+        <option value="por_firmar"${FIRMAS_VER === "por_firmar" ? " selected" : ""}>Por firmar (en proceso o en parte)</option>
+        <option value="finalizada"${FIRMAS_VER === "finalizada" ? " selected" : ""}>Firmadas completas</option>
       </select>
     </div>
     <div class="kpis">
-      <div class="kpi ${d.resumen.en_proceso ? "mal" : "ok"}"><div class="n">${d.resumen.en_proceso}</div><div class="t">Por firmar</div></div>
-      <div class="kpi ok"><div class="n">${d.resumen.finalizadas}</div><div class="t">Firmadas</div></div>
+      <div class="kpi ${porFirmar ? "mal" : "ok"}"><div class="n">${porFirmar}</div><div class="t">Por firmar${d.resumen.parciales ? ` (${d.resumen.parciales} en parte)` : ""}</div></div>
+      <div class="kpi ok"><div class="n">${d.resumen.finalizadas}</div><div class="t">Firmadas completas</div></div>
       <div class="kpi"><div class="n">${d.resumen.total}</div><div class="t">Órdenes del período</div></div>
     </div>
-    <p class="nota-firmas">Cada orden es lo que hizo un técnico en el día. Ábrela, revisa lo que hizo y firma de recibido: así queda <b>finalizada</b>.</p>
+    <p class="nota-firmas">Cada orden es lo que hizo un técnico en el día. Se puede firmar toda de una vez o por áreas (cada responsable firma lo suyo). Queda <b>finalizada</b> cuando todo tiene firma.</p>
     ${lista.length ? lista.map((o) => `
       <div class="tarjeta orden ${ESTADO_ORDEN[o.estado].clase}" data-orden="${esc(o.fecha)}|${esc(o.clave)}" role="button" tabindex="0">
         <div class="orden-cab">
@@ -106,11 +109,10 @@ async function vistaFirmas(cuerpo) {
           ${o.tipos.map((t) => `<span class="chip-tipo">${esc(t.icono || "•")} ${esc(t.nombre || "")} · ${t.n}</span>`).join("")}
           ${o.no_realizados ? `<span class="chip-tipo mal">⚠ ${o.no_realizados} no realizado${o.no_realizados === 1 ? "" : "s"}</span>` : ""}
         </div>
-        ${o.firma ? `<div class="orden-firma">✍️ Firmó <b>${esc(o.firma.firmante_nombre)}</b>${o.firma.firmante_cargo ? ` (${esc(o.firma.firmante_cargo)})` : ""} · ${esc(new Date(o.firma.created_at).toLocaleString("es-DO"))}
-          ${o.nuevos_despues ? `<br><small>El técnico subió ${o.nuevos_despues} registro(s) después de la firma.</small>` : ""}</div>`
-          : `<div class="orden-firma pend">Toca para revisar y firmar ›</div>`}
+        ${o.firmas.map((f) => `<div class="orden-firma">✍️ <b>${esc(f.firmante_nombre)}</b>${f.firmante_cargo ? ` (${esc(f.firmante_cargo)})` : ""} · ${esc(f.parte || "Todo")} · ${f.puntos} punto(s)</div>`).join("")}
+        ${o.estado !== "finalizada" ? `<div class="orden-firma pend">${o.firmas.length ? `Faltan ${o.pendientes_puntos} punto(s) por firmar ›` : "Toca para revisar y firmar ›"}</div>` : ""}
       </div>`).join("")
-      : `<div class="vacio"><span class="emoji">✍️</span>${FIRMAS_VER === "en_proceso" ? "No hay órdenes por firmar." : "No hay órdenes en este período."}</div>`}`;
+      : `<div class="vacio"><span class="emoji">✍️</span>${FIRMAS_VER === "por_firmar" ? "No hay órdenes por firmar." : "No hay órdenes en este período."}</div>`}`;
 
   $("#fi-dias").addEventListener("change", (e) => { FIRMAS_DIAS = Number(e.target.value); vistaFirmas(cuerpo); });
   $("#fi-ver").addEventListener("change", (e) => { FIRMAS_VER = e.target.value; vistaFirmas(cuerpo); });
@@ -144,6 +146,7 @@ async function abrirOrden(fecha, clave, alFirmar) {
     return;
   }
   const est = ESTADO_ORDEN[o.estado];
+  const quienFirmo = new Map(o.firmas.map((f) => [f.id, f]));
   $("#hoja-cuerpo", hoja).innerHTML = `
     <div class="orden-cab grande">
       <div><h2 style="margin:0">Orden de servicio · ${esc(PLANTA.nombre)}</h2>
@@ -153,7 +156,7 @@ async function abrirOrden(fecha, clave, alFirmar) {
     <div class="kpis">
       <div class="kpi ok"><div class="n">${o.hechos}</div><div class="t">Puntos realizados</div></div>
       <div class="kpi ${o.no_realizados ? "mal" : ""}"><div class="n">${o.no_realizados}</div><div class="t">No realizados</div></div>
-      <div class="kpi"><div class="n">${o.servicios.reduce((a, s) => a + (s.plagas || 0), 0)}</div><div class="t">Plagas contadas</div></div>
+      <div class="kpi ${o.pendientes_puntos ? "mal" : "ok"}"><div class="n">${o.pendientes_puntos}</div><div class="t">Puntos sin firmar</div></div>
     </div>
     <div class="tarjeta">
       <h2>Lo que hizo el técnico</h2>
@@ -164,43 +167,76 @@ async function abrirOrden(fecha, clave, alFirmar) {
             <span class="fo-hora">${horaF(s.hora)}</span>
             <span class="fo-punto">${esc(s.icono || "•")} <b>${esc(s.punto || "")}</b><small>${esc([s.tipo, s.area].filter(Boolean).join(" · "))}</small></span>
             <span class="fo-res">${s.no_realizado ? `No realizado${s.motivo ? ` · ${esc((typeof MOTIVOS_TEXTO !== "undefined" && MOTIVOS_TEXTO[s.motivo]) || s.motivo)}` : ""}`
-              : s.nivel_actividad && s.nivel_actividad !== "ninguna" ? `Con actividad (${esc(s.nivel_actividad)})` : "Realizado"}${s.fotos ? ` · 📷 ${s.fotos}` : ""}</span>
+              : s.nivel_actividad && s.nivel_actividad !== "ninguna" ? `Con actividad (${esc(s.nivel_actividad)})` : "Realizado"}${s.fotos ? ` · 📷 ${s.fotos}` : ""}
+              <br><small class="${s.firma_id ? "ok-firma" : "sin-firma"}">${s.firma_id ? `✍️ ${esc(quienFirmo.get(s.firma_id)?.firmante_nombre || "Firmado")}` : "Sin firmar"}</small></span>
           </div>`).join("")}
       </div>
     </div>
-    <div class="tarjeta" id="zona-firma">
-      ${o.firma ? `
-        <h2>Recibido conforme</h2>
-        <img class="firma-img" src="${esc(o.firma.imagen)}" alt="Firma de ${esc(o.firma.firmante_nombre)}">
-        <p style="margin:6px 0 0"><b>${esc(o.firma.firmante_nombre)}</b>${o.firma.firmante_cargo ? ` · ${esc(o.firma.firmante_cargo)}` : ""}<br>
-          <small>${esc(new Date(o.firma.created_at).toLocaleString("es-DO"))} · ${o.firma.origen === "tecnico" ? "firmado en el teléfono del técnico" : o.firma.origen === "portal" ? "firmado en el portal del hotel" : "registrado por ASA"}</small></p>
-        ${o.firma.comentario ? `<p><b>Comentario:</b> ${esc(o.firma.comentario)}</p>` : ""}`
-      : `
-        <h2>Firma de quien recibe el servicio</h2>
-        <p style="margin:0 0 10px;color:var(--suave);font-size:13px">Al firmar confirmas que recibiste el servicio descrito arriba. La orden queda <b>finalizada</b>.</p>
-        <div class="form-firma">
-          <label>Nombre de quien recibe<input id="ff-nombre" value="${esc(USUARIO?.nombre || "")}"></label>
-          <label>Cargo<input id="ff-cargo" placeholder="Ama de llaves, Calidad, Supervisor…" value="${esc(PERFIL_PORTAL?.perfil === "ama_llaves" ? "Ama de llaves" : "")}"></label>
-          <label class="ancho">Comentario (opcional)<input id="ff-comentario" placeholder="Solo si hay algo que anotar"></label>
-        </div>
-        <div id="ff-pad"></div>
-        <button class="btn principal" id="ff-firmar" style="margin-top:10px;width:100%">✍️ Firmar y finalizar la orden</button>`}
-    </div>`;
+    ${o.firmas.length ? `<div class="tarjeta">
+      <h2>Recibido conforme · ${o.firmas.length} firma${o.firmas.length === 1 ? "" : "s"}</h2>
+      ${o.firmas.map((f) => `
+        <div class="firma-bloque">
+          <div class="firma-parte">${esc(f.parte || "Todo el servicio")} · ${f.puntos} punto(s)</div>
+          ${f.imagen ? `<img class="firma-img" src="${esc(f.imagen)}" alt="Firma de ${esc(f.firmante_nombre)}">` : ""}
+          <p style="margin:6px 0 0"><b>${esc(f.firmante_nombre)}</b>${f.firmante_cargo ? ` · ${esc(f.firmante_cargo)}` : ""}<br>
+            <small>${esc(new Date(f.created_at).toLocaleString("es-DO"))} · ${origenF(f.origen)}</small></p>
+          ${f.comentario ? `<p><b>Comentario:</b> ${esc(f.comentario)}</p>` : ""}
+        </div>`).join("")}
+    </div>` : ""}
+    ${o.areas_pendientes.length ? `<div class="tarjeta" id="zona-firma">
+      <h2>Firmar lo que falta</h2>
+      <p style="margin:0 0 10px;color:var(--suave);font-size:13px">Marca las áreas que recibiste. Lo que no marques queda para otra firma.</p>
+      ${o.grupos.length ? `<div class="firma-modos-p">${o.grupos.map((g) => `<button type="button" class="btn" data-grupo="${esc(g.id)}">👤 ${esc(g.cargo)} · ${g.puntos} punto(s)</button>`).join("")}
+        <button type="button" class="btn" data-grupo="__todo">📋 Todo lo pendiente</button></div>` : ""}
+      <div class="firma-areas-p">
+        ${o.areas_pendientes.map((a) => `<label class="firma-area-p"><input type="checkbox" data-area="${esc(String(a.area_id))}" checked> <span>${esc(a.area)}</span> <small>${a.puntos} punto(s)</small></label>`).join("")}
+      </div>
+      <div class="form-firma">
+        <label>Nombre de quien recibe<input id="ff-nombre" value="${esc(USUARIO?.nombre || "")}"></label>
+        <label>Cargo<input id="ff-cargo" placeholder="Ama de llaves, Chef, Calidad, Supervisor…" value="${esc(PERFIL_PORTAL?.perfil === "ama_llaves" ? "Ama de llaves" : "")}"></label>
+        <label class="ancho">Comentario (opcional)<input id="ff-comentario" placeholder="Solo si hay algo que anotar"></label>
+      </div>
+      <div id="ff-pad"></div>
+      <button class="btn principal" id="ff-firmar" style="margin-top:10px;width:100%">✍️ Firmar</button>
+    </div>` : ""}`;
   if (typeof engancharServicios === "function") engancharServicios($("#hoja-cuerpo", hoja));
-  if (o.firma) return;
+  if (!o.areas_pendientes.length) return;
+
+  let parte = "";
+  const marcadas = () => o.areas_pendientes.filter((a) => hoja.querySelector(`[data-area="${CSS.escape(String(a.area_id))}"]`)?.checked);
+  const contar = () => {
+    const a = marcadas();
+    $("#ff-firmar", hoja).textContent = a.length ? `✍️ Firmar ${a.reduce((n, x) => n + x.puntos, 0)} punto(s)${a.length === o.areas_pendientes.length ? " · todo lo pendiente" : ""}` : "Marca al menos un área";
+  };
+  contar();
+  hoja.querySelectorAll("[data-area]").forEach((c) => c.addEventListener("change", () => { parte = ""; contar(); }));
+  hoja.querySelectorAll("[data-grupo]").forEach((b) => b.addEventListener("click", () => {
+    const g = o.grupos.find((x) => x.id === b.dataset.grupo);
+    hoja.querySelectorAll("[data-area]").forEach((c) => { c.checked = !g || g.areas.map(String).includes(c.dataset.area); });
+    parte = g ? g.cargo : "";
+    if (g && !$("#ff-cargo", hoja).value.trim()) $("#ff-cargo", hoja).value = g.cargo;
+    contar();
+  }));
   const pad = padFirma($("#ff-pad", hoja));
   $("#ff-firmar", hoja).addEventListener("click", async (e) => {
+    const areas = marcadas();
+    if (!areas.length) return alert("Marca al menos un área.");
     const nombre = $("#ff-nombre", hoja).value.trim();
     if (nombre.length < 3) return alert("Escribe el nombre de quien recibe el servicio.");
     if (pad.vacia()) return alert("Falta la firma: firma en el recuadro.");
     e.target.disabled = true; e.target.textContent = "Guardando…";
+    const todo = areas.length === o.areas_pendientes.length;
     try {
-      await POST("/firmas", { sitio_id: PLANTA.id, fecha: o.fecha, clave: o.clave, firmante_nombre: nombre, firmante_cargo: $("#ff-cargo", hoja).value, comentario: $("#ff-comentario", hoja).value, firma: pad.imagen() });
+      await POST("/firmas", {
+        sitio_id: PLANTA.id, fecha: o.fecha, clave: o.clave, firmante_nombre: nombre,
+        firmante_cargo: $("#ff-cargo", hoja).value, comentario: $("#ff-comentario", hoja).value, firma: pad.imagen(),
+        ...(todo ? {} : { inspecciones: areas.flatMap((a) => a.inspecciones) }), ...(parte ? { parte } : {}),
+      });
       cerrar();
       alFirmar?.();
     } catch (err) {
       alert(err.message);
-      e.target.disabled = false; e.target.textContent = "✍️ Firmar y finalizar la orden";
+      e.target.disabled = false; contar();
     }
   });
 }
