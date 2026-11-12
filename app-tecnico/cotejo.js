@@ -139,9 +139,9 @@ async function pantallaCotejo() {
             <div class="cot-txt">
               <div class="cot-n">${esc(p.nombre)}</div>
               <div class="cot-s">${esc(p.codigo)}${m ? ` · marcado ${esc(m.hora)}` : p.hecho_hoy ? ` · ya hecho hoy ${esc(new Date(p.hecho_hoy).toLocaleTimeString("es-DO", { hour: "numeric", minute: "2-digit" }))}` : " · toca para marcar"}
-                ${txtPl ? ` · <b class="cot-pl">${esc(txtPl)}</b>` : ""}${m?.notas ? ` · 📝 ${esc(m.notas)}` : ""}</div>
+                ${txtPl ? ` · <b class="cot-pl">${esc(txtPl)}</b>` : ""}${m?.notas ? ` · 📝 ${esc(m.notas)}` : ""}${m?.fotos?.length ? ` · 📷 ${m.fotos.length}` : ""}</div>
             </div>
-            ${m ? `<button type="button" class="cot-bplaga" data-plaga-de="${esc(p.id)}">🐜 ${pl.length || m.notas ? "Detalle ▾" : "¿Plaga? / nota"}</button>` : ""}
+            ${m ? `<button type="button" class="cot-bplaga" data-plaga-de="${esc(p.id)}">🐜 ${pl.length || m.notas || m.fotos?.length ? "Detalle ▾" : "¿Plaga? / nota / foto"}</button>` : ""}
           </div>
           ${abierto === p.id && m ? `
             <div class="cot-det">
@@ -156,6 +156,16 @@ async function pantallaCotejo() {
               <small class="ayuda">Si lo dejas todo en cero, el checklist se guarda como <b>sin incidencia</b>.</small>
               <div class="cot-det-t" style="margin-top:10px">Observaciones (opcional)</div>
               <textarea class="cot-nota" data-nota-de="${esc(p.id)}" rows="2" placeholder="Solo si hay algo que anotar">${esc(m.notas || "")}</textarea>
+              <div class="cot-det-t" style="margin-top:10px">Fotos (opcional)</div>
+              <div class="cot-fotos">
+                ${(m.fotos || []).map((f, i) => `<div class="cot-foto"><img src="${f}" alt="Foto ${i + 1}"><button type="button" data-quitar-foto="${i}" aria-label="Quitar foto">✕</button></div>`).join("")}
+              </div>
+              <div class="cot-foto-acc">
+                <button type="button" class="btn secundario" data-foto="cam">📷 Tomar foto</button>
+                <button type="button" class="btn secundario" data-foto="gal">🖼️ De mis fotos</button>
+              </div>
+              <input type="file" class="cot-file" data-origen="cam" accept="image/*" capture="environment" multiple hidden>
+              <input type="file" class="cot-file" data-origen="gal" accept="image/*" multiple hidden>
               <button type="button" class="btn secundario" data-cerrar-det style="margin-top:8px">Listo</button>
             </div>` : ""}`;
       }).join("")}
@@ -163,6 +173,22 @@ async function pantallaCotejo() {
   };
 
   const ahora = () => new Date().toLocaleTimeString("es-DO", { hour: "numeric", minute: "2-digit" });
+
+  // Fotos del punto abierto (se achican igual que en el formulario normal)
+  cuerpo.addEventListener("change", async (ev) => {
+    const inp = ev.target.closest(".cot-file");
+    if (!inp || !abierto) return;
+    const m = marcados.get(abierto);
+    if (!m) return;
+    m.fotos ||= [];
+    for (const archivo of inp.files) {
+      if (!archivo.type?.startsWith("image/")) continue;
+      try { m.fotos.push(await reducirImagen(archivo, 1024, 0.6, true)); } catch { aviso("No se pudo leer una foto", "error"); }
+    }
+    inp.value = "";
+    vibrar(15);
+    pintar();
+  });
 
   cuerpo.addEventListener("input", (ev) => {
     const nota = ev.target.closest("[data-nota-de]");
@@ -206,6 +232,15 @@ async function pantallaCotejo() {
     }
 
     if (ev.target.closest("[data-cerrar-det]")) { abierto = null; return pintar(); }
+
+    const bFoto = ev.target.closest("[data-foto]");
+    if (bFoto) { cuerpo.querySelector(`.cot-file[data-origen="${bFoto.dataset.foto}"]`)?.click(); return; }
+    const quitar = ev.target.closest("[data-quitar-foto]");
+    if (quitar) {
+      const m = marcados.get(abierto);
+      m?.fotos?.splice(Number(quitar.dataset.quitarFoto), 1);
+      return pintar();
+    }
 
     const bPlaga = ev.target.closest("[data-plaga-de]");
     if (bPlaga) { abierto = abierto === bPlaga.dataset.plagaDe ? null : bPlaga.dataset.plagaDe; return pintar(); }
@@ -264,7 +299,7 @@ async function pantallaCotejo() {
           respuestas_base: baseDe(estrDe.get(punto_id)),
           // Observaciones: solo lo que escribió el técnico
           ...(String(m.notas || "").trim() ? { notas: String(m.notas).trim() } : {}),
-          fotos: [],
+          fotos: m.fotos || [],
           ...lugar,
         };
         try {

@@ -23,7 +23,7 @@ const RASTREO = {
   ultimoReporte: 0,
   firmaReporte: "",
 };
-const VERSION_APP = "t34";
+const VERSION_APP = "t35";
 const CLAVE_COLA_GPS = "asa_t_gps_cola";
 const ROLES_RASTREO = ["tecnico_plagas", "operaciones", "admin"];
 
