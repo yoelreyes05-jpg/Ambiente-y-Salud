@@ -11,7 +11,7 @@ import { supabase } from "../lib/supabaseClient.js";
 import { logAccion } from "../lib/auditoria.js";
 import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES_EXTERNOS } from "../middleware/auth.js";
 import { traerTodo } from "../lib/paginar.js";
-import { estrategiasCotejo } from "../lib/cotejo.js";
+import { infoPregunta, estrategiasCotejo } from "../lib/cotejo.js";
 import { unificarPlaga } from "../lib/plagasUnificadas.js";
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivosDeInspecciones } from "../lib/motivoEstrategia.js";
@@ -820,7 +820,7 @@ router.get("/cotejo", async (req, res) => {
         .filter((q) => { const k = String(q.texto || "").trim().toLowerCase(); if (vistas.has(k)) return false; vistas.add(k); return true; });
     };
     res.json({
-      estrategias: usadas.map((id) => ({ id, nombre: nombreEstr.get(id), total: enLista.filter((p) => p.estrategia_id === id).length, preguntas: preguntasDe(id) })),
+      estrategias: usadas.map((id) => ({ id, nombre: nombreEstr.get(id), total: enLista.filter((p) => p.estrategia_id === id).length, preguntas: preguntasDe(id).map((q) => ({ ...q, ...infoPregunta(q) })) })),
       puntos: enLista,
       plagas: plagas || [],
     });

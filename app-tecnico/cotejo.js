@@ -59,39 +59,51 @@ async function pantallaCotejo() {
   // marcados: punto_id → { hora, plagas: { plaga_id: cantidad }, notas }
   const marcados = new Map();
   // Datos del servicio por estrategia: { pregunta_id: valor } (se recuerdan)
-  const preguntasDe = new Map((datos.estrategias || []).map((e) => [e.id, (e.preguntas || []).filter(cotPreguntaManual)]));
+  // Todas las preguntas de la estrategia (menos fotos y observaciones, que van
+  // por punto). Las que dependen de la plaga se contestan solas con lo que se
+  // marque en cada punto, salvo que el técnico fije una respuesta.
+  const modoDe = (q) => q.modo || (/observ|nota|coment/.test(cotNorm(q.texto)) && q.tipo_respuesta === "texto" ? "nota" : q.tipo_respuesta === "foto" ? "foto" : cotPreguntaManual(q) ? "manual" : "plaga");
+  const preguntasDe = new Map((datos.estrategias || []).map((e) => [e.id, (e.preguntas || []).filter((q) => !["nota", "foto"].includes(modoDe(q)))]));
   const datosServ = new Map((datos.estrategias || []).map((e) => [e.id, cotLeerDatos(e.id)]));
-  const faltantes = (eid) => (preguntasDe.get(eid) || []).filter((q) => {
+  const vacio = (v) => v == null || v === "" || (Array.isArray(v) && !v.length);
+  // Valor que vale para una pregunta: lo escogido, o la sugerencia (Sí/No)
+  const valorDe = (eid, q) => {
     const v = datosServ.get(eid)?.[q.id];
-    return q.obligatoria && (v == null || v === "" || (Array.isArray(v) && !v.length));
-  });
+    if (!vacio(v)) return v;
+    if (modoDe(q) === "manual" && q.tipo_respuesta === "si_no") return q.sugerida || "Sí";
+    return "";
+  };
+  const faltantes = (eid) => (preguntasDe.get(eid) || []).filter((q) => q.obligatoria && modoDe(q) === "manual" && vacio(valorDe(eid, q)));
   const bloqueDatos = (e) => {
     const qs = preguntasDe.get(e.id) || [];
     if (!qs.length) return "";
-    const d = datosServ.get(e.id) || {};
     return `<div class="cot-datos" data-estr="${esc(e.id)}">
       <div class="cot-datos-t">📋 Datos del servicio${datos.estrategias.length > 1 ? ` · ${esc(e.nombre)}` : ""}</div>
-      <small class="ayuda">Se ponen en todos los puntos que marques de esta lista.</small>
+      <small class="ayuda">Se ponen en todos los puntos que marques de esta lista. Las marcadas 🤖 se contestan solas según la plaga que marques en cada punto.</small>
       ${qs.map((q) => {
-        const v = d[q.id];
+        const v = valorDe(e.id, q);
+        const auto = modoDe(q) === "plaga";
         const ob = q.obligatoria ? ` <b class="cot-ob">*</b>` : "";
-        if (q.tipo_respuesta === "seleccion" || q.tipo_respuesta === "multiple") {
-          const sel = Array.isArray(v) ? v : v ? [v] : [];
+        const chipAuto = auto ? `<button type="button" class="cot-op auto ${vacio(v) ? "activa" : ""}" data-q="${esc(q.id)}" data-tipo="auto" data-op="">🤖 Según la plaga</button>` : "";
+        const ops = q.tipo_respuesta === "si_no" ? ["Sí", "No"] : q.tipo_respuesta === "seleccion" || q.tipo_respuesta === "multiple" ? (q.opciones || []).map(String) : null;
+        if (ops) {
+          const sel = Array.isArray(v) ? v.map(String) : v ? [String(v)] : [];
           return `<div class="cot-q"><div class="cot-q-t">${esc(q.texto)}${ob}${q.tipo_respuesta === "multiple" ? ` <small>(varias)</small>` : ""}</div>
-            <div class="cot-ops">${(q.opciones || []).map((o) => `<button type="button" class="cot-op ${sel.includes(String(o)) ? "activa" : ""}" data-q="${esc(q.id)}" data-tipo="${esc(q.tipo_respuesta)}" data-op="${esc(o)}">${esc(o)}</button>`).join("")}</div></div>`;
+            <div class="cot-ops">${chipAuto}${ops.map((o) => `<button type="button" class="cot-op ${sel.includes(o) ? "activa" : ""}" data-q="${esc(q.id)}" data-tipo="${esc(q.tipo_respuesta)}" data-op="${esc(o)}">${esc(o)}</button>`).join("")}</div></div>`;
         }
-        return `<div class="cot-q"><div class="cot-q-t">${esc(q.texto)}${ob}</div>
-          <input class="cot-in" data-q="${esc(q.id)}" ${q.tipo_respuesta === "numero" ? 'type="number" inputmode="decimal"' : 'type="text"'} value="${esc(v ?? "")}"></div>`;
+        return `<div class="cot-q"><div class="cot-q-t">${esc(q.texto)}${ob}${auto ? ` <small>(vacío = según la plaga)</small>` : ""}</div>
+          <input class="cot-in" data-q="${esc(q.id)}" ${["numero", "escala"].includes(q.tipo_respuesta) ? 'type="number" inputmode="decimal"' : 'type="text"'} value="${esc(v ?? "")}" ${auto ? 'placeholder="🤖 Según la plaga"' : ""}></div>`;
       }).join("")}
     </div>`;
   };
   // Lo que se manda al servidor: por id y por texto (la misma pregunta puede
-  // tener otro id en otro tipo de punto)
+  // tener otro id en otro tipo de punto). Lo que quede en "según la plaga" no
+  // se manda: el servidor lo contesta con la plaga del punto.
   const baseDe = (eid) => {
-    const d = datosServ.get(eid) || {}, out = {};
+    const out = {};
     for (const q of preguntasDe.get(eid) || []) {
-      const v = d[q.id];
-      if (v == null || v === "" || (Array.isArray(v) && !v.length)) continue;
+      const v = valorDe(eid, q);
+      if (vacio(v)) continue;
       out[q.id] = v; out[cotNorm(q.texto)] = v;
     }
     return out;
@@ -170,11 +182,13 @@ async function pantallaCotejo() {
       const eid = op.closest("[data-estr]").dataset.estr;
       const d = datosServ.get(eid) || {};
       const q = op.dataset.q, o = op.dataset.op;
-      if (op.dataset.tipo === "multiple") {
+      if (op.dataset.tipo === "auto") d[q] = "";
+      else if (op.dataset.tipo === "multiple") {
         const sel = new Set(Array.isArray(d[q]) ? d[q] : d[q] ? [d[q]] : []);
         sel.has(o) ? sel.delete(o) : sel.add(o);
         d[q] = [...sel];
-      } else d[q] = d[q] === o ? "" : o;
+      } else if (op.dataset.tipo === "si_no") d[q] = o;          // Sí/No: siempre una
+      else d[q] = d[q] === o ? "" : o;
       datosServ.set(eid, d); cotGuardarDatos(eid, d);
       vibrar(8);
       return pintar();

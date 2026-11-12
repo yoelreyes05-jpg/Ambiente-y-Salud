@@ -107,5 +107,23 @@ export function respuestasCotejo(preguntas, plagas = [], base = null) {
   return salida;
 }
 
+/**
+ * Cómo se contesta cada pregunta en el cotejo, para mostrarla en "Datos del
+ * servicio" de la app:
+ *   modo "plaga"  → por defecto sola, según la plaga marcada en cada punto
+ *                    (el técnico puede fijar una respuesta)
+ *   modo "manual" → la escoge el técnico (Sí/No viene con una sugerida)
+ *   modo "nota"   → observaciones: van por punto, vacías si no escribe
+ *   modo "foto"   → no se pide en el cotejo
+ */
+export function infoPregunta(p) {
+  const t = norm(p.texto);
+  if (p.tipo_respuesta === "foto") return { modo: "foto" };
+  if (p.tipo_respuesta === "texto" && /observ|nota|coment/.test(t)) return { modo: "nota" };
+  if (DE_PLAGA.test(t) && !/favorec/.test(t)) return { modo: "plaga" };
+  if (p.tipo_respuesta === "si_no") return { modo: "manual", sugerida: DE_PROBLEMA.test(t) ? "No" : "Sí" };
+  return { modo: "manual" };
+}
+
 /** Nivel de actividad según cuántas plagas se contaron */
 export const nivelCotejo = (total, hay) => (!hay ? "ninguna" : total >= 10 ? "alto" : total >= 4 ? "medio" : "bajo");
