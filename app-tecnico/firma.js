@@ -86,26 +86,29 @@ async function pantallaFirmaOrden() {
   let d;
   try { d = await GET(`/firmas/mias?fecha=${fecha}`); } catch (e) { cuerpo.innerHTML = sinSenal(e); return; }
   const ordenes = d.ordenes || [];
-  if (!ordenes.some((o) => o.sitio_id === FIRMA_SITIO)) {
-    FIRMA_SITIO = (ordenes.find((o) => o.sitio_id === SITIO?.id && o.estado !== "finalizada") || ordenes.find((o) => o.estado !== "finalizada") || ordenes[0])?.sitio_id || null;
+  // Una orden = hotel + técnico (la oficina ve las de todos los técnicos)
+  const llave = (o) => `${o.sitio_id}|${o.clave}`;
+  if (!ordenes.some((o) => llave(o) === FIRMA_SITIO)) {
+    const o0 = ordenes.find((o) => o.sitio_id === SITIO?.id && o.estado !== "finalizada") || ordenes.find((o) => o.estado !== "finalizada") || ordenes[0];
+    FIRMA_SITIO = o0 ? llave(o0) : null;
   }
   const dias = `<div class="firma-dias">
     <button type="button" class="cot-chip ${FIRMA_DIA === 0 ? "activa" : ""}" data-dia="0">Hoy</button>
     <button type="button" class="cot-chip ${FIRMA_DIA === 1 ? "activa" : ""}" data-dia="1">Ayer</button></div>`;
   const hoteles = ordenes.length ? `
-    <div class="firma-t">¿Para cuál hotel es la firma?</div>
+    <div class="firma-t">${d.oficina ? "¿Cuál orden se firma? (todos los técnicos)" : "¿Para cuál hotel es la firma?"}</div>
     <div class="firma-hoteles">${ordenes.map((x) => `
-      <button type="button" class="firma-hotel ${x.sitio_id === FIRMA_SITIO ? "activa" : ""} ${x.estado}" data-sitio="${esc(x.sitio_id)}">
-        <b>${esc(x.planta || "Hotel")}</b>
+      <button type="button" class="firma-hotel ${llave(x) === FIRMA_SITIO ? "activa" : ""} ${x.estado}" data-sitio="${esc(llave(x))}">
+        <b>${esc(x.planta || "Hotel")}${d.oficina ? ` · ${esc(x.tecnico)}` : ""}</b>
         <small>${x.hechos} punto(s) realizado(s) · ${ESTADO_FIRMA[x.estado].ic} ${ESTADO_FIRMA[x.estado].txt}${x.estado === "parcial" ? ` · faltan ${x.pendientes_puntos}` : ""}</small>
       </button>`).join("")}</div>` : "";
   const engancharArriba = () => {
     cuerpo.querySelectorAll("[data-dia]").forEach((b) => b.addEventListener("click", () => { FIRMA_DIA = Number(b.dataset.dia); FIRMA_SITIO = null; recargar(); }));
     cuerpo.querySelectorAll("[data-sitio]").forEach((b) => b.addEventListener("click", () => { FIRMA_SITIO = b.dataset.sitio; recargar(); }));
   };
-  const elegida = ordenes.find((x) => x.sitio_id === FIRMA_SITIO);
+  const elegida = ordenes.find((x) => llave(x) === FIRMA_SITIO);
   if (!elegida) {
-    cuerpo.innerHTML = `${dias}<div class="vacio"><span class="emoji">✍️</span>No tienes servicios ${FIRMA_DIA ? "de ayer" : "hoy"} en tus hoteles.<br><small>Cuando termines (todo o una parte), vuelve aquí para que firmen de recibido.</small></div>`;
+    cuerpo.innerHTML = `${dias}<div class="vacio"><span class="emoji">✍️</span>${d.oficina ? `No hay servicios registrados ${FIRMA_DIA ? "ayer" : "hoy"} en ningún hotel.` : `No tienes servicios ${FIRMA_DIA ? "de ayer" : "hoy"} en tus hoteles.`}<br><small>Cuando termines (todo o una parte), vuelve aquí para que firmen de recibido.</small></div>`;
     engancharArriba();
     return;
   }
@@ -117,6 +120,7 @@ async function pantallaFirmaOrden() {
   const resumen = `
     <div class="firma-resumen">
       <div><b>${esc(elegida.planta || "")}</b> · ${ESTADO_FIRMA[o.estado].ic} ${ESTADO_FIRMA[o.estado].txt}</div>
+      <div class="firma-sub">Técnico: ${esc(o.tecnico || "")}</div>
       <div><b>${o.hechos}</b> punto${o.hechos === 1 ? "" : "s"} realizado${o.hechos === 1 ? "" : "s"}${o.no_realizados ? ` · <b>${o.no_realizados}</b> no realizado${o.no_realizados === 1 ? "" : "s"}` : ""} · ${hora(o.desde)} a ${hora(o.hasta)}</div>
       ${o.registros > o.puntos ? `<div class="firma-sub">${o.registros} registros (un punto registrado varias veces cuenta una)</div>` : ""}
     </div>`;

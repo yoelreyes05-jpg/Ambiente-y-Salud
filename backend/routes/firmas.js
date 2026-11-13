@@ -126,7 +126,27 @@ const sinInternos = ({ _cubre, _pendientes, ...o }) => o;
 // El técnico solo ve y hace firmar lo suyo, y solo de los hoteles que tiene
 // asignados (un técnico de un hotel no ve lo que falta firmar en otro).
 const esTecnico = (req) => req.usuario?.rol === "tecnico_plagas";
-const esMia = (req, s) => (req.usuario.empleado_id && String(s.tecnico_id) === String(req.usuario.empleado_id)) || (!!s.tecnico && s.tecnico === req.usuario.nombre);
+const esOficina = (req) => ["admin", "operaciones", "comercial"].includes(req.usuario?.rol);
+
+// Los servicios del técnico que pregunta: los que subió con SU cuenta, más los
+// que llevan su ficha de empleado. Antes se buscaba por el nombre, y si el de
+// la cuenta no era idéntico al de la ficha no aparecía nada.
+async function empleadoDe(req) {
+  if (req.usuario.empleado_id) return req.usuario.empleado_id;
+  const { data } = await supabase.from("asa_usuarios").select("empleado_id").eq("id", req.usuario.id).maybeSingle();
+  return data?.empleado_id || null;
+}
+async function idsMios(req, desde, hasta, sitio_id = null) {
+  const consulta = (col, val) => traerTodo(() => {
+    let q = supabase.from("asa_inspecciones").select("id").eq(col, val).gte("fecha_local", desde).lte("fecha_local", hasta);
+    if (sitio_id) q = q.eq("sitio_id", sitio_id);
+    return q.order("id");
+  });
+  const emp = await empleadoDe(req);
+  const [a, b] = await Promise.all([req.usuario.id ? consulta("usuario_id", req.usuario.id) : [], emp ? consulta("tecnico_id", emp) : []]);
+  return new Set([...a, ...b].map((x) => String(x.id)));
+}
+const esMia = (req, s, ids) => (ids && ids.has(String(s.inspeccion_id))) || (req.usuario.empleado_id && String(s.tecnico_id) === String(req.usuario.empleado_id)) || (!!s.tecnico && s.tecnico === req.usuario.nombre);
 async function hotelDelTecnico(req, res, sitio_id) {
   if (!esTecnico(req)) return true;
   const permitidos = await sitiosDelTecnico(req);
@@ -181,7 +201,11 @@ router.get("/ordenes", async (req, res) => {
   const desde = fechaOk(req.query.desde) ? req.query.desde : sumarDias(hasta, -6);
   try {
     let [servicios, firmas] = await Promise.all([serviciosDe(sitio_id, desde, hasta), firmasDe(sitio_id, desde, hasta)]);
-    if (esTecnico(req)) servicios = servicios.filter((x) => esMia(req, x));
+    if (esTecnico(req)) {
+      const ids = await idsMios(req, desde, hasta, sitio_id);
+      const claves = new Set(servicios.filter((x) => esMia(req, x, ids)).map((x) => `${x.fecha_local}|${claveDe(x)}`));
+      servicios = servicios.filter((x) => claves.has(`${x.fecha_local}|${claveDe(x)}`));
+    }
     const grupos = new Map();
     for (const s of servicios) {
       const k = `${s.fecha_local}|${claveDe(s)}`;
@@ -215,7 +239,10 @@ router.get("/orden", async (req, res) => {
     ]);
     const mios = servicios.filter((s) => claveDe(s) === clave);
     const deOrden = firmas.filter((f) => f.clave === clave);
-    if (esTecnico(req) && mios.length && !mios.some((s) => esMia(req, s))) return err(res, new Error("Esa orden es de otro técnico"), 403);
+    if (esTecnico(req) && mios.length) {
+      const ids = await idsMios(req, fecha, fecha, sitio_id);
+      if (!mios.some((s) => esMia(req, s, ids))) return err(res, new Error("Esa orden es de otro técnico"), 403);
+    }
     if (!mios.length) return err(res, new Error("Esa orden no tiene servicios"), 404);
     const o = armarOrden(mios, deOrden);
     const imagenDe = new Map(deOrden.map((f) => [f.id, f.firma]));
@@ -259,28 +286,46 @@ router.get("/mias", async (req, res) => {
   const fecha = fechaOk(req.query.fecha) ? req.query.fecha : hoyRD();
   try {
     let servicios = [];
-    if (req.usuario.empleado_id) {
-      servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(COLS).eq("fecha_local", fecha).eq("tecnico_id", req.usuario.empleado_id).order("fecha").order("inspeccion_id"));
-    }
-    if (!servicios.length && req.usuario.nombre) {
-      servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(COLS).eq("fecha_local", fecha).eq("tecnico", req.usuario.nombre).order("fecha").order("inspeccion_id"));
+    if (esOficina(req)) {
+      // La oficina ve las órdenes de TODOS los técnicos de ese día
+      servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(COLS).eq("fecha_local", fecha).order("fecha").order("inspeccion_id"));
+    } else {
+      // El técnico: lo que subió con su cuenta o con su ficha de empleado
+      const ids = [...(await idsMios(req, fecha, fecha))];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from("asa_v_servicios_dia").select(COLS).in("inspeccion_id", ids.slice(i, i + 200));
+        if (error) throw error;
+        servicios.push(...(data || []));
+      }
+      if (!servicios.length && req.usuario.nombre) {
+        servicios = await traerTodo(() => supabase.from("asa_v_servicios_dia").select(COLS).eq("fecha_local", fecha).eq("tecnico", req.usuario.nombre).order("fecha").order("inspeccion_id"));
+      }
+      // Toda la orden de ese técnico en ese hotel (aunque parte la haya subido otra cuenta)
+      const claves = new Set(servicios.map((s) => `${s.sitio_id}|${claveDe(s)}`));
+      const sitios = [...new Set(servicios.map((s) => s.sitio_id))];
+      servicios = [];
+      for (const sid of sitios) {
+        servicios.push(...(await serviciosDe(sid, fecha, fecha)).filter((s) => claves.has(`${s.sitio_id}|${claveDe(s)}`)));
+      }
     }
     if (req.sitiosPermitidos) servicios = servicios.filter((s) => req.sitiosPermitidos.includes(s.sitio_id));
     const asignados = await sitiosDelTecnico(req);
     if (asignados) servicios = servicios.filter((s) => asignados.map(String).includes(String(s.sitio_id)));
-    const porSitio = new Map();
+    const porOrden = new Map();
     for (const s of servicios) {
-      if (!porSitio.has(s.sitio_id)) porSitio.set(s.sitio_id, []);
-      porSitio.get(s.sitio_id).push(s);
+      const k = `${s.sitio_id}|${claveDe(s)}`;
+      if (!porOrden.has(k)) porOrden.set(k, []);
+      porOrden.get(k).push(s);
     }
+    const firmasPorSitio = new Map();
     const ordenes = [];
-    for (const [sitio_id, lista] of porSitio) {
-      const clave = claveDe(lista[0]);
-      const firmas = (await firmasDe(sitio_id, fecha, fecha)).filter((f) => f.clave === clave);
-      ordenes.push(sinInternos(armarOrden(lista, firmas)));
+    for (const lista of porOrden.values()) {
+      const sid = lista[0].sitio_id;
+      if (!firmasPorSitio.has(sid)) firmasPorSitio.set(sid, await firmasDe(sid, fecha, fecha));
+      ordenes.push(sinInternos(armarOrden(lista, firmasPorSitio.get(sid).filter((f) => f.clave === claveDe(lista[0])))));
     }
-    ordenes.sort((a, b) => a.desde.localeCompare(b.desde));
-    res.json({ fecha, ordenes });
+    ordenes.sort((a, b) => String(a.planta).localeCompare(String(b.planta), "es") || a.tecnico.localeCompare(b.tecnico, "es"));
+    res.json({ fecha, oficina: esOficina(req), ordenes });
   } catch (e) { err(res, e); }
 });
 
@@ -299,7 +344,10 @@ router.post("/", async (req, res) => {
   try {
     const servicios = (await serviciosDe(sitio_id, fecha, fecha)).filter((s) => claveDe(s) === clave);
     if (!servicios.length) return err(res, new Error("Esa orden no tiene servicios para firmar"), 404);
-    if (esTecnico(req) && !servicios.some((s) => esMia(req, s))) return err(res, new Error("Solo puedes pedir la firma de tus propios servicios"), 403);
+    if (esTecnico(req)) {
+      const ids = await idsMios(req, fecha, fecha, sitio_id);
+      if (!servicios.some((s) => esMia(req, s, ids))) return err(res, new Error("Solo puedes pedir la firma de tus propios servicios"), 403);
+    }
     const firmas = (await firmasDe(sitio_id, fecha, fecha)).filter((f) => f.clave === clave);
     const o = armarOrden(servicios, firmas);
     if (!o._pendientes.length) return err(res, new Error("Esta orden ya está firmada completa"), 409);
