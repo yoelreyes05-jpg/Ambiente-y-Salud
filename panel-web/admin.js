@@ -866,7 +866,13 @@ async function modalPunto(sitioId, punto, areas, tipos, onSaved) {
       if (esNuevo) {
         const qr = (fd.get("qr_token") || "").trim();
         if (qr) cuerpo.qr_token = qr;
-        await post("/puntos", cuerpo);
+        const r = await post("/puntos", cuerpo);
+        if (r?.reactivado) {
+          closeModal();
+          toast(`${r.codigo_visible} estaba dado de baja: se reactivó con estos datos (conserva su historial y su QR)`);
+          onSaved?.();
+          return;
+        }
       } else {
         delete cuerpo.sitio_id;
         await put(`/puntos/${punto.id}`, cuerpo);

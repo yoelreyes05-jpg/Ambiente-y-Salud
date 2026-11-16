@@ -1301,6 +1301,21 @@ router.post("/", requireRol("operaciones", "comercial"), async (req, res) => {
     fila.qr_token = r.token;
   }
 
+  // ¿Ese código es de un punto DADO DE BAJA? Se reactiva con lo que se acaba de
+  // escribir (conserva su historial y su QR) en vez de chocar con "ya existe":
+  // dar de baja no borra, y el código seguía ocupado aunque no se viera.
+  const { data: previo } = await supabase.from("asa_puntos_control")
+    .select("id, activo").eq("sitio_id", sitio_id).eq("codigo_visible", fila.codigo_visible).maybeSingle();
+  if (previo && !previo.activo) {
+    const cambios = { ...fila, activo: true };
+    delete cambios.sitio_id;
+    if (!req.body.qr_token) delete cambios.qr_token;   // sin etiqueta nueva, sigue la suya
+    const { data: rev, error: eRev } = await supabase.from("asa_puntos_control").update(cambios).eq("id", previo.id).select().single();
+    if (eRev) return res.status(500).json({ error: true, mensaje: mensajeAmable(eRev) });
+    logAccion(req, { accion: "reactivar", modulo: "puntos", registroId: rev.id, descripcion: `${rev.codigo_visible} (estaba dado de baja)` });
+    return res.status(200).json({ ...rev, url_qr: urlQR(rev.qr_token), reactivado: true });
+  }
+
   const { data, error } = await supabase.from("asa_puntos_control").insert([fila]).select().single();
   if (error) return res.status(500).json({ error: true, mensaje: mensajeAmable(error) });
 
