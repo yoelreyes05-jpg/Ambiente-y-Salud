@@ -1175,7 +1175,7 @@ async function detalleSolicitud(cuerpo, id, silencioso = false) {
         <span><i class="punto-verde"></i> Hecha</span>
         <span><i class="punto-rojo"></i> Por hacer</span>
       </div>
-      ${[...porArea.entries()].map(([area, ps]) => `
+      ${[...porArea.entries()].sort(([a], [b]) => String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" })).map(([area, ps]) => `
         <div class="tarjeta">
           <h2>${esc(area)}</h2>
           <div class="semaforo">${ps.map(celda).join("")}</div>
@@ -1357,7 +1357,7 @@ async function formularioHabitaciones(orden = null) {
       <span><i class="punto-verde"></i> Enviada o hecha</span>
       <span><i style="background:var(--azul)"></i> Elegida para enviar</span>
     </div>`;
-  q("#hab-grid").innerHTML = leyenda + [...porArea.entries()]
+  q("#hab-grid").innerHTML = leyenda + [...porArea.entries()].sort(([a], [b]) => String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" }))
     .map(([area, lista]) => `
       <div class="grupo-hab">
         <div class="grupo-hab-titulo">${etiquetaArea(area, agrupDe.get(area))}</div>

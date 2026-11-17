@@ -62,7 +62,8 @@ router.get("/:id", async (req, res) => {
 
   res.json({
     ...sitio.data,
-    areas: areas.data || [],
+    // Mismo "orden" → por nombre en orden numérico (Villa 1, Villa 2… Villa 10)
+    areas: (areas.data || []).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true, sensitivity: "base" })),
     avance_hoy: avance.data || { puntos_totales: 0, realizados: 0, pendientes: 0 },
     contratos: (contratos.data || []).map((c) => c.asa_contratos_plagas).filter(Boolean),
   });

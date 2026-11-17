@@ -670,7 +670,7 @@ function listaDelDia(caja, pendientes, realizados) {
     return (
       `<div class="grupo-area">${esc(titulo)} · ${puntos.length}</div>` +
       Object.keys(grupos)
-        .sort((a, b) => a.localeCompare(b))
+        .sort((a, b) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }))
         .map((area) => `
           <div class="grupo-area sub">${esc(area)} · ${grupos[area].length}</div>
           ${grupos[area]
@@ -1016,7 +1016,7 @@ async function pantallaBuscar() {
         · ${lista.filter((p) => !p.hecho).length} por hacer
       </p>
       ${Object.entries(porArea)
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort(([a], [b]) => a.localeCompare(b, "es", { numeric: true, sensitivity: "base" }))
         .map(([area, puntos]) => {
           if (pintadas >= maximo) return "";
           const filas = puntos

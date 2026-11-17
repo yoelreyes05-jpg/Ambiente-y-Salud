@@ -1285,7 +1285,7 @@ async function juntarPendientes(req) {
       ultima: p.ultima_inspeccion || null,
       planta: nombrePlanta.get(p.sitio_id) || null,
     }))
-    .sort((a, b) => a.area.localeCompare(b.area, "es") || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
+    .sort((a, b) => a.area.localeCompare(b.area, "es", { numeric: true, sensitivity: "base" }) || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
 
   const pend = new Map();
   for (const p of vencidos) {

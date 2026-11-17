@@ -416,7 +416,8 @@ router.get("/estado", async (req, res) => {
   res.json({
     fecha: hoy,
     tipos: [...tipos.values()].sort((a, b) => b.total - a.total),
-    areas: [...areas.values()].sort((a, b) => b.por_hacer - a.por_hacer || String(a.nombre).localeCompare(String(b.nombre))),
+    // En orden ascendente (Villa 1, Villa 2… Villa 10), no como texto
+    areas: [...areas.values()].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es", { numeric: true, sensitivity: "base" })),
     resumen: {
       total: lista.length,
       hechos_hoy: cuenta("hecho_hoy"),
@@ -804,7 +805,7 @@ router.get("/cotejo", async (req, res) => {
     }
     for (const p of enLista) p.hecho_hoy = hechos.get(p.id) || null;
     enLista.sort((a, b) => String(a.estrategia).localeCompare(String(b.estrategia), "es") || a.area_orden - b.area_orden
-      || a.area.localeCompare(b.area, "es") || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
+      || a.area.localeCompare(b.area, "es", { numeric: true, sensitivity: "base" }) || String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
     const usadas = [...new Set(enLista.map((p) => p.estrategia_id))];
     // Las preguntas de cada estrategia (las de sus tipos de punto), para que el
     // técnico llene en "Datos del servicio" lo que no se puede adivinar: tipo

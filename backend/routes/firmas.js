@@ -256,7 +256,7 @@ router.get("/orden", async (req, res) => {
       a.inspecciones.push(s.inspeccion_id); a.lista.push(s);
     }
     const areas = [...porArea.values()].map(({ lista, ...a }) => ({ ...a, puntos: puntosDistintos(lista) }))
-      .sort((a, b) => a.area.localeCompare(b.area, "es"));
+      .sort((a, b) => a.area.localeCompare(b.area, "es", { numeric: true, sensitivity: "base" }));
     // Grupos por responsable (opción 2), solo con lo que les queda por firmar
     const grupos = responsables.map((r) => {
       const suyas = areas.filter((a) => r.areas.includes(String(a.area_id)));
