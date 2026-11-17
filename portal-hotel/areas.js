@@ -45,7 +45,6 @@ async function vistaHistorial(cuerpo) {
 
   cuerpo.innerHTML = `
     <div class="tarjeta">
-      <div class="marca-version">✅ Portal actualizado 30/10 · v2</div>
       <div class="ar-filtros">
         <label>Área
           <select class="btn" id="ar-area">

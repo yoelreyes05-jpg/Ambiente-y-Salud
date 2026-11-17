@@ -202,7 +202,7 @@ function pintarMarco() {
         .join("")}
     </nav>
     <main class="contenido" id="cuerpo"><div class="cargando">Cargando…</div></main>
-    <div class="version-portal">Portal ${esc(VERSION_PORTAL)}</div>`;
+    `;
 
   $("#btn-salir").addEventListener("click", () => salir());
   $("#sel-planta").addEventListener("change", (e) => {
