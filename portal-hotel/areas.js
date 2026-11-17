@@ -53,7 +53,7 @@ async function vistaHistorial(cuerpo) {
             ${areas.map((a) => `<option value="${esc(a.id)}"${a.id === AREA_P.area ? " selected" : ""}>${esc(a.nombre)}</option>`).join("")}
           </select>
         </label>
-        ${tiposEquipo.length ? `<label>Equipos
+        ${tiposEquipo.length ? `<label>Tratamientos
           <select class="btn" id="ar-equipo">
             <option value="">—</option>
             ${tiposEquipo.map((e) => `<option value="${esc(e.id)}"${e.id === AREA_P.equipo ? " selected" : ""}>${esc(`${e.icono ? e.icono + " " : ""}${e.nombre}`)} (${e.total})</option>`).join("")}
@@ -149,7 +149,7 @@ async function cargarArea(areas) {
   caja.insertAdjacentHTML("afterbegin", htmlHallazgosPorCorregir(hallazgos, area));
   // Equipo elegido (lámparas, dispensadores…): todo lo que se les hizo
   if (AREA_P.equipo) {
-    caja.insertAdjacentHTML("afterbegin", `<div id="ar-equipos"><div class="tarjeta"><div class="cargando">Cargando equipos…</div></div></div>`);
+    caja.insertAdjacentHTML("afterbegin", `<div id="ar-equipos"><div class="tarjeta"><div class="cargando">Cargando tratamientos…</div></div></div>`);
     pintarEquiposEstrategia($("#ar-equipos", caja), area);
   }
   caja.insertAdjacentHTML("beforeend", `<div id="pl-estadisticas"></div>` + htmlServiciosRango(servicios));
@@ -236,10 +236,10 @@ async function pintarEquiposEstrategia(caja, area) {
 
   caja.innerHTML = `
     <div class="tarjeta">
-      <h2>${esc(`${d.tipo?.icono ? d.tipo.icono + " " : ""}${d.tipo?.nombre || "Equipos"}`)}${area ? ` · ${esc(area.nombre)}` : ""}</h2>
+      <h2>${esc(`${d.tipo?.icono ? d.tipo.icono + " " : ""}${d.tipo?.nombre || "Tratamientos"}`)}${area ? ` · ${esc(area.nombre)}` : ""}</h2>
       <p class="pl-nota">Del ${esc(fecha(AREA_P.desde))} al ${esc(fecha(AREA_P.hasta))}.</p>
       <div class="kpis eq-kpis">
-        <div class="kpi"><div class="n">${equipos.length}</div><div class="t">Equipos</div></div>
+        <div class="kpi"><div class="n">${equipos.length}</div><div class="t">Puntos</div></div>
         <div class="kpi ok"><div class="n">${hechos}</div><div class="t">Servicios hechos</div></div>
         <div class="kpi"><div class="n">${cambios}</div><div class="t">Cambios</div></div>
         <div class="kpi${sinServicio ? " mal" : ""}"><div class="n">${sinServicio}</div><div class="t">Sin servicio en el período</div></div>
@@ -247,11 +247,11 @@ async function pintarEquiposEstrategia(caja, area) {
       ${capturasTxt ? `<p class="eq-capt-total">Capturado en el período: <strong>${esc(capturasTxt)}</strong></p>` : ""}
       <div class="eq-vistas">
         <button type="button" class="btn${EQ_VISTA === "todos" ? " principal" : ""}" data-eq-vista="todos">Todos los servicios (${servicios.length})</button>
-        <button type="button" class="btn${EQ_VISTA === "equipo" ? " principal" : ""}" data-eq-vista="equipo">Por equipo (${equipos.length})</button>
+        <button type="button" class="btn${EQ_VISTA === "equipo" ? " principal" : ""}" data-eq-vista="equipo">Por punto (${equipos.length})</button>
       </div>
       <div id="eq-contenido">
         ${EQ_VISTA === "todos"
-          ? (servicios.length ? servicios.map((x) => filaServ(x, true)).join("") : `<div class="vacio">No se hicieron servicios a estos equipos en el período.</div>`)
+          ? (servicios.length ? servicios.map((x) => filaServ(x, true)).join("") : `<div class="vacio">No se hicieron servicios de este tratamiento en el período.</div>`)
           : (equipos.length ? equipos.map((p) => `
             <div class="eq-item${EQ_ABIERTO === p.id ? " abierto" : ""}" data-eq="${esc(p.id)}">
               <div class="registro clicable eq-cab">
@@ -269,7 +269,7 @@ async function pintarEquiposEstrategia(caja, area) {
               <div class="eq-hist" ${EQ_ABIERTO === p.id ? "" : "hidden"}>
                 ${p.servicios.length ? p.servicios.map((x) => filaServ({ ...x, equipo: p }, false)).join("") : `<div class="vacio">Sin servicios en el período.</div>`}
               </div>
-            </div>`).join("") : `<div class="vacio">No hay equipos de este tipo${area ? " en esta área" : ""}.</div>`)}
+            </div>`).join("") : `<div class="vacio">No hay puntos de este tratamiento${area ? " en esta área" : ""}.</div>`)}
       </div>
     </div>`;
 
