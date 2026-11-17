@@ -1668,6 +1668,10 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
       _area_excel: claveExcel,
       _estrategia_nombre: estrategiaTexto ? String(estrategiaTexto).trim() : null,
       _tipo_nombre: tipo.nombre,
+      // La fila trae su propio código (PAL-101): si no existe es una
+      // habitación NUEVA aunque el número (101) ya esté en otra villa o
+      // edificio. Sin esto, se movía la habitación que ya existía.
+      _codigo_explicito: !!codigo,
       sitio_id,
       tipo_punto_id: tipo.id,
       ...(token ? { qr_token: token } : {}),
@@ -1698,7 +1702,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   for (let i = puntos.length - 1; i >= 0; i--) {
     const p = puntos[i];
     const ya = porCodigo.get(normalizar(p.codigo_visible)) ||
-      (p.tipo_punto_id === tipoHab && p.numero_habitacion ? porHab.get(String(p.numero_habitacion).replace(/^0+/, "")) : null);
+      (p.tipo_punto_id === tipoHab && p.numero_habitacion && !p._codigo_explicito ? porHab.get(String(p.numero_habitacion).replace(/^0+/, "")) : null);
     if (ya) {
       aActualizar.unshift({ ...p, _id: ya.id, _codigo_actual: ya.codigo_visible });
       puntos.splice(i, 1);
@@ -1789,7 +1793,7 @@ router.post("/importar", requireRol("operaciones"), async (req, res) => {
   }
 
   // 3) Puntos, resolviendo área y estrategia por nombre
-  const aInsertar = puntos.map(({ _area_nombre, _area_excel, _estrategia_nombre, _tipo_nombre, ...p }) => ({
+  const aInsertar = puntos.map(({ _area_nombre, _area_excel, _estrategia_nombre, _tipo_nombre, _codigo_explicito, ...p }) => ({
     ...p,
     area_id: _area_nombre ? areasPorNombre.get(normalizar(_area_nombre))?.id || null : null,
     estrategia_id: _estrategia_nombre ? estrategiasPorNombre.get(normalizar(_estrategia_nombre))?.id || null : null,
