@@ -642,7 +642,7 @@ async function abrirServicio(inspeccionId) {
 
   let d;
   try {
-    d = await GET(`/inspecciones/${inspeccionId}/desglose`);
+    [d] = await Promise.all([GET(`/inspecciones/${inspeccionId}/desglose`), fichasProductos()]);
   } catch (e) {
     $("#hoja-cuerpo", hoja).innerHTML = `<div class="error">${esc(e.message)}</div>`;
     return;
@@ -713,7 +713,7 @@ function fichaServicioHTML(d) {
               <tr>
                 <td style="text-align:center;color:var(--verde);font-weight:700">✓</td>
                 <td>${esc(r.pregunta_texto)}</td>
-                <td><strong>${esc(valorRespuesta(r))}</strong></td>
+                <td><strong>${/product/i.test(r.pregunta_texto || "") ? enlazarProductos(valorRespuesta(r)) : esc(valorRespuesta(r))}</strong></td>
               </tr>`).join("")}
           </tbody>
         </table>` : ""}
@@ -1593,6 +1593,54 @@ async function abrirDocumento(id, descargar) {
     alert(e.message);
   }
 }
+
+// ── Fichas técnicas: el producto que escribió el técnico abre su ficha ──────
+// Se arma con lo mismo que muestra Documentos (catálogo de productos y fichas
+// sueltas). Si la cuenta no ve Documentos, simplemente no hay enlaces.
+let FICHAS_P = null;
+async function fichasProductos() {
+  if (FICHAS_P) return FICHAS_P;
+  try {
+    const [docs, catalogo] = await Promise.all([GET("/documentos"), GET("/documentos/productos").catch(() => [])]);
+    const lista = [];
+    const agregar = (nombre, d) => { const clave = claveProductoP(nombre); if (clave && d?.id) lista.push({ nombre, clave, id: d.id, primera: claveProductoP(String(nombre).split(/\s+/)[0]) }); };
+    for (const p of catalogo || []) {
+      const ficha = (p.documentos || []).find((d) => d.categoria === "ficha_tecnica" && d.tiene_archivo);
+      if (ficha) agregar(p.nombre_comercial, ficha);
+    }
+    for (const d of (docs || []).filter((x) => x.categoria === "ficha_tecnica" && x.tiene_archivo && !x.producto_id)) {
+      agregar(productoDeNombreP(d.archivo_nombre || d.titulo), d);
+    }
+    FICHAS_P = lista.sort((a, b) => b.clave.length - a.clave.length);
+  } catch { FICHAS_P = []; }
+  return FICHAS_P;
+}
+// "Temprid", "TEMPRID SC", "Temprid 75 SC" → la ficha de Temprid SC
+function fichaDe(texto) {
+  const c = claveProductoP(texto);
+  if (c.length < 3) return null;
+  const primera = claveProductoP(String(texto).trim().split(/\s+/)[0]);
+  return (FICHAS_P || []).find((f) => f.clave === c)
+    || (FICHAS_P || []).find((f) => c.startsWith(f.clave) || (c.length >= 4 && f.clave.startsWith(c)))
+    || (primera.length >= 4 ? (FICHAS_P || []).find((f) => f.primera === primera) : null)
+    || null;
+}
+// Texto con productos (separados por coma, "y" o "/") → HTML con enlaces
+function enlazarProductos(texto) {
+  return String(texto ?? "").split(/(\s*,\s*|\s+y\s+|\s*\/\s*)/).map((parte, i) => {
+    if (i % 2) return esc(parte);
+    const f = fichaDe(parte);
+    return f ? `<a href="#" class="prod-ficha" data-ficha="${esc(f.id)}" title="Ver ficha técnica de ${esc(f.nombre)}">${esc(parte)} 📄</a>` : esc(parte);
+  }).join("");
+}
+// Un solo manejador para todos los enlaces a ficha (servicio, cronograma, programa)
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-ficha]");
+  if (!a) return;
+  e.preventDefault();
+  e.stopPropagation();
+  abrirDocumento(a.dataset.ficha);
+}, true);
 
 function tarjetaDocumento(d) {
   const [vt, vc] = DOC_VIG[d.vigencia] || ["", ""];

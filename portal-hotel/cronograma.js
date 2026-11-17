@@ -56,6 +56,7 @@ const rangoSemanaMes = (a, m, n) => {
 
 async function vistaCronograma(cuerpo) {
   const hoy = fechaRDp(new Date());
+  await fichasProductos();   // para que los productos abran su ficha técnica
   CR.anio ??= Number(hoy.slice(0, 4));
   // La primera vez en una planta con programa anual oficial, se abre en Año
   if (CR.plantaVista !== PLANTA.id) {
@@ -252,7 +253,7 @@ function leyendaImpresa(prog) {
 function htmlProgramaOficial(prog, impresion = false) {
   const sem = prog.semanas_por_mes || 4;
   const total = prog.meses.length * sem;
-  const tabla = (filas) => `<table class="cr-prog-tabla">${filas.map(([n, t]) => `<tr><td class="n">${n}</td><td>${esc(t)}</td></tr>`).join("")}</table>`;
+  const tabla = (filas, conFicha = false) => `<table class="cr-prog-tabla">${filas.map(([n, t]) => `<tr><td class="n">${n}</td><td>${conFicha ? enlazarProductos(t) : esc(t)}</td></tr>`).join("")}</table>`;
   return `
     <div class="tarjeta cr-prog">
       <div class="cr-prog-cab">${prog.titulo.map((t, i) => `<div${i === 0 ? ' class="fuerte"' : ""}>${esc(t)}</div>`).join("")}</div>
@@ -273,7 +274,7 @@ function htmlProgramaOficial(prog, impresion = false) {
         </table>
       </div>
       ${impresion ? leyendaImpresa(prog) : `<div class="cr-prog-leyendas">
-        <div><h3>Nombre del producto</h3>${tabla(prog.productos || [])}</div>
+        <div><h3>Nombre del producto</h3>${tabla(prog.productos || [], true)}</div>
         <div><h3>Método de aplicación</h3>${tabla(prog.metodos || [])}</div>
         <div><h3>Plagas tratadas</h3>${tabla(prog.plagas || [])}</div>
       </div>`}
@@ -351,6 +352,12 @@ async function pintarCalendario(caja, filas, desde, hasta) {
       hechos[d] = (hechos[d] || 0) + 1;
     }
   } catch { /* sin lo registrado, igual se ve lo programado */ }
+  // Los productos que el técnico registró cada día (cada uno abre su ficha)
+  let productos = {};
+  try {
+    const r = await GET(`/inspecciones/productos-aplicados?sitio_id=${PLANTA.id}&desde=${desde}&hasta=${hasta}${CR.area ? `&area_id=${CR.area}` : ""}`);
+    productos = r.dias || {};
+  } catch { /* sin productos, igual se ve el día */ }
   const hoy = fechaRDp(new Date());
   caja.insertAdjacentHTML("beforeend", `
     <div class="cr-semana-p">
@@ -361,6 +368,7 @@ async function pintarCalendario(caja, filas, desde, hasta) {
           <div class="tarjeta cr-dia-p ${d === hoy ? "hoy" : ""}">
             <h2>${dia} <span style="color:var(--suave);font-weight:500">${ddmm(d)}/${d.slice(0, 4)}</span></h2>
             ${hechos[d] ? `<button class="btn cr-hechos" data-dia="${d}">✔ ${hechos[d]} servicio(s) registrados · ver evidencias</button>` : ""}
+            ${productos[d]?.length ? `<div class="cr-productos">🧪 Productos aplicados: ${productos[d].map((x) => `<span class="cr-prod">${enlazarProductos(x.producto)}${x.veces > 1 ? ` <small>×${x.veces}</small>` : ""}</span>`).join(" ")}</div>` : ""}
             ${del.length ? del.map((f) => `
               <div class="cr-item-p ${f.estado}">
                 <div class="h">${horaRDp(f.fecha_inicio)}${f.fecha_fin ? ` – ${horaRDp(f.fecha_fin)}` : ""}

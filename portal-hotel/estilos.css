@@ -576,3 +576,8 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .firma-area-p{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:14px}
 .firma-area-p:last-child{border-bottom:none}
 .firma-area-p small{margin-left:auto;color:var(--suave)}
+/* Producto → ficha técnica */
+.prod-ficha{color:#32539C;text-decoration:underline;text-underline-offset:2px;font-weight:600}
+.cr-productos{font-size:13px;margin:6px 0 8px;line-height:1.9}
+.cr-prod{display:inline-block;background:#eef2ff;border-radius:8px;padding:1px 8px;margin-right:4px}
+.cr-prod small{color:var(--suave)}

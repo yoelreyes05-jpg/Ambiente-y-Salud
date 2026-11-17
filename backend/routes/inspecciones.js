@@ -10,7 +10,7 @@ import { requireRol, filtrarPorSitio, exigirSitioPermitido, puedeVerSitio, ROLES
 import { tiposVisiblesPortal } from "./puntos.js";
 import { guardarFotos } from "../lib/evidencias.js";
 import { leerEstadosPunto } from "./configuracion.js";
-import { traerTodoComoRespuesta } from "../lib/paginar.js";
+import { traerTodo, traerTodoComoRespuesta } from "../lib/paginar.js";
 
 import { intentosPendientes } from "../lib/pendientesNoRealizados.js";
 import { motivoDeRespuestas, codigoMotivo, motivosDeInspecciones, PREGUNTA_SE_REALIZO } from "../lib/motivoEstrategia.js";
@@ -179,6 +179,52 @@ router.get("/dia", async (req, res) => {
 // abre el día completo con GET /inspecciones/dia?fecha=, que ya trae cada
 // servicio y su desglose.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /inspecciones/productos-aplicados?sitio_id=&desde=&hasta=&area_id=
+//
+// Los productos que el técnico dijo haber aplicado, por día (respuestas de las
+// preguntas que hablan de "producto"). El portal los pone en el cronograma y
+// cada uno abre su ficha técnica.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get("/productos-aplicados", async (req, res) => {
+  const { sitio_id, area_id } = req.query;
+  if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
+  if (!exigirSitioPermitido(req, res, sitio_id)) return;
+  const hasta = /^\d{4}-\d{2}-\d{2}$/.test(req.query.hasta || "") ? req.query.hasta : hoyRD();
+  const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || "") ? req.query.desde : hasta;
+  try {
+    const insp = await traerTodo(() => {
+      let q = supabase.from("asa_inspecciones").select("id, fecha_local")
+        .eq("sitio_id", sitio_id).gte("fecha_local", desde).lte("fecha_local", hasta).is("motivo_no_realizado", null);
+      if (area_id) q = q.eq("area_id", area_id);
+      return q.order("id");
+    });
+    const diaDe = new Map(insp.map((i) => [i.id, i.fecha_local]));
+    const porDia = {};
+    const ids = [...diaDe.keys()];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from("asa_inspeccion_respuestas")
+        .select("inspeccion_id, pregunta_texto, valor_texto, valor_opciones")
+        .in("inspeccion_id", ids.slice(i, i + 200)).ilike("pregunta_texto", "%product%");
+      if (error) throw error;
+      for (const r of data || []) {
+        const vals = Array.isArray(r.valor_opciones) && r.valor_opciones.length ? r.valor_opciones : String(r.valor_texto || "").split(",");
+        const dia = diaDe.get(r.inspeccion_id);
+        porDia[dia] ||= {};
+        for (const v of vals.map((x) => String(x).trim()).filter((x) => x && !/^(n\/?a|no|ninguno|ninguna|sin producto|-)$/i.test(x))) {
+          porDia[dia][v] = (porDia[dia][v] || 0) + 1;
+        }
+      }
+    }
+    res.json({
+      desde, hasta,
+      dias: Object.fromEntries(Object.entries(porDia).map(([d, m]) => [d, Object.entries(m).map(([producto, veces]) => ({ producto, veces })).sort((a, b) => b.veces - a.veces)])),
+    });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
+});
+
 router.get("/dias", async (req, res) => {
   const { sitio_id } = req.query;
   if (!sitio_id) return res.status(400).json({ error: true, mensaje: "sitio_id es requerido" });
