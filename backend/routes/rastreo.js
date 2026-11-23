@@ -258,13 +258,21 @@ router.get("/en-vivo", OFICINA, async (req, res) => {
       for (const s of data || []) nombreHotel.set(s.id, s.nombre);
     }
 
-    const ids = new Set([...(usuarios.data || []).filter((u) => u.activo !== false).map((u) => u.id), ...ultima.keys()]);
+    // Quién sale en la lista: TODA cuenta activa con rol de técnico (aparece
+    // apenas se crea, aunque todavía no mande ubicación) y las demás cuentas
+    // activas que mandaron ubicación ese día. Una cuenta borrada o desactivada
+    // ya no sale (antes seguía apareciendo como "Técnico").
     const nombres = new Map((usuarios.data || []).map((u) => [u.id, u.nombre_completo]));
-    const sinNombre = [...ids].filter((id) => !nombres.has(id));
-    if (sinNombre.length) {
-      const { data } = await supabase.from("asa_usuarios").select("id, nombre_completo").in("id", sinNombre);
-      for (const u of data || []) nombres.set(u.id, u.nombre_completo);
+    const activa = new Map((usuarios.data || []).map((u) => [u.id, u.activo !== false]));
+    const otros = [...ultima.keys()].filter((id) => !activa.has(id));
+    if (otros.length) {
+      const { data } = await supabase.from("asa_usuarios").select("id, nombre_completo, activo").in("id", otros);
+      for (const u of data || []) { nombres.set(u.id, u.nombre_completo); activa.set(u.id, u.activo !== false); }
     }
+    const ids = new Set([
+      ...(usuarios.data || []).filter((u) => u.activo !== false).map((u) => u.id),
+      ...[...ultima.keys()].filter((id) => activa.get(id) === true),
+    ]);
 
     const ahora = Date.now();
     const esHoy = fecha === fechaRD();

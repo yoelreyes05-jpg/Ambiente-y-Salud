@@ -68,6 +68,19 @@ router.put("/colaboradores", pagar, async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// DELETE /incentivos/colaboradores/:id — sacar a un técnico de la lista de
+// Evaluación e Incentivos (solo admin). Sus evaluaciones de meses anteriores
+// se conservan en el historial de cada mes.
+router.delete("/colaboradores/:id", pagar, async (req, res) => {
+  try {
+    const lista = await colaboradores();
+    const c = lista.find((x) => x.id === req.params.id);
+    if (!c) return err(res, new Error("Ese técnico ya no está en la lista"), 404);
+    await escribir("incentivos_colaboradores", lista.filter((x) => x.id !== req.params.id));
+    res.json({ ok: true, eliminado: c.nombre });
+  } catch (e) { err(res, e); }
+});
+
 router.get("/evaluaciones", evaluar, async (req, res) => {
   const { mes } = req.query;
   if (!mesValido(mes)) return err(res, new Error("mes inválido (AAAA-MM)"), 400);

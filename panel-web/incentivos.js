@@ -90,20 +90,32 @@ async function viewEvaluacion(content) {
     <div class="card">
       <h3 class="card-title">Evaluaciones de ${esc(nombreMes(INC_MES))} · ${hechas} de ${activos.length}</h3>
       <div class="table-wrap"><table class="data">
-        <thead><tr><th>Colaborador</th><th>Cliente</th><th>Evaluador</th><th>% Evaluación</th><th></th></tr></thead>
+        <thead><tr><th>Colaborador</th><th>Cliente</th><th>Evaluador</th><th>% Evaluación</th><th></th>${USUARIO?.rol === "admin" ? "<th></th>" : ""}</tr></thead>
         <tbody>${activos.map((c) => {
           const e = evals[c.id];
           return `<tr class="clickable" data-ev="${esc(c.id)}" tabindex="0">
             <td><strong>${esc(c.nombre)}</strong></td><td>${esc(e?.cliente || c.cliente || "")}</td>
             <td>${esc(e?.evaluador || "")}</td>
             <td>${e ? `<span class="estado-chip ${e.porcentaje >= 80 ? "hecho" : e.porcentaje >= 60 ? "fuera" : "pendiente"}">${pctTxt(e.porcentaje)}</span>${e.completa ? "" : ` <small class="text-muted">incompleta</small>`}` : `<span class="text-muted">Sin evaluar</span>`}</td>
-            <td>${e ? "Ver / editar" : "Evaluar"} ›</td></tr>`;
+            <td>${e ? "Ver / editar" : "Evaluar"} ›</td>
+            ${USUARIO?.rol === "admin" ? `<td><button type="button" class="btn btn-sm btn-danger" data-borrar-col="${esc(c.id)}" title="Eliminar a ${esc(c.nombre)} de la lista">🗑 Eliminar</button></td>` : ""}</tr>`;
         }).join("")}</tbody></table></div>
     </div>`;
 
   $("#ev-mes").addEventListener("change", (ev) => { if (ev.target.value) { INC_MES = ev.target.value; viewEvaluacion(content); } });
   $("#ev-col").addEventListener("change", (ev) => { EVAL_SEL = ev.target.value; pintarFormEval(); });
   $("#ev-param")?.addEventListener("click", () => modalParametrosEval(plantilla, () => { INCV_PLANTILLA = null; viewEvaluacion(content); }));
+  content.querySelectorAll("[data-borrar-col]").forEach((b) => b.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const c = activos.find((x) => x.id === b.dataset.borrarCol);
+    if (!c || !confirm(`¿Eliminar a ${c.nombre} de Evaluación e Incentivos?\n\nYa no saldrá en la lista ni en el pago. Sus evaluaciones de meses anteriores se conservan.`)) return;
+    try {
+      await api(`/incentivos/colaboradores/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+      if (EVAL_SEL === c.id) EVAL_SEL = "";
+      toast(`${c.nombre} eliminado de la lista`);
+      viewEvaluacion(content);
+    } catch (e) { toast(e.message, true); }
+  }));
   content.querySelectorAll("[data-ev]").forEach((tr) => {
     const abrir = () => { EVAL_SEL = tr.dataset.ev; $("#ev-col").value = EVAL_SEL; pintarFormEval(); $("#ev-form").scrollIntoView({ behavior: "smooth" }); };
     tr.addEventListener("click", abrir);
@@ -375,18 +387,26 @@ async function modalColaboradores(alGuardar) {
       <td><input data-k="sueldo" type="number" min="0" value="${c.sueldo ?? ""}"></td>
       <td><input data-k="base" type="number" min="0" value="${c.base ?? ""}" placeholder="50 %"></td>
       <td style="text-align:center"><input data-k="activo" type="checkbox" ${c.activo !== false ? "checked" : ""}></td>
+      <td><button type="button" class="btn btn-sm btn-danger colab-quitar" title="Eliminar de la lista">🗑</button></td>
     </tr>`;
   openModal({
     title: "Colaboradores y sueldos", large: true, submitLabel: "Guardar lista",
     bodyHTML: `
       <p class="text-muted">Esta es la lista que sale en Evaluación e Incentivos. <strong>Quincena</strong>: déjala vacía
         para usar el 50 % del sueldo; escribe un monto solo si a esa persona se le calcula distinto.
-        Desmarca <strong>Activo</strong> para quien ya no trabaja (no se borra su historial).</p>
+        Desmarca <strong>Activo</strong> para quien ya no trabaja por un tiempo, o usa <strong>🗑</strong> para sacarlo de la lista (sus evaluaciones pasadas se conservan).</p>
       <div class="table-wrap"><table class="data inc-colabs">
-        <thead><tr><th>Nombre</th><th>Zona</th><th>Cliente</th><th>Sueldo</th><th>Quincena</th><th>Activo</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Zona</th><th>Cliente</th><th>Sueldo</th><th>Quincena</th><th>Activo</th><th></th></tr></thead>
         <tbody id="colab-filas">${lista.map(fila).join("")}</tbody></table></div>
       <button type="button" class="btn btn-sm" id="colab-mas" style="margin-top:8px">+ Agregar colaborador</button>`,
     onMount(overlay) {
+      overlay.addEventListener("click", (e) => {
+        const b = e.target.closest(".colab-quitar");
+        if (!b) return;
+        const tr = b.closest("tr");
+        const nombre = tr.querySelector('[data-k="nombre"]').value || "este técnico";
+        if (confirm(`¿Eliminar a ${nombre} de la lista? Se guarda al tocar "Guardar lista".`)) tr.remove();
+      });
       overlay.querySelector("#colab-mas").addEventListener("click", () => {
         overlay.querySelector("#colab-filas").insertAdjacentHTML("beforeend", fila());
         overlay.querySelector("#colab-filas tr:last-child input")?.focus();
