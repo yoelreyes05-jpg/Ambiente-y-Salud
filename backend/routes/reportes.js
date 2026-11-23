@@ -452,6 +452,42 @@ router.get("/resumen", async (req, res) => {
 //                puntos al día y vencidos
 //   ordenes    — qué tan rápido se atiende una orden desde que entra
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /reportes/tecnico-inspecciones?tecnico_id=&dias=&sitio_id=
+// Todas las inspecciones de un técnico en el período (el dashboard las abre
+// al tocar su nombre). tecnico_id=sin_asignar → las que no tienen técnico.
+router.get("/tecnico-inspecciones", async (req, res) => {
+  const { tecnico_id, sitio_id } = req.query;
+  if (!tecnico_id) return res.status(400).json({ error: true, mensaje: "tecnico_id es requerido" });
+  if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
+  const dias = Math.min(Number(req.query.dias) || 30, 365);
+  const desde = haceDias(dias);
+  try {
+    const filas = await traerTodo(() => {
+      let q = supabase.from("asa_v_servicios_dia")
+        .select("inspeccion_id, fecha, fecha_local, sitio_id, planta, area, codigo_visible, punto_nombre, numero_habitacion, tipo_nombre, tipo_icono, estado_punto, nivel_actividad, no_realizado, motivo_no_realizado, plagas_total, fotos_total, tecnico")
+        .gte("fecha_local", desde);
+      q = tecnico_id === "sin_asignar" ? q.is("tecnico_id", null) : q.eq("tecnico_id", tecnico_id);
+      q = sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
+      return q.order("fecha", { ascending: false }).order("inspeccion_id");
+    });
+    const hechas = filas.filter((f) => !f.no_realizado);
+    res.json({
+      desde, dias,
+      tecnico: filas[0]?.tecnico || null,
+      resumen: {
+        total: filas.length,
+        realizadas: hechas.length,
+        no_realizadas: filas.length - hechas.length,
+        con_actividad: hechas.filter((f) => f.nivel_actividad && f.nivel_actividad !== "ninguna").length,
+        plantas: [...new Set(filas.map((f) => f.planta).filter(Boolean))],
+      },
+      inspecciones: filas,
+    });
+  } catch (e) {
+    res.status(500).json({ error: true, mensaje: e.message });
+  }
+});
+
 router.get("/tablero", async (req, res) => {
   const { sitio_id } = req.query;
   if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;

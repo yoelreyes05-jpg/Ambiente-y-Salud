@@ -1518,7 +1518,8 @@ async function tableroASA(content) {
 
         <div class="card">
           <div class="card-head"><h2>Técnicos — menos incidencias</h2></div>
-          ${bloqueTecnicos(t.tecnicos)}
+          <input type="search" id="dash-buscar-tec" placeholder="🔍 Buscar técnico por nombre…" style="width:100%;margin-bottom:10px">
+          <div id="dash-tecnicos">${bloqueTecnicos(t.tecnicos)}</div>
         </div>
       </div>
 
@@ -1535,6 +1536,20 @@ async function tableroASA(content) {
       </div>
 
       <div id="dash-histograma"></div>`;
+
+    // Técnicos: buscar por nombre y, al tocar uno, todas sus inspecciones
+    const sinTilde = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const enganchar = () => $$("#dash-tecnicos tr[data-id]").forEach((tr) => tr.addEventListener("click", () => {
+      const tec = t.tecnicos.find((x) => (x.tecnico_id || "sin_asignar") === tr.dataset.id);
+      if (tec) modalInspeccionesTecnico(tec, dias, sitio);
+    }));
+    enganchar();
+    $("#dash-buscar-tec").addEventListener("input", (e) => {
+      const q = sinTilde(e.target.value.trim());
+      const lista = q ? t.tecnicos.filter((x) => sinTilde(x.nombre).includes(q)) : t.tecnicos;
+      $("#dash-tecnicos").innerHTML = bloqueTecnicos(lista, !!q);
+      enganchar();
+    });
 
     if (typeof pintarHistograma === "function") {
       try {
@@ -1589,10 +1604,11 @@ function bloquePlagas(plagas) {
   </p>`;
 }
 
-function bloqueTecnicos(tecnicos) {
-  const conVolumen = tecnicos.filter((t) => t.inspecciones >= 5);
-  const lista = conVolumen.length ? conVolumen : tecnicos;
-  if (!lista.length) return `<div class="center-msg">Sin inspecciones en el período.</div>`;
+function bloqueTecnicos(tecnicos, buscando = false) {
+  // Buscando por nombre salen todos los que coinciden, tengan el volumen que tengan
+  const conVolumen = buscando ? [] : tecnicos.filter((t) => t.inspecciones >= 5);
+  const lista = (conVolumen.length ? conVolumen : tecnicos).map((t) => ({ ...t, id: t.tecnico_id || "sin_asignar" }));
+  if (!lista.length) return `<div class="center-msg">${buscando ? "Ningún técnico con ese nombre en el período." : "Sin inspecciones en el período."}</div>`;
 
   return (
     tableHTML(
@@ -1607,9 +1623,10 @@ function bloqueTecnicos(tecnicos) {
             `<span class="estado-chip ${t.tasa_incidencia <= 10 ? "hecho" : t.tasa_incidencia <= 25 ? "fuera" : "pendiente"}">${t.tasa_incidencia}%</span>`,
         },
       ],
-      lista.slice(0, 10),
+      buscando ? lista : lista.slice(0, 10),
       "Sin inspecciones en el período."
     ) +
+    `<p class="text-muted" style="margin-top:6px">Toca un técnico para ver todas sus inspecciones del período.</p>` +
     (conVolumen.length
       ? `<p class="text-muted" style="margin-top:10px">
            Solo se listan técnicos con 5 o más inspecciones: con menos, el
@@ -1617,6 +1634,49 @@ function bloqueTecnicos(tecnicos) {
          </p>`
       : "")
   );
+}
+
+// Todas las inspecciones de un técnico en el período del dashboard
+async function modalInspeccionesTecnico(tec, dias, sitio) {
+  const qs = new URLSearchParams({ tecnico_id: tec.tecnico_id || "sin_asignar", dias });
+  if (sitio) qs.set("sitio_id", sitio);
+  let d;
+  try { d = await get(`/reportes/tecnico-inspecciones?${qs}`); } catch (e) { return toast(e.message, true); }
+  const fila = (i) => `
+    <tr class="clickable" data-insp="${esc(i.inspeccion_id)}" data-texto="${esc([i.planta, i.area, i.codigo_visible, i.punto_nombre, i.numero_habitacion, i.tipo_nombre].filter(Boolean).join(" ").toLowerCase())}">
+      <td>${esc(fmtDateTime(i.fecha))}</td>
+      <td>${esc(i.planta || "")}</td>
+      <td><strong>${esc(i.numero_habitacion ? `Hab. ${i.numero_habitacion}` : i.codigo_visible || "")}</strong> <span class="tec-sub">${esc(i.area || "")}</span></td>
+      <td>${esc(i.tipo_icono || "")} ${esc(i.tipo_nombre || "")}</td>
+      <td>${i.no_realizado ? `<span class="estado-chip pendiente">No realizado</span>` : i.nivel_actividad && i.nivel_actividad !== "ninguna" ? `<span class="estado-chip fuera">Actividad ${esc(i.nivel_actividad)}</span>` : `<span class="estado-chip hecho">Realizado</span>`}</td>
+      <td>${i.fotos_total ? `📷 ${i.fotos_total}` : ""}</td>
+    </tr>`;
+  openModal({
+    title: `Inspecciones de ${tec.nombre} · últimos ${dias} días`,
+    large: true,
+    bodyHTML: `
+      <div class="mini-kpis">
+        <div><span class="mk-val">${d.resumen.total}</span><span class="mk-lbl">registros</span></div>
+        <div><span class="mk-val">${d.resumen.realizadas}</span><span class="mk-lbl">realizadas</span></div>
+        <div><span class="mk-val">${d.resumen.no_realizadas}</span><span class="mk-lbl">no realizadas</span></div>
+        <div><span class="mk-val">${d.resumen.con_actividad}</span><span class="mk-lbl">con actividad</span></div>
+      </div>
+      ${d.resumen.plantas.length ? `<p class="text-muted">Plantas: ${esc(d.resumen.plantas.join(", "))}</p>` : ""}
+      <input type="search" id="ti-buscar" placeholder="🔍 Filtrar por planta, área, habitación o código…" style="width:100%;margin:6px 0 10px">
+      ${d.inspecciones.length ? `<div class="table-wrap"><table class="data">
+        <thead><tr><th>Fecha</th><th>Planta</th><th>Punto</th><th>Tipo</th><th>Resultado</th><th>Fotos</th></tr></thead>
+        <tbody id="ti-filas">${d.inspecciones.map(fila).join("")}</tbody></table></div>`
+        : `<div class="empty-row">Sin inspecciones en el período.</div>`}
+      <p class="text-muted" style="margin-top:8px">Toca una inspección para ver su desglose.</p>`,
+    onMount(o) {
+      o.querySelectorAll("[data-insp]").forEach((tr) => tr.addEventListener("click", () => typeof abrirDesglose === "function" && abrirDesglose(tr.dataset.insp)));
+      o.querySelector("#ti-buscar")?.addEventListener("input", (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        o.querySelectorAll("#ti-filas tr").forEach((tr) => { tr.style.display = !q || tr.dataset.texto.includes(q) ? "" : "none"; });
+      });
+    },
+  });
+  $(".modal-foot")?.remove();
 }
 
 function bloqueOperacion(op) {
