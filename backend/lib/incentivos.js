@@ -170,9 +170,72 @@ export function limpiarPlantilla(secciones) {
   return salida;
 }
 
+// La lista se mantiene sola con las cuentas de técnico (rol tecnico_plagas):
+//   · cuenta nueva            → entra a la lista (sueldo en 0 para completar)
+//   · cuenta desactivada      → queda "no activo" (no sale en el pago)
+//   · cuenta borrada          → sale de la lista
+// Los colaboradores sin cuenta (los que ASA agregó a mano) no se tocan. A los
+// que ya estaban se les enlaza su cuenta por el nombre. Si ASA saca a un
+// técnico con 🗑, queda en "incentivos_excluidos" para no volver a meterlo.
+const normNombre = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+function mismoNombre(a, b) {
+  const x = normNombre(a), y = normNombre(b);
+  if (!x || !y) return false;
+  if (x === y || x.startsWith(y + " ") || y.startsWith(x + " ")) return true;
+  const px = x.split(" "), py = y.split(" ");
+  return px.length >= 2 && py.length >= 2 && px[0] === py[0] && px[1] === py[1];
+}
+
+export async function sincronizarConTecnicos(lista) {
+  const { data: cuentas, error } = await supabase.from("asa_usuarios").select("id, nombre_completo, activo").eq("rol", "tecnico_plagas");
+  if (error) return { lista, cambio: false };
+  const excluidos = new Set((await leer("incentivos_excluidos", [])).map(String));
+  const porId = new Map((cuentas || []).map((c) => [String(c.id), c]));
+  let cambio = false;
+  const salida = [];
+  for (const c of lista) {
+    if (c.usuario_id) {
+      const cuenta = porId.get(String(c.usuario_id));
+      if (!cuenta) { cambio = true; continue; }                       // cuenta borrada: sale
+      const act = cuenta.activo !== false;
+      if ((c.activo !== false) !== act) { c.activo = act; cambio = true; }
+    }
+    salida.push(c);
+  }
+  const enlazadas = new Set(salida.map((c) => String(c.usuario_id || "")).filter(Boolean));
+  for (const cuenta of cuentas || []) {
+    const id = String(cuenta.id);
+    if (enlazadas.has(id) || excluidos.has(id)) continue;
+    // ¿Ya estaba en la lista con su nombre (sin cuenta enlazada)?
+    const candidatos = salida.filter((c) => !c.usuario_id && mismoNombre(c.nombre, cuenta.nombre_completo));
+    if (candidatos.length === 1) {
+      candidatos[0].usuario_id = id;
+      if (cuenta.activo === false) candidatos[0].activo = false;
+      cambio = true;
+      continue;
+    }
+    if (cuenta.activo === false) continue;                            // desactivada y sin ficha: no se agrega
+    salida.push({ id: `col-u-${id.slice(0, 8)}`, usuario_id: id, nombre: cuenta.nombre_completo || "Técnico", zona: "", cliente: "",
+      sueldo: 0, base: null, posicion: "Técnico", activo: true, nuevo: true });
+    cambio = true;
+  }
+  return { lista: salida, cambio };
+}
+
 export async function colaboradores() {
   const v = await leer("incentivos_colaboradores", null);
-  return Array.isArray(v) ? v : INICIALES;
+  const base = Array.isArray(v) ? v : INICIALES;
+  const { lista, cambio } = await sincronizarConTecnicos(base.map((c) => ({ ...c })));
+  if (cambio) await escribir("incentivos_colaboradores", lista).catch(() => {});
+  return lista;
+}
+
+/** Al sacar a un técnico con 🗑: que la sincronización no lo vuelva a meter */
+export async function excluirCuenta(usuarioId) {
+  if (!usuarioId) return;
+  const ex = new Set((await leer("incentivos_excluidos", [])).map(String));
+  ex.add(String(usuarioId));
+  await escribir("incentivos_excluidos", [...ex]);
 }
 
 export const mesValido = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ""));

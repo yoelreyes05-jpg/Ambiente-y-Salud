@@ -323,7 +323,7 @@ async function viewIncentivos(content) {
           <th>Total a pagar</th><th>Notas</th></tr></thead>
         <tbody>${d.filas.map((f) => `
           <tr data-col="${esc(f.colaborador_id)}">
-            <td><strong>${esc(f.nombre)}</strong><div class="tec-sub">${esc([f.zona, f.cliente].filter(Boolean).join(" · "))} · sueldo ${rd(f.sueldo)}</div></td>
+            <td><strong>${esc(f.nombre)}</strong><div class="tec-sub">${esc([f.zona, f.cliente].filter(Boolean).join(" · "))} · ${f.sueldo ? `sueldo ${rd(f.sueldo)}` : `<span style="color:#b45309;font-weight:600">⚠ falta su sueldo (Colaboradores y sueldos)</span>`}</div></td>
             <td class="num">${rd(f.quincena)}</td>
             <td>${f.origen_porcentaje === "evaluacion"
               ? `<a href="#" class="inc-ver-ev" data-ev="${esc(f.colaborador_id)}" title="Ver la evaluación">${pctTxt(f.porcentaje)}</a>`
@@ -392,7 +392,7 @@ async function modalColaboradores(alGuardar) {
   openModal({
     title: "Colaboradores y sueldos", large: true, submitLabel: "Guardar lista",
     bodyHTML: `
-      <p class="text-muted">Esta es la lista que sale en Evaluación e Incentivos. <strong>Quincena</strong>: déjala vacía
+      <p class="text-muted">Esta es la lista que sale en Evaluación e Incentivos. Las cuentas con rol <strong>técnico</strong> entran solas (con sueldo en 0 para que lo completes) y salen al borrar la cuenta. <strong>Quincena</strong>: déjala vacía
         para usar el 50 % del sueldo; escribe un monto solo si a esa persona se le calcula distinto.
         Desmarca <strong>Activo</strong> para quien ya no trabaja por un tiempo, o usa <strong>🗑</strong> para sacarlo de la lista (sus evaluaciones pasadas se conservan).</p>
       <div class="table-wrap"><table class="data inc-colabs">

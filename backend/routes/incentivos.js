@@ -16,7 +16,7 @@ import express from "express";
 import ExcelJS from "exceljs";
 import { requireRol } from "../middleware/auth.js";
 import {
-  PLANTILLA, ESCALA, AJUSTES, plantilla, limpiarPlantilla, colaboradores, leer, escribir, mesValido,
+  PLANTILLA, ESCALA, AJUSTES, plantilla, limpiarPlantilla, colaboradores, excluirCuenta, leer, escribir, mesValido,
   calcularEvaluacion, filaIncentivo, fechaPago, ultimoDia,
 } from "../lib/incentivos.js";
 
@@ -57,13 +57,20 @@ router.put("/colaboradores", pagar, async (req, res) => {
   try {
     const lista = Array.isArray(req.body) ? req.body : req.body?.colaboradores;
     if (!Array.isArray(lista)) return err(res, new Error("Lista inválida"), 400);
+    // El enlace con la cuenta de técnico no viaja en la ventana: se conserva
+    const antes = await colaboradores();
+    const cuentaDe = new Map(antes.filter((c) => c.usuario_id).map((c) => [String(c.id), String(c.usuario_id)]));
     const limpia = lista.filter((c) => String(c.nombre || "").trim()).map((c, i) => ({
       id: String(c.id || `col-${Date.now().toString(36)}-${i}`),
       nombre: String(c.nombre).trim(), zona: String(c.zona || "").trim(), cliente: String(c.cliente || "").trim(),
       posicion: String(c.posicion || "Técnico").trim(),
       sueldo: Number(c.sueldo) || 0, base: c.base === "" || c.base == null ? null : Number(c.base),
       activo: c.activo !== false,
+      ...(c.usuario_id || cuentaDe.get(String(c.id)) ? { usuario_id: String(c.usuario_id || cuentaDe.get(String(c.id))) } : {}),
     }));
+    // Los técnicos con cuenta que se quitaron de la lista no vuelven a entrar solos
+    const quedan = new Set(limpia.map((c) => String(c.id)));
+    for (const [id, usuario] of cuentaDe) if (!quedan.has(id)) await excluirCuenta(usuario);
     res.json(await escribir("incentivos_colaboradores", limpia));
   } catch (e) { err(res, e); }
 });
@@ -77,6 +84,7 @@ router.delete("/colaboradores/:id", pagar, async (req, res) => {
     const c = lista.find((x) => x.id === req.params.id);
     if (!c) return err(res, new Error("Ese técnico ya no está en la lista"), 404);
     await escribir("incentivos_colaboradores", lista.filter((x) => x.id !== req.params.id));
+    if (c.usuario_id) await excluirCuenta(c.usuario_id);   // que no vuelva a entrar solo
     res.json({ ok: true, eliminado: c.nombre });
   } catch (e) { err(res, e); }
 });
