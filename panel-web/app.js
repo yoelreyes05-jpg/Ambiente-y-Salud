@@ -47,6 +47,10 @@ function fmtDateTime(d) {
   if (!d) return "—";
   try { return new Date(d).toLocaleString("es-DO", { dateStyle: "medium", timeStyle: "short" }); } catch { return d; }
 }
+function fmtTime(d) {
+  if (!d) return "—";
+  try { return new Date(d).toLocaleTimeString("es-DO", { timeStyle: "short" }); } catch { return d; }
+}
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }

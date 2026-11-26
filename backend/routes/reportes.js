@@ -452,21 +452,26 @@ router.get("/resumen", async (req, res) => {
 //                puntos al día y vencidos
 //   ordenes    — qué tan rápido se atiende una orden desde que entra
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /reportes/tecnico-inspecciones?tecnico_id=&dias=&sitio_id=
+// GET /reportes/tecnico-inspecciones?tecnico_id=&dias=&sitio_id=&hoy=1
 // Todas las inspecciones de un técnico en el período (el dashboard las abre
-// al tocar su nombre). tecnico_id=sin_asignar → las que no tienen técnico.
+// al tocar su nombre). tecnico_id=sin_asignar → las que no tienen técnico;
+// tecnico_id=todos → de todos los técnicos. hoy=1 → solo las de hoy (el
+// dashboard las abre al tocar "Inspecciones hoy").
 router.get("/tecnico-inspecciones", async (req, res) => {
   const { tecnico_id, sitio_id } = req.query;
   if (!tecnico_id) return res.status(400).json({ error: true, mensaje: "tecnico_id es requerido" });
   if (sitio_id && !exigirSitioPermitido(req, res, sitio_id)) return;
-  const dias = Math.min(Number(req.query.dias) || 30, 365);
-  const desde = haceDias(dias);
+  const soloHoy = req.query.hoy === "1" || req.query.hoy === "true";
+  const dias = soloHoy ? 1 : Math.min(Number(req.query.dias) || 30, 365);
+  const desde = soloHoy ? hoyRD() : haceDias(dias);
   try {
     const filas = await traerTodo(() => {
       let q = supabase.from("asa_v_servicios_dia")
         .select("inspeccion_id, fecha, fecha_local, sitio_id, planta, area, codigo_visible, punto_nombre, numero_habitacion, tipo_nombre, tipo_icono, estado_punto, nivel_actividad, no_realizado, motivo_no_realizado, plagas_total, fotos_total, tecnico")
         .gte("fecha_local", desde);
-      q = tecnico_id === "sin_asignar" ? q.is("tecnico_id", null) : q.eq("tecnico_id", tecnico_id);
+      if (soloHoy) q = q.eq("fecha_local", desde);
+      if (tecnico_id === "sin_asignar") q = q.is("tecnico_id", null);
+      else if (tecnico_id !== "todos") q = q.eq("tecnico_id", tecnico_id);
       q = sitio_id ? q.eq("sitio_id", sitio_id) : filtrarPorSitio(q, req);
       return q.order("fecha", { ascending: false }).order("inspeccion_id");
     });
@@ -476,6 +481,7 @@ router.get("/tecnico-inspecciones", async (req, res) => {
       tecnico: filas[0]?.tecnico || null,
       resumen: {
         total: filas.length,
+        tecnicos: [...new Set(filas.map((f) => f.tecnico).filter(Boolean))],
         realizadas: hechas.length,
         no_realizadas: filas.length - hechas.length,
         con_actividad: hechas.filter((f) => f.nivel_actividad && f.nivel_actividad !== "ninguna").length,

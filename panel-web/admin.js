@@ -1488,9 +1488,10 @@ async function tableroASA(content) {
 
     cuerpo.innerHTML = `
       <div class="kpi-grid">
-        <div class="kpi-card g">
+        <div class="kpi-card g clicable" id="kpi-hoy" title="Ver las inspecciones de hoy" style="cursor:pointer">
           <div class="lbl">Inspecciones hoy</div>
           <div class="val">${op.inspecciones_hoy}</div>
+          <div class="text-muted" style="font-size:12px;margin-top:2px">Toca para verlas →</div>
         </div>
         <div class="kpi-card ${op.cumplimiento_pct >= 90 ? "g" : op.cumplimiento_pct >= 75 ? "w" : "r"}">
           <div class="lbl">Cumplimiento de frecuencia</div>
@@ -1536,6 +1537,10 @@ async function tableroASA(content) {
       </div>
 
       <div id="dash-histograma"></div>`;
+
+    // Inspecciones hoy: al tocar la tarjeta, la lista de lo que se hizo hoy
+    $("#kpi-hoy").addEventListener("click", () =>
+      modalInspeccionesTecnico({ tecnico_id: "todos", nombre: "todos los técnicos" }, dias, sitio, true));
 
     // Técnicos: buscar por nombre y, al tocar uno, todas sus inspecciones
     const sinTilde = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -1637,14 +1642,19 @@ function bloqueTecnicos(tecnicos, buscando = false) {
 }
 
 // Todas las inspecciones de un técnico en el período del dashboard
-async function modalInspeccionesTecnico(tec, dias, sitio) {
+// soloHoy: las de hoy (tarjeta "Inspecciones hoy"). Con tecnico_id "todos"
+// salen las de todos los técnicos, con una columna para saber quién la hizo.
+async function modalInspeccionesTecnico(tec, dias, sitio, soloHoy = false) {
+  const todos = tec.tecnico_id === "todos";
   const qs = new URLSearchParams({ tecnico_id: tec.tecnico_id || "sin_asignar", dias });
   if (sitio) qs.set("sitio_id", sitio);
+  if (soloHoy) qs.set("hoy", "1");
   let d;
   try { d = await get(`/reportes/tecnico-inspecciones?${qs}`); } catch (e) { return toast(e.message, true); }
   const fila = (i) => `
-    <tr class="clickable" data-insp="${esc(i.inspeccion_id)}" data-texto="${esc([i.planta, i.area, i.codigo_visible, i.punto_nombre, i.numero_habitacion, i.tipo_nombre].filter(Boolean).join(" ").toLowerCase())}">
-      <td>${esc(fmtDateTime(i.fecha))}</td>
+    <tr class="clickable" data-insp="${esc(i.inspeccion_id)}" data-texto="${esc([i.planta, i.area, i.codigo_visible, i.punto_nombre, i.numero_habitacion, i.tipo_nombre, todos ? i.tecnico : ""].filter(Boolean).join(" ").toLowerCase())}">
+      <td>${esc(soloHoy ? fmtTime(i.fecha) : fmtDateTime(i.fecha))}</td>
+      ${todos ? `<td>${esc(i.tecnico || "Sin técnico")}</td>` : ""}
       <td>${esc(i.planta || "")}</td>
       <td><strong>${esc(i.numero_habitacion ? `Hab. ${i.numero_habitacion}` : i.codigo_visible || "")}</strong> <span class="tec-sub">${esc(i.area || "")}</span></td>
       <td>${esc(i.tipo_icono || "")} ${esc(i.tipo_nombre || "")}</td>
@@ -1652,7 +1662,7 @@ async function modalInspeccionesTecnico(tec, dias, sitio) {
       <td>${i.fotos_total ? `📷 ${i.fotos_total}` : ""}</td>
     </tr>`;
   openModal({
-    title: `Inspecciones de ${tec.nombre} · últimos ${dias} días`,
+    title: soloHoy ? `Inspecciones de hoy${todos ? "" : ` · ${tec.nombre}`}` : `Inspecciones de ${tec.nombre} · últimos ${dias} días`,
     large: true,
     bodyHTML: `
       <div class="mini-kpis">
@@ -1662,11 +1672,12 @@ async function modalInspeccionesTecnico(tec, dias, sitio) {
         <div><span class="mk-val">${d.resumen.con_actividad}</span><span class="mk-lbl">con actividad</span></div>
       </div>
       ${d.resumen.plantas.length ? `<p class="text-muted">Plantas: ${esc(d.resumen.plantas.join(", "))}</p>` : ""}
-      <input type="search" id="ti-buscar" placeholder="🔍 Filtrar por planta, área, habitación o código…" style="width:100%;margin:6px 0 10px">
+      ${todos && d.resumen.tecnicos?.length ? `<p class="text-muted">Técnicos: ${esc(d.resumen.tecnicos.join(", "))}</p>` : ""}
+      <input type="search" id="ti-buscar" placeholder="🔍 Filtrar por ${todos ? "técnico, " : ""}planta, área, habitación o código…" style="width:100%;margin:6px 0 10px">
       ${d.inspecciones.length ? `<div class="table-wrap"><table class="data">
-        <thead><tr><th>Fecha</th><th>Planta</th><th>Punto</th><th>Tipo</th><th>Resultado</th><th>Fotos</th></tr></thead>
+        <thead><tr><th>${soloHoy ? "Hora" : "Fecha"}</th>${todos ? "<th>Técnico</th>" : ""}<th>Planta</th><th>Punto</th><th>Tipo</th><th>Resultado</th><th>Fotos</th></tr></thead>
         <tbody id="ti-filas">${d.inspecciones.map(fila).join("")}</tbody></table></div>`
-        : `<div class="empty-row">Sin inspecciones en el período.</div>`}
+        : `<div class="empty-row">${soloHoy ? "Todavía no hay inspecciones hoy." : "Sin inspecciones en el período."}</div>`}
       <p class="text-muted" style="margin-top:8px">Toca una inspección para ver su desglose.</p>`,
     onMount(o) {
       o.querySelectorAll("[data-insp]").forEach((tr) => tr.addEventListener("click", () => typeof abrirDesglose === "function" && abrirDesglose(tr.dataset.insp)));
