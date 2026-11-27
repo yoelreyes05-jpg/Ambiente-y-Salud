@@ -479,6 +479,11 @@ details.ar-plegable[open]>summary{margin-bottom:10px}
 .cr-prog-matriz tr.verde td.si{background:#D8E4BC}
 .cr-prog-matriz tr.azul td.si{background:#DAEEF3}
 .cr-prog-matriz td.si[data-sem-anio]{cursor:pointer}
+.cr-prog-matriz td.cr-prog-area.clicable{cursor:pointer;color:var(--azul)}
+.cr-prog-matriz td.cr-prog-area.clicable:hover{text-decoration:underline;background:#eef2fb}
+.cr-act-tit{margin-left:10px;font-size:15px}
+.cr-act-fotos{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.cr-act-fotos img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #dbe1ea;cursor:zoom-in}
 .cr-prog-matriz td.si[data-sem-anio]:hover{outline:2px solid var(--azul);outline-offset:-2px}
 .cr-prog-leyendas{display:flex;flex-wrap:wrap;gap:16px 28px;margin-top:14px}
 .cr-prog-leyendas h3{font-size:13px;color:var(--azul-osc);margin:0 0 6px}

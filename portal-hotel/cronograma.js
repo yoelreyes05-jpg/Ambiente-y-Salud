@@ -118,6 +118,7 @@ async function vistaCronograma(cuerpo) {
       $$("[data-sem-anio]", caja).forEach((el) => el.addEventListener("click", () => {
         CR.vista = "semana"; CR.semana = lunesSemanaAnio(CR.anio, Number(el.dataset.semAnio)); ir();
       }));
+      $$("[data-area-prog]", caja).forEach((el) => el.addEventListener("click", () => actividadesAreaCr(el.dataset.areaProg, prog.anio, areas, prog.areas.find((x) => x.area === el.dataset.areaProg)?.incluye)));
       $("#cr-imp").onclick = () => imprimirHtmlCr(`Programa anual ${prog.anio}${areaSel ? ` · ${areaSel.nombre}` : ""}`, htmlProgramaOficial(progVer, true));
       return;
     }
@@ -252,22 +253,26 @@ function leyendaImpresa(prog) {
 // ── Programa anual oficial: áreas × 52 semanas, como el documento ────────
 function htmlProgramaOficial(prog, impresion = false) {
   const sem = prog.semanas_por_mes || 4;
-  const total = prog.meses.length * sem;
+  // semanas_mes: cuántas semanas del año caen en cada mes (4 o 5); si no
+  // viene, todos los meses llevan semanas_por_mes.
+  const porMes = Array.isArray(prog.semanas_mes) && prog.semanas_mes.length === prog.meses.length ? prog.semanas_mes : prog.meses.map(() => sem);
+  const total = porMes.reduce((a, b) => a + b, 0);
+  const numEnMes = porMes.flatMap((k) => [...Array(k)].map((_, j) => j + 1));
   const tabla = (filas, conFicha = false) => `<table class="cr-prog-tabla">${filas.map(([n, t]) => `<tr><td class="n">${n}</td><td>${conFicha ? enlazarProductos(t) : esc(t)}</td></tr>`).join("")}</table>`;
   return `
     <div class="tarjeta cr-prog">
       <div class="cr-prog-cab">${prog.titulo.map((t, i) => `<div${i === 0 ? ' class="fuerte"' : ""}>${esc(t)}</div>`).join("")}</div>
-      ${impresion ? "" : `<p class="pl-nota">Programa anual ${prog.anio}</p>`}
+      ${impresion ? "" : `<p class="pl-nota">Programa anual ${prog.anio}. Toca un área para ver lo realizado, con sus fechas y fotos; toca una semana para abrirla.</p>`}
       <div class="pl-tabla-scroll">
         <table class="cr-prog-matriz">
           <thead>
-            <tr><th class="cr-prog-area" rowspan="2">Áreas</th>${prog.meses.map((m) => `<th colspan="${sem}">${esc(m)}</th>`).join("")}</tr>
-            <tr>${[...Array(total)].map((_, i) => `<th class="cr-prog-sem${impresion ? "" : " clicable"}" ${impresion ? "" : `data-sem-anio="${i + 1}"`} title="Semana ${i + 1} del año · desde el lunes ${impresion ? "" : lunesSemanaAnio(prog.anio, i + 1)}">${(i % sem) + 1}</th>`).join("")}</tr>
+            <tr><th class="cr-prog-area" rowspan="2">Áreas</th>${prog.meses.map((m, k) => `<th colspan="${porMes[k]}">${esc(m)}</th>`).join("")}</tr>
+            <tr>${[...Array(total)].map((_, i) => `<th class="cr-prog-sem${impresion ? "" : " clicable"}" ${impresion ? "" : `data-sem-anio="${i + 1}"`} title="Semana ${i + 1} del año · desde el lunes ${impresion ? "" : lunesSemanaAnio(prog.anio, i + 1)}">${numEnMes[i]}</th>`).join("")}</tr>
           </thead>
           <tbody>
             ${prog.areas.map((a, r) => {
               const si = new Set(a.semanas);
-              return `<tr class="${r % 2 ? "azul" : "verde"}"><td class="cr-prog-area">${esc(a.area)}</td>${[...Array(total)].map((_, i) =>
+              return `<tr class="${r % 2 ? "azul" : "verde"}"><td class="cr-prog-area${impresion ? "" : " clicable"}"${impresion ? "" : ` data-area-prog="${esc(a.area)}" title="Ver lo realizado en esta área, con fechas y fotos"`}>${esc(a.area)}</td>${[...Array(total)].map((_, i) =>
                 `<td class="${si.has(i + 1) ? "si" : "no"}"${impresion || !si.has(i + 1) ? "" : ` data-sem-anio="${i + 1}"`}></td>`).join("")}</tr>`;
             }).join("")}
           </tbody>
@@ -460,4 +465,90 @@ function imprimirHtmlCr(titulo, html) {
   ${html}
 </body></html>`);
   v.document.close();
+}
+
+// ── Programa anual: lo realizado en un área ──────────────────────────────
+//
+// Al tocar un área del programa anual se abre una hoja con todo lo que el
+// técnico registró en esa área durante el año: fecha, hora, punto, técnico,
+// resultado y fotos. El programa trae el área escrita como en el documento
+// ("Cocina La Caña", "Registros y cárcamos"); se busca entre las áreas de la
+// planta con coincideArea (extras.js), en los dos sentidos.
+// incluye: fila del programa que agrupa varias áreas (la profunda nocturna).
+async function actividadesAreaCr(nombre, anio, areas, incluye) {
+  const hoja = document.createElement("div");
+  hoja.className = "hoja";
+  hoja.innerHTML = `
+    <div class="hoja-barra">
+      <button class="btn" id="hoja-cerrar">← Volver</button>
+      <strong class="cr-act-tit">${esc(nombre)} · ${anio}</strong>
+    </div>
+    <div class="hoja-cuerpo" id="hoja-cuerpo"><div class="cargando">Cargando…</div></div>`;
+  document.body.appendChild(hoja);
+  document.body.style.overflow = "hidden";
+  $("#hoja-cerrar", hoja).addEventListener("click", () => { hoja.remove(); document.body.style.overflow = ""; });
+  const cuerpo = $("#hoja-cuerpo", hoja);
+
+  const nombres = Array.isArray(incluye) && incluye.length ? incluye : [nombre];
+  const lista = (areas || []).filter((a) => nombres.some((n) => coincideArea(a.nombre, n) || coincideArea(n, a.nombre)));
+  if (!lista.length) {
+    cuerpo.innerHTML = `<div class="vacio"><span class="emoji">🔎</span>Esta área del programa todavía no tiene puntos de control con ese nombre en la planta, así que no hay registros que mostrar.</div>`;
+    return;
+  }
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Santo_Domingo" });
+  const desde = `${anio}-01-01`;
+  const hasta = `${anio}-12-31` < hoy ? `${anio}-12-31` : hoy;
+  let regs = [];
+  if (desde <= hasta) {
+    try {
+      const partes = await Promise.all(lista.map((a) =>
+        GET(`/inspecciones?sitio_id=${PLANTA.id}&area_id=${a.id}&desde=${desde}&hasta=${hasta}&limite=1000`)));
+      regs = partes.flat().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    } catch (e) {
+      cuerpo.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+      return;
+    }
+  }
+  const hechos = regs.filter((i) => !i.motivo_no_realizado);
+  const nFotos = regs.reduce((t, i) => t + (Array.isArray(i.fotos) ? i.fotos.length : 0), 0);
+  const dias = new Set(regs.map((i) => i.fecha_local || fechaRDp(i.fecha)));
+  const estado = (i) => i.motivo_no_realizado
+    ? `<span class="marca alerta">No realizado</span>`
+    : i.nivel_actividad && i.nivel_actividad !== "ninguna" ? `<span class="marca mal">Actividad ${esc(i.nivel_actividad)}</span>` : `<span class="marca ok">Realizado</span>`;
+  cuerpo.innerHTML = `
+    <p class="pl-nota">Áreas de la planta: ${lista.map((a) => `<strong>${esc(a.nombre)}</strong>`).join(", ")}${desde > hasta ? "" : ` · del ${fecha(desde)} al ${fecha(hasta)}`}</p>
+    <div class="kpis">
+      <div class="kpi"><div class="n">${hechos.length}</div><div class="t">Realizados</div></div>
+      <div class="kpi"><div class="n">${regs.length - hechos.length}</div><div class="t">No realizados</div></div>
+      <div class="kpi"><div class="n">${dias.size}</div><div class="t">Días con servicio</div></div>
+      <div class="kpi"><div class="n">${nFotos}</div><div class="t">Fotos</div></div>
+    </div>
+    ${regs.length ? `<div class="tarjeta">${regs.map((i) => {
+      const fotos = Array.isArray(i.fotos) ? i.fotos : [];
+      const p = i.asa_puntos_control || {};
+      return `
+        <div class="registro clicable" data-insp="${esc(i.id)}">
+          <div class="cab">
+            <div style="flex:1">
+              <div class="punto">${esc(p.nombre || p.codigo_visible || "Punto")} ${estado(i)}</div>
+              <div class="meta">${esc(i.asa_areas?.nombre || "")}${p.codigo_visible ? ` · ${esc(p.codigo_visible)}` : ""} · ${esc(i.asa_empleados?.nombre_completo || "Técnico no registrado")}</div>
+              ${i.motivo_no_realizado ? `<div class="meta">Motivo: ${esc(i.motivo_no_realizado)}</div>` : ""}
+              ${fotos.length ? `<div class="cr-act-fotos">${fotos.slice(0, 6).map((f) => `<img src="${esc(f)}" alt="Foto" loading="lazy">`).join("")}${fotos.length > 6 ? `<span class="marca neutra">+${fotos.length - 6}</span>` : ""}</div>` : ""}
+            </div>
+            <div class="fecha">${esc(fechaHora(i.fecha))}</div>
+          </div>
+        </div>`;
+    }).join("")}</div>
+    ${regs.length >= 1000 ? `<p class="pl-nota">Se muestran los 1000 registros más recientes.</p>` : `<p class="pl-nota">Toca un registro para ver el servicio completo; toca una foto para verla en grande.</p>`}`
+    : `<div class="vacio"><span class="emoji">📭</span>Todavía no hay servicios registrados en esta área en ${anio}.</div>`}`;
+
+  $$(".cr-act-fotos img", cuerpo).forEach((img) => img.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const visor = document.createElement("div");
+    visor.className = "visor";
+    visor.innerHTML = `<img src="${img.src}" alt="Evidencia" />`;
+    visor.addEventListener("click", () => visor.remove());
+    document.body.appendChild(visor);
+  }));
+  $$("[data-insp]", cuerpo).forEach((el) => el.addEventListener("click", () => abrirServicio(el.dataset.insp)));
 }
