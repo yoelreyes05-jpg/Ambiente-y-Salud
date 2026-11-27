@@ -104,15 +104,31 @@ function estadoDe(v) {
 // ── Reconocer la planta del Excel contra las plantas del sistema ────────────
 // Primero igual (sin acentos ni mayúsculas), después por palabras en común:
 // "IBEROSTAR CORAL BAVARO" encuentra "Iberostar Bávaro".
+// El hotel se conoce por un nombre y la planta está registrada con otro
+// (el de la empresa): Casa de Campo es de Costasur Dominicana.
+const ALIAS_PLANTA = {
+  "CASA DE CAMPO": "COSTASUR DOMINICANA",
+  "CASA DE CAMPO RESORT": "COSTASUR DOMINICANA",
+  "CASA DE CAMPO RESORT VILLAS": "COSTASUR DOMINICANA",
+};
 export function sugerirPlanta(textoPlanta, sitios) {
   const n = normal(textoPlanta);
   if (!n) return null;
   const exacta = sitios.find((s) => normal(s.nombre) === n || (s.codigo && normal(s.codigo) === n));
   if (exacta) return { sitio: exacta, seguro: true };
-  const pal = new Set(n.split(" "));
+  // Nombre comercial distinto al de la planta en el sistema
+  const alias = ALIAS_PLANTA[n];
+  const porAlias = alias && sitios.find((s) => normal(s.nombre) === alias);
+  if (porAlias) return { sitio: porAlias, seguro: true };
+  // Sin palabras vacías: "Casa de Campo" y "Casa de España" compartían "CASA" y
+  // "DE" y salía Casa de España como sugerida.
+  const VACIAS = new Set(["DE", "DEL", "LA", "LAS", "EL", "LOS", "Y", "E", "THE", "OF"]);
+  const palabras = (t) => new Set(t.split(" ").filter((p) => p && !VACIAS.has(p)));
+  const pal = palabras(n);
   let mejor = null;
   for (const s of sitios) {
-    const ps = new Set(normal(s.nombre).split(" "));
+    const ps = palabras(normal(s.nombre));
+    if (!ps.size) continue;
     const comunes = [...ps].filter((p) => pal.has(p)).length;
     const union = new Set([...ps, ...pal]).size;
     const puntaje = union ? comunes / union : 0;
@@ -209,7 +225,13 @@ router.get("/programa-anual", async (req, res) => {
   let archivos = [];
   try { archivos = fs.readdirSync(DIR_PROGRAMAS); } catch { /* sin carpeta: sin programas */ }
   // "iberostar-joia-2026.json" sirve para "IBEROSTAR JOIA" y "Iberostar Joia Bávaro"
-  const archivo = archivos.find((f) => f.endsWith(`-${anio}.json`) && clave && clave.includes(f.slice(0, -`-${anio}.json`.length)));
+  // "claves" dentro del JSON: otros nombres de la misma planta ("costasur-dominicana"
+  // para el programa de Casa de Campo).
+  const clavesDe = (f) => {
+    const base = [f.slice(0, -`-${anio}.json`.length)];
+    try { return base.concat(JSON.parse(fs.readFileSync(path.join(DIR_PROGRAMAS, f), "utf8")).claves || []); } catch { return base; }
+  };
+  const archivo = archivos.find((f) => f.endsWith(`-${anio}.json`) && clave && clavesDe(f).some((k) => clave.includes(k)));
   if (!archivo) return res.json({ programa: null, anios: [] });
   const programa = JSON.parse(fs.readFileSync(path.join(DIR_PROGRAMAS, archivo), "utf8"));
   const base = archivo.slice(0, -`-${anio}.json`.length);

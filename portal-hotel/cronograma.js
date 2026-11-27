@@ -224,7 +224,7 @@ async function programaOficialCr(anio) {
     try {
       const clave = String(PLANTA.nombre || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-");
       const ind = await (await fetch("programas/indice.json", { cache: "no-cache" })).json();
-      const e = (ind.programas || []).find((x) => Number(x.anio) === Number(anio) && clave.includes(x.clave));
+      const e = (ind.programas || []).find((x) => Number(x.anio) === Number(anio) && [x.clave, ...(x.claves || [])].some((k) => clave.includes(k)));
       if (e) prog = await (await fetch(`programas/${e.archivo}`, { cache: "no-cache" })).json();
     } catch { /* sin programa */ }
   }

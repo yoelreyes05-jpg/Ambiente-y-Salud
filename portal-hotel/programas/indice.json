@@ -9,7 +9,10 @@
     {
       "clave": "casa-de-campo",
       "anio": 2027,
-      "archivo": "casa-de-campo-2027.json"
+      "archivo": "casa-de-campo-2027.json",
+      "claves": [
+        "costasur-dominicana"
+      ]
     }
   ]
 }
